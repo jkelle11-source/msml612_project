@@ -2,7 +2,8 @@
 ### Extension of CSDI with a Learned Missingness Embedding & TSLO-Based Continuous-Time Encoding
 
 **Course:** MSML612: Deep Learning — University of Maryland
-**Team:** 3 Graduate Students · **Duration:** ~10 weeks (Sep 30 – Dec 10, 2026) · **Nominal effort:** ~3 hrs/student/week, front- and back-loaded around deliverables
+**Duration:** ~10 weeks (Sep 30 – Dec 10, 2026) 
+**Nominal effort:** ~3 hrs/student/week, front- and back-loaded around deliverables
 **Dataset:** PhysioNet/CinC Challenge 2012
 
 ---
@@ -11,11 +12,10 @@
 
 These are settled and everything downstream assumes them:
 
-1. **Reuse, don't reimplement, base CSDI.** We fork and adapt a published CSDI implementation (cited prominently) rather than re-deriving it from scratch. The rubric explicitly permits this. Our engineering effort goes into the *extensions*, which is where the "difficulty of NN design" points and the novelty live.
-2. **Extension 2 uses TSLO (time-since-last-observation), not raw timestamps or a pairwise attention bias.** The time signal is *per-feature elapsed time since that feature was last actually measured*. This is genuinely irregular even on the 48-step grid, keeps our base comparable to the published benchmark, and makes Ext 2 non-trivial by construction. The global pairwise `TimeDeltaBias` is **dropped** (see §5.2 for why the TSLO decision makes it redundant, and why dropping it removes the custom-attention requirement entirely).
-3. **Paired-seed protocol.** All variants are trained on the *same* 5 seeds (42–46) — common random numbers — so every variant-vs-base comparison is a *paired* difference. The SE of the paired difference is what we test, not the SE of two independent means. This is the single most important statistical decision in the plan.
-4. **Milestone-anchored calendar.** Proposal **Oct 8**, Interim Report **Oct 29**, Presentation **Dec 2**, Final Report **Dec 10**. The timeline is built around these, not around abstract week numbers.
-5. **Honesty-aware performance framing.** We lead with *benchmark reproduction* and *runtime analysis* as our guaranteed "high-performance" story, and report extension effects (including nulls) rigorously on top. See §8.
+1. **Reuse, don't reimplement, base CSDI.** We fork and adapt a published CSDI implementation (cited prominently) rather than re-deriving it from scratch. The rubric explicitly permits this.
+2. **Extension 2 uses TSLO (time-since-last-observation), not raw timestamps or a pairwise attention bias.** The time signal is *per-feature elapsed time since that feature was last actually measured*. This is genuinely irregular even on the 48-step grid, keeps our base comparable to the published benchmark, and makes Ext 2 non-trivial by construction.
+3. **Paired-seed protocol.** All variants are trained on the *same* 5 seeds (42–46) — common random numbers — so every variant-vs-base comparison is a *paired* difference. The SE of the paired difference is what we test, not the SE of two independent means.
+4. **Honesty-aware performance framing.** We lead with *benchmark reproduction* and *runtime analysis* as our guaranteed "high-performance" story, and report extension effects (including nulls) rigorously on top. See §8.
 
 ---
 
@@ -23,17 +23,17 @@ These are settled and everything downstream assumes them:
 
 We implement CSDI (Conditional Score-based Diffusion for Imputation) for multivariate clinical time-series imputation, reproduce its published benchmark, and extend it along two axes that address real limitations of the architecture — then, as a stretch goal, wrap it in calibrated uncertainty intervals.
 
-- **Extension 1 — Learned Missingness Pattern Embedding.** CSDI already consumes the observation mask as a conditioning channel; it is *not* blind to which values are missing. Our contribution is narrower and honest: we test whether a **learned, structural embedding** of the mask — one that attends across *both* time and features — adds signal beyond the raw mask channel, particularly under **block (cross-feature, contiguous) missingness**.
+- **Extension 1 — Learned Missingness Pattern Embedding.** CSDI already consumes the observation mask as a conditioning channel; we test whether a **learned, structural embedding** of the mask — one that attends across *both* time and features — adds signal beyond the raw mask channel, particularly under **block (cross-feature, contiguous) missingness**.
 - **Extension 2 — TSLO-Based Continuous-Time Encoding.** CSDI's temporal positional encoding is index-based, implicitly assuming uniform spacing and uniform recency. We replace it with a Time2Vec-style encoding of **per-feature time-since-last-observation**, so the network weights a conditioning value by how stale it actually is.
 - **Extension 3 (Stretch) — Conformal Prediction Intervals.** A post-hoc, patient-level, *studentized* split-conformal wrapper that turns the diffusion posterior into intervals with finite-sample coverage — using the sample spread CSDI normally discards.
 
 **Why this is a defensible contribution (and where it is not):** each extension is toggleable and evaluated against our *own reproduced base* under a frozen protocol. We do not claim to beat published CSDI; we claim (a) faithful reproduction of the benchmark, (b) a rigorous, paired, multi-seed test of whether each extension helps, in the regime where it *should* help, and (c) a clinically meaningful uncertainty capability CSDI's evaluation omits.
 
-**Why PhysioNet 2012.** ~4,000 ICU stays (Set A), 35 vitals/labs over 48 hours, ~80% missing, per-observation timestamps native to the archive (the raw signal Extension 2 needs), and an established CSDI benchmark to target. Freely available; no credentialing wall (see §7 risk row).
+**Why PhysioNet 2012.** ~4,000 ICU stays (Set A), 35 vitals/labs over 48 hours, ~80% missing, per-observation timestamps native to the archive (the raw signal Extension 2 needs), and an established CSDI benchmark to target. Freely available.
 
 ---
 
-## 2. Milestone Calendar (the spine of the plan)
+## 2. Milestone Calendar
 
 | Date | Milestone | What must be true |
 |---|---|---|
@@ -46,23 +46,11 @@ US Thanksgiving falls **Thu Nov 26**; the week of Nov 23–27 is treated as a li
 
 ---
 
-## 3. Roles & Resource Allocation
-
-| Role | Student | Core responsibilities |
-|---|---|---|
-| **Data & Diffusion Lead** | **A** | PhysioNet pipeline, normalization, TSLO computation, forward noising schedule, training loop, inference sampler, conformal calibration (stretch) |
-| **Architecture Lead** | **B** | Adapt reused CSDI denoiser; implement `MissingnessEncoder` (Ext 1) and `ContinuousTimeEncoding` (Ext 2); qualitative trajectory analysis |
-| **Evaluation & Baselines Lead** | **C** | Baselines, masking objects, metrics, paired-seed harness, ablation, results tables, statistical reporting |
-
-Writing (proposal, interim, final) and the presentation are **shared** — assignments noted per week in §6. No single student owns the report alone.
-
----
-
-## 4. Frozen Experimental Protocol
+## 3. Frozen Experimental Protocol
 
 These rules are non-negotiable and apply to **every** run — base and all extensions. They are what make the "Δ vs. base" numbers trustworthy; without them a 0.01–0.02 gain is unpublishable noise.
 
-### 4.1 Two masks, not one (this is the subtle one)
+### 3.1 Two masks, not one (this is the subtle one)
 CSDI's self-supervision requires *randomizing* which observed values are conditioning vs. target each iteration; the *evaluation* target set must be fixed. Freezing the training mask would depress our base MAE and poison the gate. We therefore implement **two** objects:
 
 - **`EvalMasker`** — seeded **once**, holds out a fixed 10% of observed values as evaluation targets, identical across every model and every seed. This is the "frozen masking strategy."
@@ -70,36 +58,36 @@ CSDI's self-supervision requires *randomizing* which observed values are conditi
 
 Unit test: `EvalMasker` targets are byte-identical across seeds; `TrainMasker` targets differ across iterations; eval targets never enter any conditioning input (no leakage).
 
-### 4.2 Normalization (load-bearing for every comparison)
+### 3.2 Normalization (load-bearing for every comparison)
 Per-variable **z-scoring** using **training-split statistics only**, applied to val/test. All MAE/RMSE are reported in **standardized units**, so the published 0.217 is a valid comparison. We additionally report raw-unit per-variable MAE for clinical readability. Conformal residuals stay in standardized units so a single global quantile is coherent across variables.
 
-### 4.3 Paired 5-seed evaluation
+### 3.3 Paired 5-seed evaluation
 - Seeds **42–46** (field-standard set).
 - **Common random numbers:** the same 5 seeds across all four variants, so each variant shares data order, train-mask stream, and init RNG with the others at the matching seed. Comparisons are **paired differences**; we report the mean paired Δ and the **SE of the paired Δ**, which is typically far smaller than the SE of either mean.
 - Every headline number is mean ± SE over the 5 seeds. A contrast whose paired-Δ error bar overlaps zero is reported as **"no significant effect,"** never hidden or spun.
 
-### 4.4 Reproduction gate (hard, before any extension delta is trusted)
+### 3.4 Reproduction gate (hard, before any extension delta is trusted)
 Our reproduced base CSDI must reach **≤ ~0.24 MAE @ 10% masked** (within ~10% of the paper's 0.217), averaged over **≥3 seeds**, before any extension result counts. Independent reimplementations land ~5% above the paper and say so in print, so the 0.22–0.24 band — not exactly 0.217 — is the target. Until the gate passes, extension runs are *debugging* runs. If the gate is not passed by the interim (Oct 29), architecture work freezes and the baseline is debugged.
 
-### 4.5 Effect claims
+### 3.5 Effect claims
 - **Main effects** (Ext 1 vs. base; Ext 2 vs. base) are **confirmatory**, reported per-effect with paired SE.
 - The **interaction** (Ext 1+2 vs. each alone) is **exploratory** — with four means inside a ~0.02–0.03 window, 5 seeds may not resolve it, and we will not assert an interaction the error bars can't support.
 
-### 4.6 Head/`d_model` divisibility
+### 3.6 Head/`d_model` divisibility
 Fix **`n_heads = 4`** across the `d_model ∈ {64, 128, 256}` sweep (head_dim = 16/32/64, all valid). State the rule so the ablation doesn't silently break.
 
 ---
 
-## 5. Novel Contributions: Technical Specification
+## 4. Novel Contributions: Technical Specification
 
-### 5.1 Extension 1 — Learned Missingness Pattern Embedding
+### 4.1 Extension 1 — Learned Missingness Pattern Embedding
 
-**Honest framing.** *Not* "CSDI ignores which values are missing" (it doesn't). The claim is: **CSDI consumes the mask as a raw channel; we test whether a learned structural embedding of the mask adds signal beyond that.** A CSDI-literate grader will accept this; the overclaim in the original draft would have been caught.
+**CSDI consumes the missingness mask as a raw channel; we test whether a learned structural embedding of the mask adds signal beyond that.** 
 
-**Architecture.** The binary mask $M \in \{0,1\}^{T \times D}$ passes through a small **dual-axis** encoder $\phi_\psi$ — temporal *and* feature attention, mirroring the main denoiser — because block missingness is a *cross-feature* structure a temporal-only encoder cannot represent. This is the fix for the original encoder, which attended over time only while its motivation was about cross-feature blocks.
+**Architecture.** The binary mask $M \in \{0,1\}^{T \times D}$ passes through a small **dual-axis** encoder $\phi_\psi$ — temporal *and* feature attention, mirroring the main denoiser — because block missingness is a *cross-feature* structure a temporal-only encoder cannot represent.
 
 ```python
-class MissingnessEncoder(nn.Module):   # single canonical name (was MaskinessEncoder)
+class MissingnessEncoder(nn.Module):  
     """Dual-axis embedding of the observation mask (temporal + feature attention)."""
     def __init__(self, n_features, d_model, n_heads=2, n_layers=2):
         super().__init__()
@@ -120,14 +108,14 @@ class MissingnessEncoder(nn.Module):   # single canonical name (was MaskinessEnc
 ```
 
 - **Toggle:** `--use_mask_embedding`. Trained end-to-end (not pretrained).
-- **Primary evaluation regime:** **block/structured missingness** — promoted from a stratification to Ext 1's headline test, plus a synthetic block-missingness stress test. If the embedding helps anywhere, it is here.
+- **Primary evaluation regime:** **block/structured missingness** — Ext 1's headline test, plus a synthetic block-missingness stress test. If the embedding helps anywhere, it is here.
 - **Named risk:** Ext 1 shows ≈0 gain because the base already sees the mask. Mitigated by the dual-axis encoder (richer than the raw channel) and the block-missingness primary regime; if still null, that is a legitimate, reportable finding, not a failure.
 
-### 5.2 Extension 2 — TSLO-Based Continuous-Time Encoding
+### 4.2 Extension 2 — TSLO-Based Continuous-Time Encoding
 
-**The core idea.** For each feature $d$ at each step $t$, compute $\delta_{t,d}$ = hours since feature $d$ was last actually observed (GRU-D-style). On the 48-step hourly grid the *global* step index is uniform, but $\delta$ is **not** — it jumps whenever a feature goes unmeasured. That is the irregularity Ext 2 claims to exploit, and it exists without abandoning the grid (so the base stays benchmark-comparable). This is the TSLO decision.
+**The core idea.** For each feature $d$ at each step $t$, compute $\delta_{t,d}$ = hours since feature $d$ was last actually observed (GRU-D-style). On the 48-step hourly grid the *global* step index is uniform, but $\delta$ is **not** — it jumps whenever a feature goes unmeasured. This is the information Ext 2 seeks to exploit.
 
-**Encoding.** $\delta$ is embedded with a **true Time2Vec** encoding — one linear dimension plus $d_k-1$ sinusoidal dimensions, *concatenated* (the original code summed two full linear layers, which is not Time2Vec):
+**Encoding.** $\delta$ is embedded with a **true Time2Vec** encoding — one linear dimension plus $d_k-1$ sinusoidal dimensions, *concatenated:*
 
 $$\text{T2V}(\delta)_k = \begin{cases}\omega_0\delta + \phi_0 & k=0\\ \sin(\omega_k\delta + \phi_k) & 1 \le k \le d_k-1\end{cases}$$
 
@@ -148,15 +136,14 @@ class ContinuousTimeEncoding(nn.Module):
 ```
 
 - **Toggle:** `--use_time_encoding`. The encoding is **added to the denoiser input** like a positional encoding — it does **not** touch the attention logits.
-- **Why the pairwise `TimeDeltaBias` is gone.** A *global* $|t_i-t_j|$ bias collapses to $|i-j|$ on the hourly grid — an ordinary relative-position bias, i.e. a near-no-op — which is exactly why Jake demoted it to a stretch. The TSLO decision makes it redundant, so we drop it from the critical path. **Bonus:** because Ext 2 is now an additive input encoding rather than a logit bias, we **no longer need a custom attention reimplementation** — the reused CSDI attention (stock `TransformerEncoderLayer`-style) works unchanged. This dissolves the Week-4/Week-6 attention inconsistency by elimination rather than by more engineering. A per-feature TSLO *bias* is noted as future work only.
 - **Primary evaluation regime:** high-autocorrelation variables (heart rate, SpO2), where recency matters most.
 
-### 5.3 Extension 3 (Stretch) — Studentized, Patient-Level Conformal Intervals
+### 4.3 Extension 3 (Stretch) — Studentized, Patient-Level Conformal Intervals
 
-Post-hoc, no retraining. Two corrections over the original make it valid *and* stop it repeating the very sin it criticizes CSDI for.
+Post-hoc, no retraining. Two key decisions ensure its validity:
 
-1. **Patient-level exchangeability.** Split calibration/test **by patient**. The nonconformity score is aggregated at the **patient** level (not one score per masked position pooled across patients — those are correlated and unequal in count). Position-level coverage is reported afterward as a secondary empirical check, not as the guarantee.
-2. **Studentized scores (use the spread CSDI discards).** With $K=50$ posterior draws, compute per-position mean $\hat\mu$ **and std $\hat\sigma$**, and score $s = |x_{\text{true}} - \hat\mu| / (\hat\sigma + \varepsilon)$. Intervals are **adaptive**: $[\hat\mu - \hat q\,\hat\sigma,\ \hat\mu + \hat q\,\hat\sigma]$. This uses the samples we already pay for and makes the "coverage by missingness rate" check meaningful instead of self-incriminating. (The constant-width version gives only marginal coverage — we state that explicitly if we fall back to it.)
+1. **Patient-level exchangeability.** Split calibration/test **by patient**. The nonconformity score is aggregated at the **patient** level. Position-level coverage is reported afterward as a secondary empirical check, not as the guarantee.
+2. **Studentized scores (use the spread CSDI discards).** With $K=50$ posterior draws, compute per-position mean $\hat\mu$ **and std $\hat\sigma$**, and score $s = |x_{\text{true}} - \hat\mu| / (\hat\sigma + \varepsilon)$. Intervals are **adaptive**: $[\hat\mu - \hat q\,\hat\sigma,\ \hat\mu + \hat q\,\hat\sigma]$. 
 
 Report at $1-\alpha = 0.90$: empirical coverage (target ≥ 90%), mean interval width, and coverage stratified by patient missingness rate.
 
@@ -164,9 +151,9 @@ Report at $1-\alpha = 0.90$: empirical coverage (target ≥ 90%), mean interval 
 
 ---
 
-## 6. Timeline (10 weeks, anchored to the four due dates)
+## 5. Timeline (10 weeks, anchored to the four due dates)
 
-Nominal cadence ~3 hrs/student/week. Reuse of base CSDI reclaims reproduction hours, which are **reallocated to the writing deliverables**; the proposal week (1) and presentation week (10) run hotter by design.
+Nominal cadence ~3 hrs/student/week. 
 
 ### Phase 1 — Foundations & Proposal (Weeks 1–2)
 
@@ -186,35 +173,35 @@ Nominal cadence ~3 hrs/student/week. Reuse of base CSDI reclaims reproduction ho
 ### Phase 2 — Base Reproduction & Extension 1 (Weeks 3–4)
 
 **Week 3 · Oct 15 – Oct 21 — Base CSDI reproduction**
-- **B (lead) + A:** Get the adapted base CSDI training and converging below forward-fill; log grad norms; no explosion/collapse in first 500 steps.
+- **A + B:** Get the adapted base CSDI training and converging below forward-fill; log grad norms; no explosion/collapse in first 500 steps.
 - **C:** BRITS baseline (or simplified bi-GRU fallback, noted); wandb tracking live (loss/step, val MAE-RMSE/epoch, grad norms, config).
 
 **Week 4 · Oct 22 – Oct 28 — Gate + Extension 1 + interim drafting**
 - **A + B (baseline hardening, ~6 hrs across the two):** Drive base CSDI to the **reproduction gate** (§4.4): ≤ ~0.24 @10%, ≥3 seeds. This is the fiddly dual-axis core everything is measured against; it ends on the gate, not on "converging."
-- **B:** Implement `MissingnessEncoder` (§5.1), wire via `mask_emb`; confirm nonzero gradients reach it; overfit sanity check (10-patient block-masked subset, MAE < 0.1 in 50 epochs).
+- **C:** Implement `MissingnessEncoder` (§5.1), wire via `mask_emb`; confirm nonzero gradients reach it; overfit sanity check (10-patient block-masked subset, MAE < 0.1 in 50 epochs).
 - **All (writing):** Draft **Interim Report** — baselines, protocol, gate status, Ext 1 preliminary (mechanical-health, single-seed; *not* an effect claim).
 - **▶ DELIVERABLE — Interim Report due Wed Oct 29.** Must include a **passed gate**; if the gate is not passed, the interim says so honestly and Week 5 becomes baseline debugging (§4.4).
 
 ### Phase 3 — Extension 2 & Combined Model (Weeks 5–6)
 
 **Week 5 · Oct 29 – Nov 4 — Extension 1 complete, Extension 2 start**
-- **B:** Implement `ContinuousTimeEncoding` on TSLO (§5.2); add via `time_enc`; validate on high-autocorrelation variables. Gate here is **mechanical** (gradients flow, loss drops, no NaNs) — *not* effect detection (that waits for 5 seeds).
-- **A:** Feed TSLO $\delta$ through the pipeline at train and inference; confirm $\delta$ stays aligned to observations after masking (a misalignment silently corrupts Ext 2).
+- **A:** Implement `ContinuousTimeEncoding` on TSLO (§5.2); add via `time_enc`; validate on high-autocorrelation variables. Gate here is **mechanical** (gradients flow, loss drops, no NaNs) — *not* effect detection (that waits for 5 seeds).
+- **B:** Feed TSLO $\delta$ through the pipeline at train and inference; confirm $\delta$ stays aligned to observations after masking (a misalignment silently corrupts Ext 2).
 - **C:** Preliminary single-seed runs of base / Ext1 / Ext2 for health only.
 
 **Week 6 · Nov 5 – Nov 11 — Combined model, ready for the seed sweep**
-- **B:** Combined Ext 1+2; confirm both hooks compose and the model runs with all four toggle combinations.
-- **A + C:** Stand up the **paired-seed harness** (§4.3): one driver runs all four variants at each of seeds 42–46 sharing data order and RNG. Dry-run at 20 epochs to confirm pairing and logging.
+- **A:** Combined Ext 1+2; confirm both hooks compose and the model runs with all four toggle combinations.
+- **B + C:** Stand up the **paired-seed harness** (§4.3): one driver runs all four variants at each of seeds 42–46 sharing data order and RNG. Dry-run at 20 epochs to confirm pairing and logging.
 
 ### Phase 4 — Evaluation, Ablation, Runtime (Weeks 7–8)
 
 **Week 7 · Nov 12 – Nov 18 — Full paired 5-seed training**
 - **A:** Full training (100 epochs, early stop on val MAE, patience 10) for all four variants × seeds 42–46 (20 runs).
-- **C:** Populate the **headline table** — mean ± SE and **paired Δ vs. base with its SE**; stratify by missingness type (block vs. random). Main effects confirmatory, interaction exploratory.
-- **B:** Qualitative trajectories (5 patients × 3 variables: HR, serum sodium, GCS); temporal coherence vs. mean/forward-fill.
+- **B:** Populate the **headline table** — mean ± SE and **paired Δ vs. base with its SE**; stratify by missingness type (block vs. random). Main effects confirmatory, interaction exploratory.
+- **C:** Qualitative trajectories (5 patients × 3 variables: HR, serum sodium, GCS); temporal coherence vs. mean/forward-fill.
 
-**Week 8 · Nov 19 – Nov 25 — Ablation + runtime (restructured, arithmetic fixed)**
-Not a 3×3×3 "grid" and not 36 configs. Three **one-factor sensitivity studies** on the **best** variant, plus mask-encoder size only where it's defined:
+**Week 8 · Nov 19 – Nov 25 — Ablation + runtime**
+Three **one-factor sensitivity studies** on the **best** variant, plus mask-encoder size only where it's defined:
 
 | Study | Values | Variants | Seeds | Runs |
 |---|---|---|---|---|
@@ -230,9 +217,9 @@ Not a 3×3×3 "grid" and not 36 configs. Three **one-factor sensitivity studies*
 ### Phase 5 — Stretch, Presentation, Final Report (Weeks 9–10)
 
 **Week 9 · Nov 26 – Dec 1 — (Thanksgiving-light) Final eval, stretch, slides**
-- **C:** Final best-config eval per variant → final results table.
+- **A:** Final best-config eval per variant → final results table.
 - **B:** Per-variable MAE (all 35): top-5 / bottom-5 improvers; hypothesize Ext-2 gains concentrate on high-autocorrelation variables.
-- **A (if gate passed):** Studentized patient-level conformal (§5.3): coverage, width, coverage-by-missingness-rate. Else: uncertainty fan plots.
+- **C (if gate passed):** Studentized patient-level conformal (§5.3): coverage, width, coverage-by-missingness-rate. Else: uncertainty fan plots.
 - **All:** Build and rehearse the **presentation**; assign speaking parts.
 - **▶ DELIVERABLE — Presentation due Tue Dec 2.**
 
@@ -243,7 +230,7 @@ Not a 3×3×3 "grid" and not 36 configs. Three **one-factor sensitivity studies*
 
 ---
 
-## 7. Baselines & Targets (corrected scale)
+## 6. Baselines & Targets (corrected scale)
 
 CSDI is benchmarked at three masked-value rates, not one number. Headline rate is **10%** (matches our blackout protocol); 50/90% are robustness. Baseline-of-baselines numbers (BRITS, V-RIN) are **cited, not re-derived**, so they carry no SE of ours.
 
@@ -278,7 +265,7 @@ Two honest notes for the report: (1) expected extension gains (~0.01–0.02) are
 
 ---
 
-## 8. Rubric Alignment & the Honesty/Performance Strategy
+## 7. Rubric Alignment & the Honesty/Performance Strategy
 
 | Rubric line (pts) | How this plan scores it |
 |---|---|
@@ -299,7 +286,7 @@ Go in eyes-open: if every extension comes back null, the benchmark match + runti
 
 ---
 
-## 9. Deliverables, Report Structure, Risks
+## 8. Deliverables, Report Structure, Risks
 
 ### Deliverables
 Proposal (Oct 8) · Interim Report (Oct 29) · Presentation (Dec 2) · Final Report (Dec 10) · Modular PyTorch repo (four CLI-toggled variants, tests, reproducible scripts, cited CSDI source) · Baseline suite · Reproduced+gated CSDI · Ext 1 · Ext 2 · Full model · Restructured ablation + runtime plot · Conformal module (stretch).
@@ -313,7 +300,7 @@ Proposal (Oct 8) · Interim Report (Oct 29) · Presentation (Dec 2) · Final Rep
 6. Limitations — patient-level exchangeability; grid vs. native-timestamp choice for TSLO; reduced scale vs. published; single dataset.
 7. Conclusion & future work (per-feature TSLO attention bias; native-timestamp irregular grid).
 
-### Risk register (merged + new)
+### Risk register
 | Risk | Likelihood | Mitigation |
 |---|---|---|
 | Base CSDI misses the gate (>~0.24 @10%) | Medium | Reuse + adapt; 2 students in Week 4; ≥3-seed gate; freeze extensions until passed. |
@@ -329,12 +316,7 @@ Proposal (Oct 8) · Interim Report (Oct 29) · Presentation (Dec 2) · Final Rep
 
 ---
 
-## 10. Open Items to Confirm (not blocking)
-- **Instructor sign-off on code reuse.** The rubric permits reusing one cited implementation; confirm your instructor reads it the same way before Week 3.
-- **Proposal/interim length & format** requirements from the syllabus (page limits, template).
-- **GPU access** — the paired 5-seed sweep + ablation assumes reliable single-GPU access; if it's shared/queued, start the Week-7 sweep earlier.
-
-## 11. Key References
+## 9. Key References
 - Tashiro et al. (2021). *CSDI.* NeurIPS. arXiv:2107.03502
 - Kazemi et al. (2019). *Time2Vec.* arXiv:1907.05321
 - Cao et al. (2018). *BRITS.* NeurIPS.

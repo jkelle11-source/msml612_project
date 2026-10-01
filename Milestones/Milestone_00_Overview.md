@@ -1,23 +1,9 @@
 # Milestones Overview — Missingness-Aware Diffusion Imputation (MSML612)
 
-Ten weekly GitHub milestones (`M1`–`M10`) generated from [`Docs/PROJECT_PLAN.md`](../Docs/PROJECT_PLAN.md), one Markdown file each. This index is the map: the deliverable calendar, the per-person load balance, the soft ownership tracks, and the critical path. Each milestone file holds the full issue detail (Assignee / Labels / Blocked by / Blocks / Context / Deliverables / Definition of Done).
+Ten weekly GitHub milestones (`M1`–`M10`), one Markdown file each. This index is the map: the deliverable calendar, the per-person load balance, the soft ownership tracks, and the critical path. Each milestone file holds the full issue detail (Assignee / Labels / Blocked by / Blocks / Context / Deliverables / Definition of Done).
 
 **Team:** Jake `@jkelle11-source` · Josh `@JoshOlu` · Sankha `@SankhaS`
 **Duration:** ~10 weeks (Sep 30 – Dec 10, 2026) · **Dataset:** PhysioNet/CinC Challenge 2012
-
----
-
-## Delegation principle
-
-We do **not** lock people into fixed roles for the whole project. Instead we run three **soft tracks** — coherent enough to keep handoffs low, but rebalanced week-to-week so no one is overloaded during a crunch. Ownership is stated per milestone, and **names↔tracks are swappable** (the tracks are self-contained, so reassigning is a find-replace on the handles).
-
-| Track | Default owner | Scope |
-|---|---|---|
-| **Data & diffusion engine + TSLO / Ext 2** | **Jake** | δ (time-since-last-obs) lifecycle end-to-end, noising + training loop, sampler, the seed-sweep run, latency profiling, conformal, reproducibility |
-| **Architecture** | **Josh** | Reused-CSDI fork, denoiser adaptation + hooks, Ext 1 mask encoder, combined model, qualitative + per-variable analysis |
-| **Evaluation & protocol** | **Sankha** | Maskers + metrics, baselines, paired-seed harness, headline table, ablation, stats, final eval |
-
-Two structural choices make this balance work: **Ext 2 sits on Jake's track** (he owns δ, so the δ producer and consumer are the same person), which frees Josh during his W2–W4 crunch; and the two real bottlenecks — **base reproduction (W3) and the gate (W4) — are paired (Jake + Josh)**. The four writing deliverables are shared across all three.
 
 ---
 
@@ -61,5 +47,3 @@ Issues owned (including co-owned). The five shared kickoff/writing issues (`M1-4
 Everything downstream of `M4-1` assumes a **passed gate**. If the gate fails by Oct 29, the interim (`M4-3`) says so honestly and Week 5 becomes baseline debugging (§4.4); Extension 3 (conformal) is an explicit stretch gated at the end of Week 8 (`M8-3`) and can be cut cleanly without weakening the core project.
 
 ---
-
-*Generated from `Docs/PROJECT_PLAN.md`. To create the actual GitHub milestones/issues from these files, they can be fed to `gh` — but as with the MSML650 reference, these are Markdown planning artifacts, not live GitHub objects.*
