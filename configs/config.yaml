@@ -1,0 +1,57 @@
+# =============================================================================
+# Frozen project configuration — Missingness-Aware Diffusion Imputation (CSDI)
+# =============================================================================
+# These are the "decisions locked in" constants from PROJECT_PLAN.md §0 and the
+# frozen experimental protocol (§3). Values here pin every model-vs-model
+# comparison for the entire project. Treat changes as protocol changes, not
+# config tweaks, and document any change in the report.
+
+protocol:
+  # -------------------------------------------------------------------------
+  # FROZEN EvalMasker seed (PROJECT_PLAN §3.1, §4.1; M1-4 deliverable).
+  # Seeds the ONE EvalMasker that holds out a fixed 10% of observed values as
+  # evaluation targets, byte-identical across every model and every seed for
+  # the whole project. Chosen value ties to the PhysioNet 2012 dataset and is
+  # deliberately distinct from the run seeds (42-46) so eval-holdout RNG can
+  # never be confused with per-run RNG.
+  #
+  # !!! DO NOT CHANGE. Changing it silently invalidates every comparison. !!!
+  # Consumed by eval.EvalMasker (M1-3).
+  eval_masker_seed: 2012
+
+  # Fraction of observed values held out as the fixed evaluation target set
+  # (the "10% masked" headline rate). PROJECT_PLAN §3.1, §6.
+  eval_holdout_fraction: 0.10
+
+  # Paired 5-seed evaluation — common random numbers across all variants
+  # (PROJECT_PLAN §3.3). Every variant is trained on these same seeds so each
+  # variant-vs-base comparison is a paired difference.
+  run_seeds: [42, 43, 44, 45, 46]
+
+  # Reproduction gate: base CSDI must reach <= this MAE @10% averaged over >=3
+  # seeds before any extension delta is trusted (PROJECT_PLAN §3.4).
+  gate_mae_at_10pct: 0.24
+  gate_min_seeds: 3
+
+# -----------------------------------------------------------------------------
+# Data grid (PhysioNet/CinC 2012 Set A). PROJECT_PLAN §1, M1-1.
+# -----------------------------------------------------------------------------
+data:
+  n_timesteps: 48          # T: hourly grid over 48 hours
+  n_features: 35           # D: vitals/labs (confirm exact count in M1-1)
+  # Per-variable z-scoring uses TRAIN-SPLIT statistics only, applied to
+  # val/test; MAE/RMSE reported in standardized units (PROJECT_PLAN §3.2).
+  normalization: zscore_train_only
+
+# -----------------------------------------------------------------------------
+# Model / architecture invariants (PROJECT_PLAN §3.6).
+# -----------------------------------------------------------------------------
+model:
+  # Fixed across the d_model in {64,128,256} sweep so head_dim stays an integer
+  # (16/32/64). State the rule so the ablation does not silently break.
+  n_heads: 4
+  d_model_sweep: [64, 128, 256]
+
+  # Extension toggles (default off = reproduced base CSDI). PROJECT_PLAN §4.
+  use_mask_embedding: false   # Extension 1 (--use_mask_embedding)
+  use_time_encoding: false    # Extension 2 (--use_time_encoding)

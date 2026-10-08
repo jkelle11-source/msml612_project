@@ -1,0 +1,3 @@
+# Processed artifacts target: (N, 48, D) tensors, observation mask, TSLO delta,
+# fitted z-score scaler, and the fixed train/val/test split.
+# Directory is tracked (this .gitkeep); its data contents are git-ignored.

@@ -1,0 +1,102 @@
+# Missingness-Aware Diffusion Imputation for Clinical Time Series
+
+An extension of **CSDI** (Conditional Score-based Diffusion for Imputation) for
+multivariate clinical time-series imputation on the **PhysioNet/CinC Challenge 2012**
+dataset, with a learned missingness embedding (Ext 1) and a TSLO-based continuous-time
+encoding (Ext 2), plus a stretch conformal-interval wrapper (Ext 3).
+
+**Course:** MSML612 — Deep Learning, University of Maryland.
+See [`Docs/PROJECT_PLAN.md`](Docs/PROJECT_PLAN.md) for the authoritative plan and
+[`Milestones/`](Milestones/) for the milestone/issue breakdown.
+
+> **Reuse decision (PROJECT_PLAN §0):** we **reuse, don't reimplement**, the base CSDI
+> denoiser — our engineering effort goes into the extensions, the protocol, and the
+> evaluation. The reused source is cited below.
+
+---
+
+## Repository layout
+
+The layout is a locked-in decision (PROJECT_PLAN §0; agreed at the M1-4 kickoff). Each
+top-level source directory is a Python package:
+
+```text
+data/          # PhysioNet Set A pipeline: loader -> (N,48,D) + mask, TSLO delta,
+               #   z-scoring (train-split stats only).                      [M1-1]
+  raw/         #   raw Set A download target        (git-ignored contents)
+  processed/   #   processed tensors/scaler/splits  (git-ignored contents)
+models/        # reused CSDI denoiser + extensions (MissingnessEncoder,
+               #   ContinuousTimeEncoding).                                 [M1-2]
+diffusion/     # noising schedule, q_sample, masked objective, DDPM sampler.
+eval/          # EvalMasker / TrainMasker + masked, standardized metrics.   [M1-3]
+configs/       # frozen protocol config (config.yaml).
+Docs/          # project plan + shared notes (e.g. CSDI_Objective.md).
+Milestones/    # per-milestone GitHub issue breakdown (M00-M10).
+```
+
+Processed tensors, the fitted scaler, model checkpoints, and `wandb/` outputs are
+git-ignored; only code and small configs are committed.
+
+---
+
+## Frozen protocol constants
+
+All locked protocol values live in [`configs/config.yaml`](configs/config.yaml). The
+load-bearing one is the **`EvalMasker` seed** (`protocol.eval_masker_seed`), which pins
+the fixed 10% evaluation-target holdout identically across every model and every seed for
+the entire project (PROJECT_PLAN §3.1, §4.1). **It must never change** — doing so silently
+invalidates every comparison. `eval.EvalMasker` (M1-3) reads it from this config.
+
+---
+
+## Denoiser input-hook contract
+
+Frozen at the M1-4 kickoff so the data, architecture, and evaluation tracks can proceed in
+parallel without waiting on each other. The reused CSDI denoiser's `forward` **must** accept
+two optional hooks, both defaulting to `None`:
+
+| Hook | Produced by | Shape | How it enters the denoiser |
+| --- | --- | --- | --- |
+| `mask_emb` | `MissingnessEncoder` (Ext 1, `--use_mask_embedding`) | `(B, T, d_model)` | **added to the denoiser input** |
+| `time_enc` | `ContinuousTimeEncoding` (Ext 2, `--use_time_encoding`) | `(B, T, d_model)` | **added to the denoiser input** |
+
+```python
+def forward(self, x, cond, diffusion_step, *, mask_emb=None, time_enc=None):
+    # When a hook is None the denoiser behaves exactly as the reproduced base CSDI,
+    # so base / Ext1 / Ext2 / Ext1+2 are the four toggle combinations of one model.
+    ...
+```
+
+Rules:
+
+- Both hooks default to `None`; with both `None` the model **is** the reproduced base CSDI.
+- Each hook is **added to the denoiser input** like a positional encoding — it does **not**
+  modify the attention logits (PROJECT_PLAN §4.2).
+- Both must project to `d_model` so they are broadcast-compatible with the input stream.
+
+---
+
+## Reused CSDI implementation
+
+<!-- M1-2 (owner: Josh): record the exact upstream source + commit here.
+     Must state the repo URL, the pinned upstream commit hash, the paper
+     (Tashiro et al. 2021, arXiv:2107.03502), and exactly what we adapt vs. reuse. -->
+_To be completed in M1-2 — fork, pin the upstream commit, and cite the source here._
+
+---
+
+## Environment
+
+Reproducible environment (`python >= 3.10`, `torch >= 2.1`, `einops`, `wandb`) is managed
+with [uv](https://docs.astral.sh/uv/): dependencies are declared in `pyproject.toml`, pinned
+in `uv.lock`, and reproduced from scratch with `uv sync` (M1-1). **Training runs on NVIDIA
+GPUs:** the `torch` CUDA wheel comes from a platform-marked PyTorch index (pinned to the
+training box's CUDA version in M1-1); macOS dev machines resolve CPU/MPS wheels from PyPI
+with no extra config, so local tests still run.
+
+---
+
+## References
+
+Primary references are listed in [`Docs/PROJECT_PLAN.md`](Docs/PROJECT_PLAN.md) §9
+(CSDI, Time2Vec, BRITS, GRU-D, DDPM, conformal prediction, and the dataset).
