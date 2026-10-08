@@ -35,7 +35,7 @@
 - Data loader producing `(N, 48, D)` tensors + binary observation mask `M ∈ {0,1}^{T×D}`, with a train/val/test split fixed and logged.
 - Per-feature **TSLO δ** tensor `(N, 48, D)` (hours since each feature was last actually measured), stored alongside the data and aligned to the grid.
 - Per-variable **z-scoring** computed on the **train split only** and applied to val/test; scaler persisted so inference is reproducible.
-- uv-managed environment (`python ≥ 3.10`, `torch ≥ 2.1`, `einops`, `wandb`): dependencies declared in `pyproject.toml` and pinned in `uv.lock`. **All training runs on NVIDIA/CUDA.** `torch` resolves from a platform-marked PyTorch CUDA index on the Linux training box; macOS dev machines resolve CPU/MPS wheels from PyPI so local tests still run. Pin the exact `cuXXX` wheel to the training box's driver in M1-1.
+- uv-managed environment (`python ≥ 3.10`, `torch ≥ 2.1`, `einops`, `wandb`): dependencies declared in `pyproject.toml` and pinned in `uv.lock`. **All training runs on NVIDIA/CUDA.** Pin the exact `cuXXX` wheel to the training box's driver in M1-1.
 
 **Definition of Done**
 - [ ] Loader returns `(N, 48, D)` + mask for Set A; shapes and missingness rate (~80%) sanity-checked against the archive.
