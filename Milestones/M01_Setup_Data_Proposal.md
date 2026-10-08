@@ -8,7 +8,7 @@
 > Stand up the shared substrate and ship the **Proposal (due Wed Oct 8)**. Three things must exist by end of week: a working PhysioNet Set A data pipeline that emits `(N, 48, D)` tensors *plus the per-feature TSLO δ that Extension 2 will consume*, the reused CSDI implementation forked and running on a toy batch, and the two-mask evaluation objects (`EvalMasker`/`TrainMasker`) with their leakage tests. Everything downstream measures against decisions locked here — the repo layout (`data/ models/ diffusion/ eval/`), the **frozen `EvalMasker` seed**, and the per-variable z-scoring convention (§0, §4). This week is front-loaded by design (§6): pipeline, eval skeleton, and the proposal all land together.
 
 ## Assignment summary
-- **Jake** — PhysioNet Set A loader → `(N, 48, D)`; per-feature **TSLO δ** computation + storage; per-variable **z-scoring** (train-split stats only); conda environment
+- **Jake** — PhysioNet Set A loader → `(N, 48, D)`; per-feature **TSLO δ** computation + storage; per-variable **z-scoring** (train-split stats only); uv environment (`pyproject.toml` + `uv.lock`)
 - **Josh** — Fork and stand up the reused CSDI implementation; run it on a toy batch; **cite the source in the README now**
 - **Sankha** — `EvalMasker` + `TrainMasker` (§4.1) with leakage/immutability unit tests; masked, standardized MAE/RMSE metrics
 - **All three** — Day-1 kickoff (PhysioNet registration ×3, read CSDI §§3–4, agree repo layout, fix + log the `EvalMasker` seed); draft the **Proposal**
@@ -35,13 +35,13 @@
 - Data loader producing `(N, 48, D)` tensors + binary observation mask `M ∈ {0,1}^{T×D}`, with a train/val/test split fixed and logged.
 - Per-feature **TSLO δ** tensor `(N, 48, D)` (hours since each feature was last actually measured), stored alongside the data and aligned to the grid.
 - Per-variable **z-scoring** computed on the **train split only** and applied to val/test; scaler persisted so inference is reproducible.
-- Conda environment (`python ≥ 3.10`, `torch ≥ 2.1`, `einops`, `wandb`) captured in `environment.yml`.
+- uv-managed environment (`python ≥ 3.10`, `torch ≥ 2.1`, `einops`, `wandb`): dependencies declared in `pyproject.toml` and pinned in `uv.lock`. **All training runs on NVIDIA/CUDA.** `torch` resolves from a platform-marked PyTorch CUDA index on the Linux training box; macOS dev machines resolve CPU/MPS wheels from PyPI so local tests still run. Pin the exact `cuXXX` wheel to the training box's driver in M1-1.
 
 **Definition of Done**
 - [ ] Loader returns `(N, 48, D)` + mask for Set A; shapes and missingness rate (~80%) sanity-checked against the archive.
 - [ ] TSLO δ verified against a hand-computed example on 2–3 patients; δ resets to 0 at each observation.
 - [ ] z-score statistics are train-split-only (no val/test leakage) and the scaler round-trips (standardize → inverse ≈ identity).
-- [ ] `environment.yml` reproduces the env from scratch on a teammate's machine.
+- [ ] `uv sync` reproduces the env from `uv.lock` from scratch on a teammate's machine.
 
 ---
 
