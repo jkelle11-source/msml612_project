@@ -159,7 +159,7 @@ Nominal cadence ~3 hrs/student/week.
 
 **Week 1 · Sep 30 – Oct 7 — Setup, data, proposal drafting**
 - **All (day 1):** Register on PhysioNet (all three), pull Set A from the legacy archive in parallel; read CSDI §§3–4 together; B reads Time2Vec. Agree repo layout (`data/ models/ diffusion/ eval/`), fix and log the **`EvalMasker` seed**.
-- **A:** Data loader → `(N, 48, D)`; **compute and store per-feature TSLO $\delta$**; per-variable **z-score** (train stats). Conda env (py≥3.10, torch≥2.1, einops, wandb).
+- **A:** Data loader → `(N, 48, D)`; **compute and store per-feature TSLO $\delta$**; per-variable **z-score** (train stats). uv env (py≥3.10, torch≥2.1, einops, wandb) — deps in `pyproject.toml`, pinned in `uv.lock`, reproduced via `uv sync`.
 - **B:** Fork and stand up the reused CSDI repo; get it running on a toy batch; **cite the source in the README now**.
 - **C:** `EvalMasker` + `TrainMasker` (§4.1) with the leakage/immutability unit tests; MAE/RMSE (masked, standardized).
 - **All (writing):** Draft the **Proposal** from §§1–9.
