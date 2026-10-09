@@ -87,12 +87,50 @@ _To be completed in M1-2 — fork, pin the upstream commit, and cite the source 
 
 ## Environment
 
-Reproducible environment (`python >= 3.10`, `torch >= 2.1`, `einops`, `wandb`) is managed
-with [uv](https://docs.astral.sh/uv/): dependencies are declared in `pyproject.toml`, pinned
-in `uv.lock`, and reproduced from scratch with `uv sync` (M1-1). **Training runs on NVIDIA
-GPUs:** the `torch` CUDA wheel comes from a platform-marked PyTorch index (pinned to the
-training box's CUDA version in M1-1); macOS dev machines resolve CPU/MPS wheels from PyPI
-with no extra config, so local tests still run.
+The environment is managed with [uv](https://docs.astral.sh/uv/): dependencies are declared
+in `pyproject.toml`, pinned in `uv.lock`, and reproduced from scratch with `uv sync --locked`
+(M1-1). The project targets **Python 3.13** (`.python-version`), the version Google Colab
+ships. Runtime dependencies are `torch`, `einops`, `wandb`, `numpy`, `pandas` and `pyyaml`,
+with `pytest` in the dev group.
+
+**Training runs on Google Colab's NVIDIA GPUs.** On Linux, `torch` is pinned to the PyTorch
+`cu130` index (CUDA 13.0, matching Colab's driver), so the lock resolves `torch 2.14.1+cu130`
+there. macOS and Windows resolve the plain PyPI wheel (CPU/MPS), so local tests still run with
+no extra config.
+
+Colab notebook cells run Colab's own Python, not this environment, so launch project code
+with `uv run` from a shell cell:
+
+```text
+!git clone https://github.com/jkelle11-source/msml612_project.git
+%cd msml612_project
+!uv sync --locked
+!uv run python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+```
+
+The last line should print `2.14.1+cu130 13.0 True`. Run the tests anywhere with
+`uv run pytest`; the tests that need the raw Set A files skip themselves when the data has
+not been downloaded.
+
+---
+
+## Dataset
+
+The raw Set A files and the processed dataset are git-ignored, so each machine builds its own
+copy (M1-1). Download PhysioNet/CinC Challenge 2012 Set A and extract it so the record files
+sit at `data/raw/set-a/<RecordID>.txt`, then run from the repo root:
+
+```text
+uv run python -m data.physionet
+```
+
+This writes `data/processed/physionet_set_a.npz` (about 10 MB) in a few seconds. Load it with
+`data.physionet.load_dataset`, which returns a dictionary of ten arrays: `values`, `mask`,
+`delta_obs`, `record_ids`, `features`, `train_idx`, `val_idx`, `test_idx`, `mean` and `std`.
+`values` is z-scored with training-split statistics and is 0 where `mask` is 0. The split is
+70/10/20 by patient, fixed by `data.split_seed` in [`configs/config.yaml`](configs/config.yaml).
+`delta_obs` is computed from the full observation mask; `data.physionet.compute_tslo`
+recomputes it for any other mask.
 
 ---
 
