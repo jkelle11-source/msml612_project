@@ -1,0 +1,30 @@
+[project]
+name = "msml612-project"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "einops>=0.8.2",
+    "numpy>=2.5.3",
+    "pandas>=3.0.6",
+    "pyyaml>=6.0.3",
+    "torch>=2.14.1",
+    "wandb>=0.30.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu130", marker = "sys_platform == 'linux'" }
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
