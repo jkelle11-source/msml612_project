@@ -38,10 +38,17 @@ protocol:
 # -----------------------------------------------------------------------------
 data:
   n_timesteps: 48          # T: hourly grid over 48 hours
-  n_features: 35           # D: vitals/labs (confirm exact count in M1-1)
+  n_features: 35           # D: vitals/labs, CSDI's 35 (37 time series minus MechVent, Weight)
   # Per-variable z-scoring uses TRAIN-SPLIT statistics only, applied to
   # val/test; MAE/RMSE reported in standardized units (PROJECT_PLAN §3.2).
   normalization: zscore_train_only
+
+  # Seed for the fixed 70/10/20 patient-level train/val/test split (M1-1).
+  # Deliberately distinct from eval_masker_seed (2012) and the run seeds
+  # (42-46) so the three kinds of randomness can never be confused. It decides
+  # which patients are scored, so treat it as frozen once results exist.
+  # Consumed by data.physionet.build_dataset.
+  split_seed: 612
 
 # -----------------------------------------------------------------------------
 # Model / architecture invariants (PROJECT_PLAN §3.6).
