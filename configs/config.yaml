@@ -55,8 +55,9 @@ data:
 # -----------------------------------------------------------------------------
 model:
   # Fixed across the d_model in {64,128,256} sweep so head_dim stays an integer
-  # (16/32/64). State the rule so the ablation does not silently break.
-  n_heads: 4
+  # (8/16/32). 8 is upstream CSDI's value, so the gate run matches the published
+  # configuration. State the rule so the ablation does not silently break.
+  n_heads: 8
   d_model_sweep: [64, 128, 256]
 
   # Extension toggles (default off = reproduced base CSDI). PROJECT_PLAN §4.

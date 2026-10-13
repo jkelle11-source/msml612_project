@@ -12,10 +12,10 @@
 
 These are settled and everything downstream assumes them:
 
-1. **Reuse, don't reimplement, base CSDI.** We fork and adapt a published CSDI implementation (cited prominently) rather than re-deriving it from scratch. The rubric explicitly permits this.
+1. **Reuse, don't reimplement, base CSDI.** We fork and adapt a published CSDI implementation (cited prominently) rather than re-deriving it from scratch. The rubric explicitly permits this. **Reuse covers the whole base model, not just the denoiser** (scope settled at the M1-2 review): the noise schedule (quad, β 1e-4 → 0.5, 50 steps), forward noising, masked noise-prediction loss, reverse sampler and attention head count (8) are upstream's published PhysioNet configuration, kept as-is so the reproduction gate (§3.4) is measured against the setup that produced 0.217. The one base component we replace is the masking (§3.1).
 2. **Extension 2 uses TSLO (time-since-last-observation), not raw timestamps or a pairwise attention bias.** The time signal is *per-feature elapsed time since that feature was last actually measured*. This is genuinely irregular even on the 48-step grid, keeps our base comparable to the published benchmark, and makes Ext 2 non-trivial by construction.
 3. **Paired-seed protocol.** All variants are trained on the *same* 5 seeds (42–46) — common random numbers — so every variant-vs-base comparison is a *paired* difference. The SE of the paired difference is what we test, not the SE of two independent means.
-4. **Honesty-aware performance framing.** We lead with *benchmark reproduction* and *runtime analysis* as our guaranteed "high-performance" story, and report extension effects (including nulls) rigorously on top. See §8.
+4. **Honesty-aware performance framing.** We lead with *benchmark reproduction* and *runtime analysis* as our guaranteed "high-performance" story, and report extension effects (including nulls) rigorously on top. See §7.
 
 ---
 
@@ -37,12 +37,12 @@ We implement CSDI (Conditional Score-based Diffusion for Imputation) for multiva
 
 | Date | Milestone | What must be true |
 |---|---|---|
-| **Wed Oct 8** | **Proposal due** | Scope, extensions, baselines, protocol, timeline written. Repackages §§1–9 of this plan. Environment + data pipeline underway. |
+| **Wed Oct 8** | **Proposal due** | Scope, extensions, baselines, protocol, timeline written. Repackages §§1–8 of this plan. Environment + data pipeline underway. |
 | **Wed Oct 29** | **Interim Report due** | Data pipeline + baselines done; **base CSDI reproduced and gate passed (≥3 seeds)**; Extension 1 implemented with preliminary mechanical-health results; full experimental protocol documented. |
 | **Tue Dec 2** | **Presentation due** | Headline 5-seed table complete; ablation + runtime analysis done; slides built and rehearsed. |
 | **Wed Dec 10** | **Final Report due** | Everything, plus stretch conformal (if gate passed), per-variable analysis, uncertainty plots, limitations. |
 
-US Thanksgiving falls **Thu Nov 26**; the week of Nov 23–27 is treated as a light/buffer week (§6).
+US Thanksgiving falls **Thu Nov 26**; the week of Nov 23–27 is treated as a light/buffer week (§5).
 
 ---
 
@@ -55,6 +55,8 @@ CSDI's self-supervision requires *randomizing* which observed values are conditi
 
 - **`EvalMasker`** — seeded **once**, holds out a fixed 10% of observed values as evaluation targets, identical across every model and every seed. This is the "frozen masking strategy."
 - **`TrainMasker`** — draws a *fresh* conditioning/target split each iteration; its stream is reproducible from the run seed but is **not** pinned to a single pattern.
+
+**How these map onto the reused code.** The two maskers are the only part of base CSDI we do not reuse (§0). Upstream draws its training split inside the model (`get_randmask`) from the global NumPy/torch RNGs, so anything else that consumes random numbers — an extension's extra parameter initialisation, for example — would shift the mask stream and break the pairing in §3.3. `TrainMasker` therefore replaces it and draws from its **own** generator; it keeps upstream's `random` strategy (a per-sample target ratio drawn uniformly from [0, 1]), so the only thing that changes is where the random numbers come from. `EvalMasker`'s conditioning mask is passed to the reused model as upstream's `gt_mask`.
 
 Unit test: `EvalMasker` targets are byte-identical across seeds; `TrainMasker` targets differ across iterations; eval targets never enter any conditioning input (no leakage).
 
@@ -74,7 +76,7 @@ Our reproduced base CSDI must reach **≤ ~0.24 MAE @ 10% masked** (within ~10% 
 - The **interaction** (Ext 1+2 vs. each alone) is **exploratory** — with four means inside a ~0.02–0.03 window, 5 seeds may not resolve it, and we will not assert an interaction the error bars can't support.
 
 ### 3.6 Head/`d_model` divisibility
-Fix **`n_heads = 4`** across the `d_model ∈ {64, 128, 256}` sweep (head_dim = 16/32/64, all valid). State the rule so the ablation doesn't silently break.
+Fix **`n_heads = 8`** — upstream CSDI's setting, so the gate run matches the published configuration — across the `d_model ∈ {64, 128, 256}` sweep (head_dim = 8/16/32, all valid). State the rule so the ablation doesn't silently break.
 
 ---
 
@@ -161,14 +163,14 @@ Nominal cadence ~3 hrs/student/week.
 - **All (day 1):** Register on PhysioNet (all three), pull Set A from the legacy archive in parallel; read CSDI §§3–4 together; B reads Time2Vec. Agree repo layout (`data/ models/ diffusion/ eval/`), fix and log the **`EvalMasker` seed**.
 - **A:** Data loader → `(N, 48, D)`; **compute and store per-feature TSLO $\delta$**; per-variable **z-score** (train stats). uv env (py≥3.10, torch≥2.1, einops, wandb) — deps in `pyproject.toml`, pinned in `uv.lock`, reproduced via `uv sync`.
 - **B:** Fork and stand up the reused CSDI repo; get it running on a toy batch; **cite the source in the README now**.
-- **C:** `EvalMasker` + `TrainMasker` (§4.1) with the leakage/immutability unit tests; MAE/RMSE (masked, standardized).
-- **All (writing):** Draft the **Proposal** from §§1–9.
+- **C:** `EvalMasker` + `TrainMasker` (§3.1) with the leakage/immutability unit tests; MAE/RMSE (masked, standardized).
+- **All (writing):** Draft the **Proposal** from §§1–8.
 - **▶ DELIVERABLE — Proposal due Wed Oct 8.**
 
 **Week 2 · Oct 8 – Oct 14 — Diffusion process, objective, baselines start**
-- **A:** Cosine noising schedule + `q_sample`; wire training loop (`Masker → q_sample → denoiser → masked loss → clip → step`).
-- **B:** Adapt the reused denoiser to our tensor shapes and conditioning; confirm the input hook accepts `mask_emb`/`time_enc` (both default `None`).
-- **C:** Mean + forward-fill baselines recorded; DDPM reverse sampler shape/NaN check with a stub.
+- **A:** Training loop on the **reused** diffusion process (`TrainMasker → reused forward noising → denoiser → masked loss → clip → step`), with `TrainMasker` replacing upstream's internal masking; numerically check the reused quad schedule's forward-noising variance. No schedule or `q_sample` of our own (§0).
+- **B:** Adapt the reused model to our tensor shapes and conditioning; thread the `mask_emb`/`time_enc` hooks (both default `None`) through its loss and sampler paths to the denoiser.
+- **C:** Mean + forward-fill baselines recorded; shape/NaN check of the reused reverse sampler, driven through `EvalMasker`.
 
 ### Phase 2 — Base Reproduction & Extension 1 (Weeks 3–4)
 
@@ -177,21 +179,21 @@ Nominal cadence ~3 hrs/student/week.
 - **C:** BRITS baseline (or simplified bi-GRU fallback, noted); wandb tracking live (loss/step, val MAE-RMSE/epoch, grad norms, config).
 
 **Week 4 · Oct 22 – Oct 28 — Gate + Extension 1 + interim drafting**
-- **A + B (baseline hardening, ~6 hrs across the two):** Drive base CSDI to the **reproduction gate** (§4.4): ≤ ~0.24 @10%, ≥3 seeds. This is the fiddly dual-axis core everything is measured against; it ends on the gate, not on "converging."
-- **C:** Implement `MissingnessEncoder` (§5.1), wire via `mask_emb`; confirm nonzero gradients reach it; overfit sanity check (10-patient block-masked subset, MAE < 0.1 in 50 epochs).
+- **A + B (baseline hardening, ~6 hrs across the two):** Drive base CSDI to the **reproduction gate** (§3.4): ≤ ~0.24 @10%, ≥3 seeds. This is the fiddly dual-axis core everything is measured against; it ends on the gate, not on "converging."
+- **C:** Implement `MissingnessEncoder` (§4.1), wire via `mask_emb`; confirm nonzero gradients reach it; overfit sanity check (10-patient block-masked subset, MAE < 0.1 in 50 epochs).
 - **All (writing):** Draft **Interim Report** — baselines, protocol, gate status, Ext 1 preliminary (mechanical-health, single-seed; *not* an effect claim).
-- **▶ DELIVERABLE — Interim Report due Wed Oct 29.** Must include a **passed gate**; if the gate is not passed, the interim says so honestly and Week 5 becomes baseline debugging (§4.4).
+- **▶ DELIVERABLE — Interim Report due Wed Oct 29.** Must include a **passed gate**; if the gate is not passed, the interim says so honestly and Week 5 becomes baseline debugging (§3.4).
 
 ### Phase 3 — Extension 2 & Combined Model (Weeks 5–6)
 
 **Week 5 · Oct 29 – Nov 4 — Extension 1 complete, Extension 2 start**
-- **A:** Implement `ContinuousTimeEncoding` on TSLO (§5.2); add via `time_enc`; validate on high-autocorrelation variables. Gate here is **mechanical** (gradients flow, loss drops, no NaNs) — *not* effect detection (that waits for 5 seeds).
+- **A:** Implement `ContinuousTimeEncoding` on TSLO (§4.2); add via `time_enc`; validate on high-autocorrelation variables. Gate here is **mechanical** (gradients flow, loss drops, no NaNs) — *not* effect detection (that waits for 5 seeds).
 - **B:** Feed TSLO $\delta$ through the pipeline at train and inference; confirm $\delta$ stays aligned to observations after masking (a misalignment silently corrupts Ext 2).
 - **C:** Preliminary single-seed runs of base / Ext1 / Ext2 for health only.
 
 **Week 6 · Nov 5 – Nov 11 — Combined model, ready for the seed sweep**
 - **A:** Combined Ext 1+2; confirm both hooks compose and the model runs with all four toggle combinations.
-- **B + C:** Stand up the **paired-seed harness** (§4.3): one driver runs all four variants at each of seeds 42–46 sharing data order and RNG. Dry-run at 20 epochs to confirm pairing and logging.
+- **B + C:** Stand up the **paired-seed harness** (§3.3): one driver runs all four variants at each of seeds 42–46 sharing data order and RNG. Dry-run at 20 epochs to confirm pairing and logging.
 
 ### Phase 4 — Evaluation, Ablation, Runtime (Weeks 7–8)
 
@@ -211,21 +213,21 @@ Three **one-factor sensitivity studies** on the **best** variant, plus mask-enco
 | Mask-encoder layers | 1 / 2 / 3 | the **two** with an encoder | 3 | 18 |
 
 \*If compute is tight, sweep `T` at a single `d_model` and state it. Total ≈ 35–40 runs, not 180. Cells whose paired-Δ error bars overlap are reported **null**, not dropped.
-- **A:** Inference-latency profile per variant × `d_model`; **MAE-vs-inference-time plot** (the runtime contribution — see §8).
-- ⚠️ **Conformal gate check** at end of week (§5.3).
+- **A:** Inference-latency profile per variant × `d_model`; **MAE-vs-inference-time plot** (the runtime contribution — see §7).
+- ⚠️ **Conformal gate check** at end of week (§4.3).
 
 ### Phase 5 — Stretch, Presentation, Final Report (Weeks 9–10)
 
 **Week 9 · Nov 26 – Dec 1 — (Thanksgiving-light) Final eval, stretch, slides**
 - **A:** Final best-config eval per variant → final results table.
 - **B:** Per-variable MAE (all 35): top-5 / bottom-5 improvers; hypothesize Ext-2 gains concentrate on high-autocorrelation variables.
-- **C (if gate passed):** Studentized patient-level conformal (§5.3): coverage, width, coverage-by-missingness-rate. Else: uncertainty fan plots.
+- **C (if gate passed):** Studentized patient-level conformal (§4.3): coverage, width, coverage-by-missingness-rate. Else: uncertainty fan plots.
 - **All:** Build and rehearse the **presentation**; assign speaking parts.
 - **▶ DELIVERABLE — Presentation due Tue Dec 2.**
 
 **Week 10 · Dec 2 – Dec 9 — Final report & code cleanup**
 - **A:** README with one-command reproduction per variant (command→reported-result table); fixed/logged seeds; docstrings on every class/function; uncertainty fan plots (20 draws + 90% conformal band if completed).
-- **B + C:** Write the **Final Report** (structure in §9).
+- **B + C:** Write the **Final Report** (structure in §8).
 - **▶ DELIVERABLE — Final Report due Wed Dec 10.**
 
 ---
@@ -273,7 +275,7 @@ Two honest notes for the report: (1) expected extension gains (~0.01–0.02) are
 | Difficulty of NN design (25) | Dual-axis denoiser + two architectural extensions. Effort redirected from reproduction to extensions via reuse. |
 | Clean reproducible code (20) | CLI toggles, unit tests, fixed/logged seeds, command→result README, single canonical class names, code matching the math. |
 | **High performance (25)** | **See strategy below.** |
-| Presentation (10) | Proposal + interim + rehearsed slides now exist as tasks; report structure in §9. |
+| Presentation (10) | Proposal + interim + rehearsed slides now exist as tasks; report structure in §8. |
 | References (10) | CSDI, Time2Vec, BRITS, DDPM, conformal, V-RIN, SADI, CFMI, "Beyond Random Missingness." Solid. |
 
 **The high-performance strategy (deliberate, not spin).** This rubric line pays for *performance*, and rigorously reporting a null does not obviously earn it. We resolve the tension by guaranteeing at least one true positive performance story and framing the rest as method quality:
@@ -307,9 +309,9 @@ Proposal (Oct 8) · Interim Report (Oct 29) · Presentation (Dec 2) · Final Rep
 | **Ext 1 ≈0 gain (base already sees mask)** | Medium | Dual-axis encoder; block-missingness as primary regime + synthetic stress test; null is a reportable finding. |
 | Extension gain within seed noise | Medium-High | **Paired** 5 seeds; report SE of the paired Δ; overlapping bars → null, not spun. |
 | **Interaction not resolvable at 5 seeds** | Medium | Scope confirmatory claims to main effects; interaction exploratory. |
-| Masking choice confounds the delta | Medium | One frozen `EvalMasker`; `TrainMasker` randomized (§4.1). |
+| Masking choice confounds the delta | Medium | One frozen `EvalMasker`; `TrainMasker` randomized (§3.1). |
 | Ablation labor under-budgeted | Medium | Restructured to ~35–40 runs; drop to 3 seeds/cell if tight and state it; runtime hours are a real line item. |
-| Deliverable milestones missed | Medium | Proposal/interim/slides are explicit tasks with owners and dates in §6. |
+| Deliverable milestones missed | Medium | Proposal/interim/slides are explicit tasks with owners and dates in §5. |
 | Conformal not reached | Medium | Explicit stretch; gated at end of Week 8; cut cleanly. |
 | PhysioNet DUA wall | Low | Legacy archive Set A (open CSVs); if a DUA appears it's sign-and-download, not CITI. Register day 1, all three. |
 | TSLO misaligned after masking | Medium | Week-5 alignment check; unit test $\delta$ against observations. |

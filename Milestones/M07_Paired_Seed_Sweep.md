@@ -5,7 +5,7 @@
 > **Timeframe:** Week 7 · Nov 12 – Nov 18
 > **Depends on:** `M6`
 > **Description:**
-> Run the headline experiment. Jake executes the **full paired sweep** — all four variants × seeds 42–46 (20 runs, 100 epochs each, early stop on val MAE, patience 10) — on the harness proven in Week 6. Sankha populates the **headline table**: mean ± SE per variant and, crucially, the **paired Δ vs. base with its SE**, stratified by missingness type (block vs. random). Josh produces the qualitative story: reconstructed trajectories for 5 patients × 3 variables against mean/forward-fill. The statistical discipline is fixed (§4.5): main effects (Ext 1 vs. base, Ext 2 vs. base) are **confirmatory**; the interaction is **exploratory**, and any contrast whose paired-Δ error bar overlaps zero is reported **"no significant effect,"** never spun.
+> Run the headline experiment. Jake executes the **full paired sweep** — all four variants × seeds 42–46 (20 runs, 100 epochs each, early stop on val MAE, patience 10) — on the harness proven in Week 6. Sankha populates the **headline table**: mean ± SE per variant and, crucially, the **paired Δ vs. base with its SE**, stratified by missingness type (block vs. random). Josh produces the qualitative story: reconstructed trajectories for 5 patients × 3 variables against mean/forward-fill. The statistical discipline is fixed (§3.5): main effects (Ext 1 vs. base, Ext 2 vs. base) are **confirmatory**; the interaction is **exploratory**, and any contrast whose paired-Δ error bar overlaps zero is reported **"no significant effect,"** never spun.
 
 ## Assignment summary
 - **Jake** — Full training (100 epochs, early stop on val MAE, patience 10) for all four variants × seeds 42–46 (20 runs)
@@ -13,10 +13,10 @@
 - **Josh** — Qualitative trajectories (5 patients × 3 variables: HR, serum sodium, GCS); temporal coherence vs. mean/forward-fill
 
 ## Coordination notes
-- **GPU access is the schedule risk** (§10). 20 × 100-epoch runs need reliable single-GPU time; if it's shared/queued, start Monday and checkpoint aggressively so a preemption doesn't cost a whole cell.
-- **Report the paired Δ, not two independent means** (§4.3). The SE of the paired difference is what separates signal from noise here; expected gains (~0.01–0.02) are the same magnitude as CSDI's masking sensitivity, which is *why* masking is frozen and seeds are paired (§7).
-- **Nulls are findings, stated as such** (§4.5, §8). An overlapping error bar is "no significant effect," reported plainly. This is the honesty bar the whole grade strategy leans on.
-- Block-vs-random stratification matters: Ext 1's honest home is **block missingness** and Ext 2's is **high-autocorrelation variables** (§5.1, §5.2), so the table must let those regimes be read separately.
+- **GPU access is the schedule risk** (§8). 20 × 100-epoch runs need reliable single-GPU time; if it's shared/queued, start Monday and checkpoint aggressively so a preemption doesn't cost a whole cell.
+- **Report the paired Δ, not two independent means** (§3.3). The SE of the paired difference is what separates signal from noise here; expected gains (~0.01–0.02) are the same magnitude as CSDI's masking sensitivity, which is *why* masking is frozen and seeds are paired (§6).
+- **Nulls are findings, stated as such** (§3.5, §7). An overlapping error bar is "no significant effect," reported plainly. This is the honesty bar the whole grade strategy leans on.
+- Block-vs-random stratification matters: Ext 1's honest home is **block missingness** and Ext 2's is **high-autocorrelation variables** (§4.1, §4.2), so the table must let those regimes be read separately.
 
 ---
 
@@ -49,7 +49,7 @@
 - **Blocked by:** `M7-1`, `M3-3`
 - **Blocks:** `M8-1`, `M9-1`
 
-**Context.** Turn the 20 runs into the defensible headline result (§4.3, §7). Compute each variant's mean ± SE and — the number that actually decides whether an extension "counts" — the **paired Δ vs. base with its SE**, stratified by block vs. random missingness. Sankha owns it on the eval/stats track. Main effects are confirmatory; the interaction is exploratory and will not be over-asserted at 5 seeds (§4.5).
+**Context.** Turn the 20 runs into the defensible headline result (§3.3, §6). Compute each variant's mean ± SE and — the number that actually decides whether an extension "counts" — the **paired Δ vs. base with its SE**, stratified by block vs. random missingness. Sankha owns it on the eval/stats track. Main effects are confirmatory; the interaction is exploratory and will not be over-asserted at 5 seeds (§3.5).
 
 **Deliverables**
 - Headline table: base / +Ext1 / +Ext2 / +both, each mean ± SE @10%, plus baselines (mean, forward-fill, BRITS/fallback, and cited BRITS/V-RIN/CSDI numbers).
