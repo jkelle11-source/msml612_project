@@ -25,9 +25,10 @@ data/          # PhysioNet Set A pipeline: loader -> (N,48,D) + mask, TSLO delta
                #   z-scoring (train-split stats only).                      [M1-1]
   raw/         #   raw Set A download target        (git-ignored contents)
   processed/   #   processed tensors/scaler/splits  (git-ignored contents)
-models/        # reused CSDI denoiser + extensions (MissingnessEncoder,
-               #   ContinuousTimeEncoding).                                 [M1-2]
-diffusion/     # noising schedule, q_sample, masked objective, DDPM sampler.
+models/        # reused CSDI model (denoiser + diffusion process) and our
+               #   extensions (MissingnessEncoder, ContinuousTimeEncoding). [M1-2]
+diffusion/     # training loop around the reused diffusion process; no
+               #   schedule or q_sample of our own.                         [M2-1]
 eval/          # EvalMasker / TrainMasker + masked, standardized metrics.   [M1-3]
 configs/       # frozen protocol config (config.yaml).
 Docs/          # project plan + shared notes (e.g. CSDI_Objective.md).
@@ -78,10 +79,50 @@ Rules:
 
 ## Reused CSDI implementation
 
-<!-- M1-2 (owner: Josh): record the exact upstream source + commit here.
-     Must state the repo URL, the pinned upstream commit hash, the paper
-     (Tashiro et al. 2021, arXiv:2107.03502), and exactly what we adapt vs. reuse. -->
-_To be completed in M1-2 — fork, pin the upstream commit, and cite the source here._
+The base CSDI model in [`models/csdi/`](models/csdi/) is **not our work**. It is the authors'
+official implementation, vendored into this repository (M1-2):
+
+| | |
+| --- | --- |
+| Repository | <https://github.com/ermongroup/CSDI> |
+| Pinned commit | [`7f24a436f08d98853a6b43d4f7f04e5a65ecdf27`](https://github.com/ermongroup/CSDI/commit/7f24a436f08d98853a6b43d4f7f04e5a65ecdf27) (2024-03-15, upstream `main`) |
+| Paper | Tashiro, Song, Song, Ermon (2021). *CSDI: Conditional Score-based Diffusion Models for Probabilistic Time Series Imputation.* NeurIPS. [arXiv:2107.03502](https://arxiv.org/abs/2107.03502) |
+| License | MIT, Copyright (c) 2021 Yusuke Tashiro. Kept at [`models/csdi/LICENSE`](models/csdi/LICENSE) |
+
+**Reused unchanged** (copied from the pinned commit):
+
+- `models/csdi/diff_models.py`: the denoiser `diff_CSDI`, its residual blocks with temporal
+  and feature attention, and the diffusion-step embedding.
+- `models/csdi/main_model.py`: `CSDI_base` and `CSDI_Physio`, covering the noise schedule,
+  side information (time embedding, feature embedding, conditioning mask), the masked
+  noise-prediction loss, and the reverse sampler.
+
+**Adapted so far.** Two import lines, each marked `ADAPTED (M1-2)` in the source; no model
+logic is changed:
+
+- `main_model.py` imports `diff_models` relatively, because upstream is a flat script
+  directory and ours is a package.
+- `diff_models.py` imports `linear_attention_transformer` only when `is_linear=True`. The
+  PhysioNet configuration never sets it, so the package is not one of our dependencies.
+
+**Not taken from upstream:** its data loading, training and evaluation scripts, and configs
+(`dataset_*.py`, `exe_*.py`, `utils.py`, `config/`). Ours are in `data/`, `eval/` and
+`configs/`.
+
+**Still to adapt** (M2-2): the `mask_emb` / `time_enc` input hooks from the contract above.
+The vendored `diff_CSDI.forward(x, cond_info, diffusion_step)` does not accept them yet.
+
+**Still to replace** (M2-1): upstream's internal train masking, `get_randmask`. It draws from
+the global NumPy/torch RNGs, which would break seed pairing, so `eval.TrainMasker` will supply
+the conditioning mask instead. The schedule, loss and sampler stay upstream's; we write none of
+our own (PROJECT_PLAN §0, decision 1).
+
+Any later change to the vendored files gets the same `ADAPTED` marker and a line in this
+section.
+
+`tests/test_csdi_smoke.py` trains the vendored model for a few steps on a synthetic batch
+of our shape, `(B, 48, 35)` at about 80% missing, and checks that the loss, gradients and
+sampled imputations are finite. Run it with `uv run pytest tests/test_csdi_smoke.py`.
 
 ---
 
