@@ -3,18 +3,18 @@
 > **GitHub Milestone**
 > **Title:** `M5 — Ext 1 Complete, Ext 2 Start`
 > **Timeframe:** Week 5 · Oct 29 – Nov 4
-> **Depends on:** `M4` *(gate must be passed; otherwise this week is baseline debugging per §4.4)*
+> **Depends on:** `M4` *(gate must be passed; otherwise this week is baseline debugging per §3.4)*
 > **Description:**
-> With the gate passed, the extensions proceed **in parallel** — which is the whole reason Ext 2 sits on Jake's track, not Josh's. Jake owns the **TSLO δ lifecycle end-to-end**: he feeds δ through train and inference *and* builds the **`ContinuousTimeEncoding`** (Ext 2, §5.2), so the producer and consumer of δ are the same person and the only cross-track dependency is the already-frozen `time_enc` hook. Josh finishes Ext 1 polish (freed from the Week-4 crunch). Sankha runs preliminary single-seed base/Ext1/Ext2 runs for *health only*. The gate for both extensions this week is **mechanical** — gradients flow, loss drops, no NaNs — never effect detection, which waits for the 5-seed sweep.
+> With the gate passed, the extensions proceed **in parallel** — which is the whole reason Ext 2 sits on Jake's track, not Josh's. Jake owns the **TSLO δ lifecycle end-to-end**: he feeds δ through train and inference *and* builds the **`ContinuousTimeEncoding`** (Ext 2, §4.2), so the producer and consumer of δ are the same person and the only cross-track dependency is the already-frozen `time_enc` hook. Josh finishes Ext 1 polish (freed from the Week-4 crunch). Sankha runs preliminary single-seed base/Ext1/Ext2 runs for *health only*. The gate for both extensions this week is **mechanical** — gradients flow, loss drops, no NaNs — never effect detection, which waits for the 5-seed sweep.
 
 ## Assignment summary
-- **Jake** — Feed TSLO δ through the pipeline at train and inference (confirm δ stays aligned to observations after masking); implement `ContinuousTimeEncoding` on δ (Ext 2, §5.2); validate on high-autocorrelation variables
+- **Jake** — Feed TSLO δ through the pipeline at train and inference (confirm δ stays aligned to observations after masking); implement `ContinuousTimeEncoding` on δ (Ext 2, §4.2); validate on high-autocorrelation variables
 - **Josh** — Ext 1 polish + hand-off note; support Jake integrating the `time_enc` hook
 - **Sankha** — Preliminary single-seed runs of base / Ext 1 / Ext 2 for health only
 
 ## Coordination notes
-- **δ alignment is the silent killer.** After `TrainMasker`/`EvalMasker` remove values, δ must still index the *true* last observation, not a masked-away one. A misalignment corrupts Ext 2 invisibly (§5.2 risk row, §7). Unit-test δ against observations *after* masking.
-- **True Time2Vec, not the summed-linear version.** Ext 2 is *one* linear dimension + `d_k−1` sinusoidal dimensions **concatenated** (§5.2). The additive-input design means it touches the denoiser input like a positional encoding and **does not modify attention logits** — which is exactly why we need no custom-attention reimplementation and why the pairwise `TimeDeltaBias` was dropped.
+- **δ alignment is the silent killer.** After `TrainMasker`/`EvalMasker` remove values, δ must still index the *true* last observation, not a masked-away one. A misalignment corrupts Ext 2 invisibly (§4.2 risk row, §8). Unit-test δ against observations *after* masking.
+- **True Time2Vec, not the summed-linear version.** Ext 2 is *one* linear dimension + `d_k−1` sinusoidal dimensions **concatenated** (§4.2). The additive-input design means it touches the denoiser input like a positional encoding and **does not modify attention logits** — which is exactly why we need no custom-attention reimplementation and why the pairwise `TimeDeltaBias` was dropped.
 - **Mechanical gate only this week.** "Gradients flow, loss drops, no NaNs" for both extensions. Any "it helps" reading is deferred to Week 7's paired 5-seed sweep.
 
 ---
@@ -47,7 +47,7 @@
 - **Blocked by:** `M5-1`, `M2-2`
 - **Blocks:** `M6-1`
 
-**Context.** The TSLO encoder (§5.2): embed δ with a **true Time2Vec** (linear dim + sinusoidal dims, concatenated), project to `d_model`, and **add** it to the denoiser input via the `time_enc` hook. Jake owns it because it's the δ consumer and he owns δ. Toggle: `--use_time_encoding`. Validate on high-autocorrelation variables (HR, SpO2), where recency should matter most — but only for mechanical health this week.
+**Context.** The TSLO encoder (§4.2): embed δ with a **true Time2Vec** (linear dim + sinusoidal dims, concatenated), project to `d_model`, and **add** it to the denoiser input via the `time_enc` hook. Jake owns it because it's the δ consumer and he owns δ. Toggle: `--use_time_encoding`. Validate on high-autocorrelation variables (HR, SpO2), where recency should matter most — but only for mechanical health this week.
 
 **Deliverables**
 - `ContinuousTimeEncoding(d_k, n_features, d_model)`: `w0` linear (k=0) + `w` sinusoidal (k≥1), concatenated, projected `(n_features·d_k) → d_model`, output `(B, T, d_model)`.

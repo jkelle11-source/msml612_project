@@ -12,7 +12,7 @@
 
 These are settled and everything downstream assumes them:
 
-1. **Reuse, don't reimplement, base CSDI.** We fork and adapt a published CSDI implementation (cited prominently) rather than re-deriving it from scratch. The rubric explicitly permits this.
+1. **Reuse, don't reimplement, base CSDI.** We fork and adapt a published CSDI implementation (cited prominently) rather than re-deriving it from scratch. The rubric explicitly permits this. **Reuse covers the whole base model, not just the denoiser** (scope settled at the M1-2 review): the noise schedule (quad, β 1e-4 → 0.5, 50 steps), forward noising, masked noise-prediction loss, reverse sampler and attention head count (8) are upstream's published PhysioNet configuration, kept as-is so the reproduction gate (§3.4) is measured against the setup that produced 0.217. The one base component we replace is the masking (§3.1).
 2. **Extension 2 uses TSLO (time-since-last-observation), not raw timestamps or a pairwise attention bias.** The time signal is *per-feature elapsed time since that feature was last actually measured*. This is genuinely irregular even on the 48-step grid, keeps our base comparable to the published benchmark, and makes Ext 2 non-trivial by construction.
 3. **Paired-seed protocol.** All variants are trained on the *same* 5 seeds (42–46) — common random numbers — so every variant-vs-base comparison is a *paired* difference. The SE of the paired difference is what we test, not the SE of two independent means.
 4. **Honesty-aware performance framing.** We lead with *benchmark reproduction* and *runtime analysis* as our guaranteed "high-performance" story, and report extension effects (including nulls) rigorously on top. See §8.
@@ -56,6 +56,8 @@ CSDI's self-supervision requires *randomizing* which observed values are conditi
 - **`EvalMasker`** — seeded **once**, holds out a fixed 10% of observed values as evaluation targets, identical across every model and every seed. This is the "frozen masking strategy."
 - **`TrainMasker`** — draws a *fresh* conditioning/target split each iteration; its stream is reproducible from the run seed but is **not** pinned to a single pattern.
 
+**How these map onto the reused code.** The two maskers are the only part of base CSDI we do not reuse (§0). Upstream draws its training split inside the model (`get_randmask`) from the global NumPy/torch RNGs, so anything else that consumes random numbers — an extension's extra parameter initialisation, for example — would shift the mask stream and break the pairing in §3.3. `TrainMasker` therefore replaces it and draws from its **own** generator; it keeps upstream's `random` strategy (a per-sample target ratio drawn uniformly from [0, 1]), so the only thing that changes is where the random numbers come from. `EvalMasker`'s conditioning mask is passed to the reused model as upstream's `gt_mask`.
+
 Unit test: `EvalMasker` targets are byte-identical across seeds; `TrainMasker` targets differ across iterations; eval targets never enter any conditioning input (no leakage).
 
 ### 3.2 Normalization (load-bearing for every comparison)
@@ -74,7 +76,7 @@ Our reproduced base CSDI must reach **≤ ~0.24 MAE @ 10% masked** (within ~10% 
 - The **interaction** (Ext 1+2 vs. each alone) is **exploratory** — with four means inside a ~0.02–0.03 window, 5 seeds may not resolve it, and we will not assert an interaction the error bars can't support.
 
 ### 3.6 Head/`d_model` divisibility
-Fix **`n_heads = 4`** across the `d_model ∈ {64, 128, 256}` sweep (head_dim = 16/32/64, all valid). State the rule so the ablation doesn't silently break.
+Fix **`n_heads = 8`** — upstream CSDI's setting, so the gate run matches the published configuration — across the `d_model ∈ {64, 128, 256}` sweep (head_dim = 8/16/32, all valid). State the rule so the ablation doesn't silently break.
 
 ---
 
@@ -166,9 +168,9 @@ Nominal cadence ~3 hrs/student/week.
 - **▶ DELIVERABLE — Proposal due Wed Oct 8.**
 
 **Week 2 · Oct 8 – Oct 14 — Diffusion process, objective, baselines start**
-- **A:** Cosine noising schedule + `q_sample`; wire training loop (`Masker → q_sample → denoiser → masked loss → clip → step`).
-- **B:** Adapt the reused denoiser to our tensor shapes and conditioning; confirm the input hook accepts `mask_emb`/`time_enc` (both default `None`).
-- **C:** Mean + forward-fill baselines recorded; DDPM reverse sampler shape/NaN check with a stub.
+- **A:** Training loop on the **reused** diffusion process (`TrainMasker → reused forward noising → denoiser → masked loss → clip → step`), with `TrainMasker` replacing upstream's internal masking; numerically check the reused quad schedule's forward-noising variance. No schedule or `q_sample` of our own (§0).
+- **B:** Adapt the reused model to our tensor shapes and conditioning; thread the `mask_emb`/`time_enc` hooks (both default `None`) through its loss and sampler paths to the denoiser.
+- **C:** Mean + forward-fill baselines recorded; shape/NaN check of the reused reverse sampler, driven through `EvalMasker`.
 
 ### Phase 2 — Base Reproduction & Extension 1 (Weeks 3–4)
 
