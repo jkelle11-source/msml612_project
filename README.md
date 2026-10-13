@@ -25,9 +25,10 @@ data/          # PhysioNet Set A pipeline: loader -> (N,48,D) + mask, TSLO delta
                #   z-scoring (train-split stats only).                      [M1-1]
   raw/         #   raw Set A download target        (git-ignored contents)
   processed/   #   processed tensors/scaler/splits  (git-ignored contents)
-models/        # reused CSDI denoiser + extensions (MissingnessEncoder,
-               #   ContinuousTimeEncoding).                                 [M1-2]
-diffusion/     # noising schedule, q_sample, masked objective, DDPM sampler.
+models/        # reused CSDI model (denoiser + diffusion process) and our
+               #   extensions (MissingnessEncoder, ContinuousTimeEncoding). [M1-2]
+diffusion/     # training loop around the reused diffusion process; no
+               #   schedule or q_sample of our own.                         [M2-1]
 eval/          # EvalMasker / TrainMasker + masked, standardized metrics.   [M1-3]
 configs/       # frozen protocol config (config.yaml).
 Docs/          # project plan + shared notes (e.g. CSDI_Objective.md).
@@ -109,8 +110,15 @@ logic is changed:
 `configs/`.
 
 **Still to adapt** (M2-2): the `mask_emb` / `time_enc` input hooks from the contract above.
-The vendored `diff_CSDI.forward(x, cond_info, diffusion_step)` does not accept them yet. Any
-later change to the vendored files gets the same `ADAPTED` marker and a line in this section.
+The vendored `diff_CSDI.forward(x, cond_info, diffusion_step)` does not accept them yet.
+
+**Still to replace** (M2-1): upstream's internal train masking, `get_randmask`. It draws from
+the global NumPy/torch RNGs, which would break seed pairing, so `eval.TrainMasker` will supply
+the conditioning mask instead. The schedule, loss and sampler stay upstream's; we write none of
+our own (PROJECT_PLAN §0, decision 1).
+
+Any later change to the vendored files gets the same `ADAPTED` marker and a line in this
+section.
 
 `tests/test_csdi_smoke.py` trains the vendored model for a few steps on a synthetic batch
 of our shape, `(B, 48, 35)` at about 80% missing, and checks that the loss, gradients and
