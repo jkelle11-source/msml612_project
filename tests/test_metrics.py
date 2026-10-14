@@ -6,7 +6,7 @@ import torch
 from conftest import RAW_DIR
 from data.physionet import invert_scaler
 from eval.masking import EvalMasker
-from eval.metrics import masked_errors, masked_mae, masked_rmse, per_variable_mae
+from eval.metrics import masked_errors, masked_mae, masked_rmse, median_imputation, per_variable_mae
 
 needs_raw_data = pytest.mark.skipif(not RAW_DIR.exists(), reason="raw Set A not downloaded")
 
@@ -32,13 +32,13 @@ def score_dataset(dataset, idx, rng):
     mask, values = dataset["mask"][idx], dataset["values"][idx]
     cond, target = EvalMasker.from_config()(mask, dataset["record_ids"][idx])
     samples = values[None] + rng.normal(scale=0.3, size=(5, *values.shape))    # (K, B, 48, D)
-    guess = np.median(samples, axis=0)
+    guess = median_imputation(samples)
     perfect = np.repeat(values[None], 5, axis=0)
     return dict(
         target=target, values=values,
         model_mae=masked_mae(guess, values, target),
         model_rmse=masked_rmse(guess, values, target),
-        perfect_mae=masked_mae(np.median(perfect, axis=0), values, target),
+        perfect_mae=masked_mae(median_imputation(perfect), values, target),
         mean_impute_mae=masked_mae(np.zeros_like(values), values, target),
         per_var_raw=per_variable_mae(guess, values, target, std=dataset["std"]),
     )
@@ -143,7 +143,29 @@ def test_pooled_mae_is_the_count_weighted_average_of_per_variable():
     weighted = (per_variable_mae(pred, truth, target) * counts).sum() / counts.sum()
     assert masked_mae(pred, truth, target) == pytest.approx(weighted)
 
-# --- 12 + 13: dry run like M2-3 will use it --------------------------------------------
+# --- 12 + 13: one guess from K draws ----------------------------------------------------
+
+def test_median_imputation_by_hand():
+    odd = np.array([[5.0], [1.0], [3.0]])
+    even = np.array([[4.0], [1.0], [3.0], [2.0]])          # sorted 1 2 | 3 4
+    assert median_imputation(odd).tolist() == [3.0]
+    assert median_imputation(even).tolist() == [2.0]        # the lower middle; np.median says 2.5
+    assert median_imputation(even.T, axis=1).tolist() == [2.0]
+
+def test_median_imputation_matches_upstreams_torch_median():
+    for k in (1, 2, 5, 50, 100):                            # upstream scores samples.median(dim=...)
+        samples = torch.randn(k, 3, 48, 35, generator=torch.Generator().manual_seed(k))
+        assert np.array_equal(median_imputation(samples), samples.median(dim=0).values.numpy())
+        swapped = samples.transpose(0, 1)                   # upstream's own layout: draws on axis 1
+        assert np.array_equal(median_imputation(swapped, axis=1), swapped.median(dim=1).values.numpy())
+
+def test_median_imputation_keeps_a_nan_draw_visible():
+    samples = np.arange(8.0).reshape(4, 2)
+    samples[0, 0] = np.nan
+    guess = median_imputation(samples)
+    assert math.isnan(guess[0]) and guess[1] == 3.0
+
+# --- 14 + 15: dry run like M2-3 will use it --------------------------------------------
 
 def test_dry_run_on_built_dataset(small_dataset):
     out = score_dataset(small_dataset, small_dataset["test_idx"], np.random.default_rng(0))
