@@ -23,6 +23,26 @@ protocol:
   # (the "10% masked" headline rate). PROJECT_PLAN §3.1, §6.
   eval_holdout_fraction: 0.10
 
+  # Imputations sampled per patient when scoring; the reported guess is their
+  # median (eval.median_imputation, the lower-middle value as in upstream's
+  # torch.median). 100 is upstream's evaluation default (exe_physio.py --nsample),
+  # i.e. part of the published configuration the gate is measured against (§0).
+  eval_n_samples: 100
+
+  # FROZEN seed for the sampler's noise during evaluation (PROJECT_PLAN §3.3).
+  # eval.EvalSampler re-seeds its generator with this at the start of every
+  # evaluation pass, so a checkpoint's score depends on its weights alone and
+  # every variant, run seed and epoch is scored with the same noise. Distinct
+  # from eval_masker_seed (2012), split_seed (612) and the run seeds (42-46).
+  #
+  # !!! DO NOT CHANGE once results exist. !!!
+  eval_sampling_seed: 2021
+
+  # Patients per sampler batch during evaluation; 16 is upstream's batch size.
+  # Frozen together with the seed above: the noise a patient receives depends
+  # on its position in the pass, so changing this changes every score slightly.
+  eval_batch_size: 16
+
   # Paired 5-seed evaluation — common random numbers across all variants
   # (PROJECT_PLAN §3.3). Every variant is trained on these same seeds so each
   # variant-vs-base comparison is a paired difference.

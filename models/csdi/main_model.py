@@ -4,6 +4,17 @@ import torch.nn as nn
 from .diff_models import diff_CSDI  # ADAPTED (M1-2): relative import, upstream is a flat script dir
 
 
+# ADAPTED (M2-1): ours. Upstream calls torch.randn_like directly, which always draws from the
+# global RNG. Given a `generator` (a CPU torch.Generator) the draw comes from that instead, so
+# paired runs share their noise whatever else touches the global RNG (PROJECT_PLAN §3.3). It is
+# drawn on CPU and moved, since a CPU generator cannot draw on the GPU; that also makes the
+# stream the same on every device. With None this is upstream's call.
+def randn_like(tensor, generator=None):
+    if generator is None:
+        return torch.randn_like(tensor)
+    return torch.randn(tensor.shape, generator=generator, dtype=tensor.dtype).to(tensor.device)
+
+
 class CSDI_base(nn.Module):
     def __init__(self, target_dim, config, device):
         super().__init__()
@@ -103,26 +114,26 @@ class CSDI_base(nn.Module):
         return side_info
 
     def calc_loss_valid(
-        self, observed_data, cond_mask, observed_mask, side_info, is_train
+        self, observed_data, cond_mask, observed_mask, side_info, is_train, generator=None  # ADAPTED (M2-1)
     ):
         loss_sum = 0
         for t in range(self.num_steps):  # calculate loss for all t
             loss = self.calc_loss(
-                observed_data, cond_mask, observed_mask, side_info, is_train, set_t=t
+                observed_data, cond_mask, observed_mask, side_info, is_train, set_t=t, generator=generator  # ADAPTED (M2-1)
             )
             loss_sum += loss.detach()
         return loss_sum / self.num_steps
 
     def calc_loss(
-        self, observed_data, cond_mask, observed_mask, side_info, is_train, set_t=-1
+        self, observed_data, cond_mask, observed_mask, side_info, is_train, set_t=-1, generator=None  # ADAPTED (M2-1)
     ):
         B, K, L = observed_data.shape
         if is_train != 1:  # for validation
             t = (torch.ones(B) * set_t).long().to(self.device)
         else:
-            t = torch.randint(0, self.num_steps, [B]).to(self.device)
+            t = torch.randint(0, self.num_steps, [B], generator=generator).to(self.device)  # ADAPTED (M2-1)
         current_alpha = self.alpha_torch[t]  # (B,1,1)
-        noise = torch.randn_like(observed_data)
+        noise = randn_like(observed_data, generator)  # ADAPTED (M2-1)
         noisy_data = (current_alpha ** 0.5) * observed_data + (1.0 - current_alpha) ** 0.5 * noise
 
         total_input = self.set_input_to_diffmodel(noisy_data, observed_data, cond_mask)
@@ -145,7 +156,7 @@ class CSDI_base(nn.Module):
 
         return total_input
 
-    def impute(self, observed_data, cond_mask, side_info, n_samples):
+    def impute(self, observed_data, cond_mask, side_info, n_samples, generator=None):  # ADAPTED (M2-1)
         B, K, L = observed_data.shape
 
         imputed_samples = torch.zeros(B, n_samples, K, L).to(self.device)
@@ -156,11 +167,11 @@ class CSDI_base(nn.Module):
                 noisy_obs = observed_data
                 noisy_cond_history = []
                 for t in range(self.num_steps):
-                    noise = torch.randn_like(noisy_obs)
+                    noise = randn_like(noisy_obs, generator)  # ADAPTED (M2-1)
                     noisy_obs = (self.alpha_hat[t] ** 0.5) * noisy_obs + self.beta[t] ** 0.5 * noise
                     noisy_cond_history.append(noisy_obs * cond_mask)
 
-            current_sample = torch.randn_like(observed_data)
+            current_sample = randn_like(observed_data, generator)  # ADAPTED (M2-1)
 
             for t in range(self.num_steps - 1, -1, -1):
                 if self.is_unconditional == True:
@@ -177,7 +188,7 @@ class CSDI_base(nn.Module):
                 current_sample = coeff1 * (current_sample - coeff2 * predicted)
 
                 if t > 0:
-                    noise = torch.randn_like(current_sample)
+                    noise = randn_like(current_sample, generator)  # ADAPTED (M2-1)
                     sigma = (
                         (1.0 - self.alpha[t - 1]) / (1.0 - self.alpha[t]) * self.beta[t]
                     ) ** 0.5
@@ -186,7 +197,7 @@ class CSDI_base(nn.Module):
             imputed_samples[:, i] = current_sample.detach()
         return imputed_samples
 
-    def forward(self, batch, is_train=1):
+    def forward(self, batch, is_train=1, generator=None):  # ADAPTED (M2-1): generator, see randn_like
         (
             observed_data,
             observed_mask,
@@ -195,7 +206,10 @@ class CSDI_base(nn.Module):
             for_pattern_mask,
             _,
         ) = self.process_data(batch)
-        if is_train == 0:
+        # ADAPTED (M2-1): target_strategy "external" is ours. The caller supplies the training
+        # conditioning mask in batch["gt_mask"] (eval.TrainMasker), the way evaluation already
+        # does, instead of get_randmask drawing one from the global RNGs. Upstream: `if is_train == 0:`
+        if is_train == 0 or self.target_strategy == "external":
             cond_mask = gt_mask
         elif self.target_strategy != "random":
             cond_mask = self.get_hist_mask(
@@ -208,9 +222,9 @@ class CSDI_base(nn.Module):
 
         loss_func = self.calc_loss if is_train == 1 else self.calc_loss_valid
 
-        return loss_func(observed_data, cond_mask, observed_mask, side_info, is_train)
+        return loss_func(observed_data, cond_mask, observed_mask, side_info, is_train, generator=generator)  # ADAPTED (M2-1)
 
-    def evaluate(self, batch, n_samples):
+    def evaluate(self, batch, n_samples, generator=None):  # ADAPTED (M2-1): generator, see randn_like
         (
             observed_data,
             observed_mask,
@@ -226,7 +240,7 @@ class CSDI_base(nn.Module):
 
             side_info = self.get_side_info(observed_tp, cond_mask)
 
-            samples = self.impute(observed_data, cond_mask, side_info, n_samples)
+            samples = self.impute(observed_data, cond_mask, side_info, n_samples, generator=generator)  # ADAPTED (M2-1)
 
             for i in range(len(cut_length)):  # to avoid double evaluation
                 target_mask[i, ..., 0 : cut_length[i].item()] = 0

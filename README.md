@@ -29,7 +29,8 @@ models/        # reused CSDI model (denoiser + diffusion process) and our
                #   extensions (MissingnessEncoder, ContinuousTimeEncoding). [M1-2]
 diffusion/     # training loop around the reused diffusion process; no
                #   schedule or q_sample of our own.                         [M2-1]
-eval/          # EvalMasker / TrainMasker + masked, standardized metrics.   [M1-3]
+eval/          # EvalMasker / TrainMasker + masked, standardized metrics;
+               #   EvalSampler (frozen-noise evaluation pass).              [M1-3]
 configs/       # frozen protocol config (config.yaml).
 Docs/          # project plan + shared notes (e.g. CSDI_Objective.md).
 Milestones/    # per-milestone GitHub issue breakdown (M00-M10).
@@ -47,6 +48,10 @@ load-bearing one is the **`EvalMasker` seed** (`protocol.eval_masker_seed`), whi
 the fixed 10% evaluation-target holdout identically across every model and every seed for
 the entire project (PROJECT_PLAN §3.1, §4.1). **It must never change** — doing so silently
 invalidates every comparison. `eval.EvalMasker` (M1-3) reads it from this config.
+
+The evaluation sampler is frozen the same way: `eval.EvalSampler` reads
+`protocol.eval_sampling_seed`, `protocol.eval_n_samples` and `protocol.eval_batch_size`
+(see [Random streams](#random-streams-seed-pairing)).
 
 ---
 
@@ -97,13 +102,26 @@ official implementation, vendored into this repository (M1-2):
   side information (time embedding, feature embedding, conditioning mask), the masked
   noise-prediction loss, and the reverse sampler.
 
-**Adapted so far.** Two import lines, each marked `ADAPTED (M1-2)` in the source; no model
-logic is changed:
+**Adapted so far.** Every changed line is marked `ADAPTED` in the source, with the issue
+that changed it.
+
+M1-2, two import lines; no model logic is changed:
 
 - `main_model.py` imports `diff_models` relatively, because upstream is a flat script
   directory and ours is a package.
 - `diff_models.py` imports `linear_attention_transformer` only when `is_linear=True`. The
   PhysioNet configuration never sets it, so the package is not one of our dependencies.
+
+M2-1, two opt-in additions to `main_model.py`. With upstream's own settings
+(`target_strategy: random`, no generator) the model behaves exactly as before:
+
+- `CSDI_base.forward` accepts a new `target_strategy: "external"`. Training then conditions
+  on the mask the caller puts in `batch["gt_mask"]` (from `eval.TrainMasker`), the way
+  evaluation already does, and upstream's `get_randmask` is never called.
+- `forward`, `calc_loss`, `calc_loss_valid`, `evaluate` and `impute` take an optional
+  `generator`, a CPU `torch.Generator`. The diffusion timestep and every noise draw, in
+  training and in the reverse sampler, come from it instead of the global RNG, through one
+  added module-level helper, `randn_like` (see [Random streams](#random-streams-seed-pairing)).
 
 **Not taken from upstream:** its data loading, training and evaluation scripts, and configs
 (`dataset_*.py`, `exe_*.py`, `utils.py`, `config/`). Ours are in `data/`, `eval/` and
@@ -112,10 +130,11 @@ logic is changed:
 **Still to adapt** (M2-2): the `mask_emb` / `time_enc` input hooks from the contract above.
 The vendored `diff_CSDI.forward(x, cond_info, diffusion_step)` does not accept them yet.
 
-**Still to replace** (M2-1): upstream's internal train masking, `get_randmask`. It draws from
-the global NumPy/torch RNGs, which would break seed pairing, so `eval.TrainMasker` will supply
-the conditioning mask instead. The schedule, loss and sampler stay upstream's; we write none of
-our own (PROJECT_PLAN §0, decision 1).
+**Still to do** (M2-1): the training loop itself. The model side of replacing upstream's
+internal train masking is in place: `get_randmask` draws from the global NumPy/torch RNGs,
+which would break seed pairing, so the loop builds the model with `target_strategy: "external"`
+and supplies `eval.TrainMasker`'s conditioning mask. The schedule, loss and sampler stay
+upstream's; we write none of our own (PROJECT_PLAN §0, decision 1).
 
 Any later change to the vendored files gets the same `ADAPTED` marker and a line in this
 section.
@@ -123,6 +142,50 @@ section.
 `tests/test_csdi_smoke.py` trains the vendored model for a few steps on a synthetic batch
 of our shape, `(B, 48, 35)` at about 80% missing, and checks that the loss, gradients and
 sampled imputations are finite. Run it with `uv run pytest tests/test_csdi_smoke.py`.
+`tests/test_csdi_training_path.py` covers the two M2-1 additions on the training path: the
+loss is scored on exactly `TrainMasker`'s targets, the denoiser sees only conditioning
+values, and the timestep and noise come from the generator passed in.
+`tests/test_eval_sampler.py` covers the sampler side.
+
+---
+
+## Random streams (seed pairing)
+
+Variants are compared as paired differences on a shared run seed (PROJECT_PLAN §3.3). That
+only works if every variant draws the same random numbers for the same purpose, and the
+global RNG cannot promise it: one extra draw, such as an extension's layer init, shifts
+every draw after it. `diffusion.streams.RunStreams(run_seed)` therefore gives each source of
+training randomness its own stream, seeded from `(run_seed, stream, epoch)`:
+
+| Stream | Used for | In the training loop |
+| --- | --- | --- |
+| `streams.data_order` | shuffling | `DataLoader(..., shuffle=True, generator=streams.data_order)` |
+| `streams.train_masker` | conditioning/target split of each batch | `cond, target = streams.train_masker(mask)`; `cond` goes in `batch["gt_mask"]` |
+| `streams.diffusion` | diffusion timestep and noise | `model(batch, generator=streams.diffusion)` |
+| global RNG | model init, dropout | `streams.seed_model_init()`, `streams.start_epoch(epoch)` |
+
+Rules:
+
+- Call `streams.seed_model_init()` right before building the model, and build the parts every
+  variant shares before any extension module, so shared weights start identical.
+- Call `streams.start_epoch(epoch)` at the top of every epoch, after the model is built. It
+  re-seeds all four streams in place, so a DataLoader built once keeps working.
+- **Dropout is not paired across variants.** It draws from the global RNG, and a variant with
+  extra dropout layers consumes more of it. Shuffling, masks, timesteps and noise stay
+  identical regardless.
+- **Resuming needs no RNG state.** Because every stream is a function of the run seed and the
+  epoch, a checkpoint taken at an epoch boundary needs only the model, the optimizer (plus
+  any scheduler and early-stopping counters) and the epoch number; the resumed run then ends
+  with the same weights as an uninterrupted one. A run resumed mid-epoch does not.
+- **Evaluation noise is frozen.** `eval.EvalSampler` runs one evaluation pass of the reused
+  sampler: `samples = EvalSampler.from_config()(model, values, mask, cond_mask)`, shape
+  `(K, N, 48, D)`. It re-seeds a private generator with `protocol.eval_sampling_seed` at the
+  start of every pass, so a checkpoint's samples depend on its weights alone, every variant,
+  run seed and epoch is scored with the same noise, and a validation pass during training
+  draws nothing from the global RNG. Patients go through in the order given,
+  `protocol.eval_batch_size` at a time; the noise a patient receives depends on its position
+  in the pass, which is why the batch size is frozen with the seed. The model is put in eval
+  mode for the pass and handed back as it was.
 
 ---
 

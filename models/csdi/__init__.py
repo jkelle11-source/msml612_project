@@ -7,8 +7,8 @@ Paper:    Tashiro, Song, Song, Ermon (2021), "CSDI: Conditional Score-based Diff
 License:  MIT, Copyright (c) 2021 Yusuke Tashiro (see ``LICENSE`` in this directory)
 
 ``diff_models.py`` and ``main_model.py`` are copies of the upstream files at that commit.
-Every line we changed is marked with an ``ADAPTED (M1-2)`` comment; the project README
-lists what is reused and what is adapted.
+Every line we changed is marked with an ``ADAPTED`` comment naming the issue that changed
+it (``M1-2``, ``M2-1``); the project README lists what is reused and what is adapted.
 """
 
 from .diff_models import diff_CSDI
