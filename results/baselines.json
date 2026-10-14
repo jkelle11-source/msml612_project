@@ -1,0 +1,32 @@
+{
+  "units": "standardized (train-split z-scores)",
+  "split_seed": 612,
+  "eval_holdout_fraction": 0.1,
+  "random": {
+    "eval_masker_seed": 2012,
+    "val": {
+      "n_patients": 400,
+      "n_targets": 12886,
+      "mean_imputation": {
+        "mae": 0.695559,
+        "rmse": 0.953657
+      },
+      "forward_fill": {
+        "mae": 0.436614,
+        "rmse": 0.740869
+      }
+    },
+    "test": {
+      "n_patients": 800,
+      "n_targets": 26027,
+      "mean_imputation": {
+        "mae": 0.705297,
+        "rmse": 0.990608
+      },
+      "forward_fill": {
+        "mae": 0.448729,
+        "rmse": 3.325094
+      }
+    }
+  }
+}
