@@ -21,9 +21,16 @@ def masker() -> EvalMasker:
 def test_from_config_reads_the_frozen_protocol(masker: EvalMasker):
     assert masker.seed == CONFIG["protocol"]["eval_masker_seed"] == 2012
     assert masker.fraction == CONFIG["protocol"]["eval_holdout_fraction"] == 0.10
+    assert masker.grid == (CONFIG["data"]["n_timesteps"], CONFIG["data"]["n_features"]) == (48, 35)
 
 def test_eval_seed_is_not_a_run_seed():
     assert CONFIG["protocol"]["eval_masker_seed"] not in CONFIG["protocol"]["run_seeds"]
+
+def test_maskers_and_metrics_import_from_the_package():
+    import eval                                 # the README and config name them as eval.EvalMasker etc.
+    assert eval.EvalMasker is EvalMasker
+    assert {"EvalMasker", "TrainMasker", "masked_mae", "masked_rmse", "per_variable_mae"} <= set(eval.__all__)
+    assert all(callable(getattr(eval, name)) for name in eval.__all__)
 
 # --- hand-checkable fixture -------------------------------------------------------------
 
@@ -69,6 +76,21 @@ def test_input_mask_is_not_modified(masker: EvalMasker):
 def test_mismatched_record_ids_raise(masker: EvalMasker):
     with pytest.raises(ValueError):
         masker(random_mask(n=5), np.arange(4))
+
+def test_memory_layout_does_not_change_the_holdout(masker: EvalMasker):
+    mask, ids = random_mask(), np.arange(50)
+    cond, target = masker(mask, ids)
+    assert target.sum() > 0
+    for same_values in (np.asfortranarray(mask), np.repeat(mask, 2, axis=2)[:, :, ::2]):
+        assert not same_values.flags["C_CONTIGUOUS"]
+        other_cond, other_target = masker(same_values, ids)
+        assert (other_target == target).all() and (other_cond == cond).all()
+
+def test_wrong_grid_layout_raises(masker: EvalMasker):
+    mask = random_mask(n=5)
+    for wrong in (mask.transpose(0, 2, 1), mask[:, :47], mask[0], mask.reshape(5, -1)):
+        with pytest.raises(ValueError, match="mask must be"):       # (N, D, T) would hide different values
+            masker(wrong, np.arange(len(wrong)))
 
 # --- the frozen-protocol guarantees ----------------------------------------------------
 

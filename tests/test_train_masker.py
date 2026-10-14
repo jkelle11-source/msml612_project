@@ -107,6 +107,15 @@ def test_hidden_share_covers_zero_to_one_and_averages_half():
     assert shares.mean().item() == pytest.approx(0.5, abs=0.05)
     assert shares.min().item() < 0.05 and shares.max().item() > 0.95
 
+def test_every_observed_value_is_equally_likely_to_be_hidden():
+    # The count tests above can't see a masker that always hides the same values (say, the earliest).
+    mask = random_mask(n=1)
+    masker, hits, calls = TrainMasker(0), torch.zeros_like(mask), 2000
+    for _ in range(calls):
+        hits += masker(mask)[1]
+    rate = (hits / calls)[mask == 1]
+    assert 0.4 < rate.min() and rate.max() < 0.6          # each one is hidden about half the time
+
 # --- 6: no eval leakage ----------------------------------------------------------------
 
 def test_eval_targets_never_reach_training_split(small_dataset):

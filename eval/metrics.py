@@ -10,6 +10,14 @@ def _hidden(pred, truth, target_mask):
         raise ValueError("target_mask has no hidden boxes to score")
     return pred, truth, hidden
 
+def median_imputation(samples, axis=0):
+    """Point estimate from K sampled imputations: the median over ``axis`` (CSDI's convention).
+
+    For an even K this is the lower of the two middle values, which is what ``torch.median``
+    returns and so what upstream scores -- not their mean, which ``np.median`` would give.
+    """
+    return np.quantile(np.asarray(samples), 0.5, axis=axis, method="lower")
+
 def masked_errors(pred, truth, target_mask):
     """Signed errors ``pred - truth`` at the hidden boxes only, as a flat float64 array.
 
