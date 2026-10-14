@@ -11,3 +11,16 @@ The subtle heart of the frozen protocol (PROJECT_PLAN §3.1, §4.1):
 Also houses masked MAE/RMSE metrics reported in standardized units (§3.2), computed only
 over held-out eval targets, with an optional raw-unit per-variable readout.
 """
+
+from .masking import EvalMasker, TrainMasker
+from .metrics import masked_errors, masked_mae, masked_rmse, median_imputation, per_variable_mae
+
+__all__ = [
+    "EvalMasker",
+    "TrainMasker",
+    "masked_errors",
+    "masked_mae",
+    "masked_rmse",
+    "median_imputation",
+    "per_variable_mae",
+]
