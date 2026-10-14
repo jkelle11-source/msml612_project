@@ -48,15 +48,16 @@
 - **Blocked by:** `M2-2`, `M4-1`
 - **Blocks:** `M5-3`, `M6-1`
 
-**Context.** Implement the **dual-axis** `MissingnessEncoder` (§4.1) — temporal *and* feature attention — that embeds the binary mask and adds it to the denoiser input via `mask_emb`. Dual-axis is the point: block missingness is a *cross-feature* structure a temporal-only encoder can't represent, and the honest claim is that a learned structural embedding adds signal *beyond* the raw mask channel CSDI already consumes. This is Josh's track (model internals). Toggle: `--use_mask_embedding`; trained end-to-end.
+**Context.** Implement the **dual-axis** `MissingnessEncoder` (§4.1) — temporal *and* feature attention — that embeds the binary **conditioning** mask and adds it to the denoiser input via `mask_emb`. That is the same mask CSDI already consumes as a raw channel (`gt_mask`, which `CSDI_base` calls `cond_mask`), never `observed_mask`: `observed_mask` still includes the held-out targets, so an encoder that read it would know where they are, the leak §3.1 rules out. Dual-axis is the point: block missingness is a *cross-feature* structure a temporal-only encoder can't represent, and the honest claim is that a learned structural embedding adds signal *beyond* the raw mask channel. This is Josh's track (model internals). Toggle: `--use_mask_embedding` (`model.use_mask_embedding`), read once by `models.build_model`, which builds the encoder into the model after the parts every variant shares; the model computes `mask_emb` itself, so the training loop is unchanged (settled in `M2-1`; README, input-hook contract). Trained end-to-end.
 
 **Deliverables**
 - `MissingnessEncoder(n_features, d_model, n_heads=2, n_layers=2)` with alternating temporal/feature `TransformerEncoderLayer`s, output `(B, T, d_model)` added to the denoiser input.
-- `--use_mask_embedding` CLI toggle wired through the loop; default off reproduces base exactly.
+- `--use_mask_embedding` toggle wired through `models.build_model` (replacing the `NotImplementedError` it raises until this issue lands), not through the training loop; the model computes `mask_emb` from the conditioning mask on both its training-loss and sampler paths; default off reproduces base exactly.
 - Gradient check (nonzero gradients reach the encoder) and an overfit sanity check (10-patient block-masked subset, MAE < 0.1 in 50 epochs).
 
 **Definition of Done**
 - [ ] Encoder attends over both time and features (shapes/transposes verified).
+- [ ] `mask_emb` depends on the conditioning mask alone: changing `observed_mask` while keeping the conditioning mask fixed leaves it unchanged.
 - [ ] `--use_mask_embedding` on/off toggles cleanly; off == base.
 - [ ] Nonzero gradients reach the encoder during training.
 - [ ] Overfit sanity check passes (MAE < 0.1 on the tiny block-masked subset).
