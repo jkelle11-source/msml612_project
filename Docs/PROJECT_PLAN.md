@@ -65,7 +65,8 @@ Per-variable **z-scoring** using **training-split statistics only**, applied to 
 
 ### 3.3 Paired 5-seed evaluation
 - Seeds **42–46** (field-standard set).
-- **Common random numbers:** the same 5 seeds across all four variants, so each variant shares data order, train-mask stream, and init RNG with the others at the matching seed. Comparisons are **paired differences**; we report the mean paired Δ and the **SE of the paired Δ**, which is typically far smaller than the SE of either mean.
+- **Common random numbers:** the same 5 seeds across all four variants, so each variant shares data order, train-mask stream, and init RNG with the others at the matching seed. The diffusion timestep and noise draws are paired as well, each stream drawn from its own generator rather than the global RNG (as `TrainMasker` is, §3.1); **dropout is the one stream that is not paired**, because a variant with extra dropout layers consumes more of the global RNG. Comparisons are **paired differences**; we report the mean paired Δ and the **SE of the paired Δ**, which is typically far smaller than the SE of either mean.
+- **Frozen evaluation noise:** the reverse sampler's noise comes from one frozen seed (`eval_sampling_seed`), re-seeded at the start of every evaluation pass and run at a fixed batch size and patient order, so a checkpoint's score depends on its weights alone and every variant, seed and epoch is scored with identical noise.
 - Every headline number is mean ± SE over the 5 seeds. A contrast whose paired-Δ error bar overlaps zero is reported as **"no significant effect,"** never hidden or spun.
 
 ### 3.4 Reproduction gate (hard, before any extension delta is trusted)

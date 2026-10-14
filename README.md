@@ -25,11 +25,14 @@ data/          # PhysioNet Set A pipeline: loader -> (N,48,D) + mask, TSLO delta
                #   z-scoring (train-split stats only).                      [M1-1]
   raw/         #   raw Set A download target        (git-ignored contents)
   processed/   #   processed tensors/scaler/splits  (git-ignored contents)
-models/        # reused CSDI model (denoiser + diffusion process) and our
-               #   extensions (MissingnessEncoder, ContinuousTimeEncoding). [M1-2]
-diffusion/     # training loop around the reused diffusion process; no
-               #   schedule or q_sample of our own.                         [M2-1]
-eval/          # EvalMasker / TrainMasker + masked, standardized metrics.   [M1-3]
+models/        # reused CSDI model (denoiser + diffusion process), build_model
+               #   (config -> model), and our extensions (MissingnessEncoder,
+               #   ContinuousTimeEncoding).                                 [M1-2]
+diffusion/     # training data feed, loop and random streams around the
+               #   reused diffusion process; no schedule or q_sample of our
+               #   own.                                                     [M2-1]
+eval/          # EvalMasker / TrainMasker + masked, standardized metrics;
+               #   EvalSampler (frozen-noise evaluation pass).              [M1-3]
 configs/       # frozen protocol config (config.yaml).
 Docs/          # project plan + shared notes (e.g. CSDI_Objective.md).
 Milestones/    # per-milestone GitHub issue breakdown (M00-M10).
@@ -47,6 +50,21 @@ load-bearing one is the **`EvalMasker` seed** (`protocol.eval_masker_seed`), whi
 the fixed 10% evaluation-target holdout identically across every model and every seed for
 the entire project (PROJECT_PLAN §3.1, §4.1). **It must never change** — doing so silently
 invalidates every comparison. `eval.EvalMasker` (M1-3) reads it from this config.
+
+The evaluation sampler is frozen the same way: `eval.EvalSampler` reads
+`protocol.eval_sampling_seed`, `protocol.eval_n_samples` and `protocol.eval_batch_size`
+(see [Random streams](#random-streams-seed-pairing)).
+
+The model and training settings live in the same file, under upstream's key names (M2-1):
+`diffusion` (the reused noise schedule and denoiser size), the side-information keys in
+`model`, and `train` (Adam, weight decay, learning rate and its schedule, epochs, batch size,
+gradient clipping). Their defaults are upstream's published PhysioNet values, the
+configuration the gate is measured against (PROJECT_PLAN §3.4). Unlike the protocol
+constants they may be tuned, but every departure from upstream is documented (M4-1).
+`train.clip_grad_norm` is `null`, meaning no clipping, as upstream. Two of upstream's keys are
+deliberately absent: the head count comes from `model.n_heads` alone, and `target_strategy` is
+always `"external"`, set by `models.build_model`, because upstream's `"random"` draws its masks
+from the global RNGs.
 
 ---
 
@@ -75,6 +93,27 @@ Rules:
   modify the attention logits (PROJECT_PLAN §4.2).
 - Both must project to `d_model` so they are broadcast-compatible with the input stream.
 
+**Who computes the hooks** (settled in M2-1). The extensions belong to the model, not to the
+training loop:
+
+- `models.build_model(config, device)` is the one place the model is built. It reads the
+  extension toggles (`model.use_mask_embedding`, `model.use_time_encoding`) once and builds
+  each enabled extension's module into the model, after the parts every variant shares (see
+  [Random streams](#random-streams-seed-pairing)). Until an extension exists, turning its
+  toggle on raises `NotImplementedError` instead of silently training the base model.
+- The model computes `mask_emb` and `time_enc` itself, on both its training-loss path and its
+  sampler path, and hands them to the denoiser.
+- Every variant is therefore trained and scored through the same calls, and neither passes a
+  hook: `loss = model(batch, generator=streams.diffusion)` in the training loop, and
+  `eval.EvalSampler` (which calls `model.evaluate`) at evaluation. A batch carries upstream's
+  four keys and nothing else: `observed_data`, `observed_mask`, `gt_mask` (the conditioning
+  mask) and `timepoints`.
+- **Both hooks are computed from the conditioning mask** (`gt_mask`, which `CSDI_base` calls
+  `cond_mask`), never from `observed_mask` or the dataset's `delta_obs`. Those two still
+  include the held-out targets, so an extension that read them would know where the targets
+  are, which is the leak PROJECT_PLAN §3.1 rules out. For Extension 2 this means TSLO is
+  recomputed from the conditioning mask for every batch, not read from `delta_obs`.
+
 ---
 
 ## Reused CSDI implementation
@@ -97,13 +136,26 @@ official implementation, vendored into this repository (M1-2):
   side information (time embedding, feature embedding, conditioning mask), the masked
   noise-prediction loss, and the reverse sampler.
 
-**Adapted so far.** Two import lines, each marked `ADAPTED (M1-2)` in the source; no model
-logic is changed:
+**Adapted so far.** Every changed line is marked `ADAPTED` in the source, with the issue
+that changed it.
+
+M1-2, two import lines; no model logic is changed:
 
 - `main_model.py` imports `diff_models` relatively, because upstream is a flat script
   directory and ours is a package.
 - `diff_models.py` imports `linear_attention_transformer` only when `is_linear=True`. The
   PhysioNet configuration never sets it, so the package is not one of our dependencies.
+
+M2-1, two opt-in additions to `main_model.py`. With upstream's own settings
+(`target_strategy: random`, no generator) the model behaves exactly as before:
+
+- `CSDI_base.forward` accepts a new `target_strategy: "external"`. Training then conditions
+  on the mask the caller puts in `batch["gt_mask"]` (from `eval.TrainMasker`), the way
+  evaluation already does, and upstream's `get_randmask` is never called.
+- `forward`, `calc_loss`, `calc_loss_valid`, `evaluate` and `impute` take an optional
+  `generator`, a CPU `torch.Generator`. The diffusion timestep and every noise draw, in
+  training and in the reverse sampler, come from it instead of the global RNG, through one
+  added module-level helper, `randn_like` (see [Random streams](#random-streams-seed-pairing)).
 
 **Not taken from upstream:** its data loading, training and evaluation scripts, and configs
 (`dataset_*.py`, `exe_*.py`, `utils.py`, `config/`). Ours are in `data/`, `eval/` and
@@ -112,10 +164,11 @@ logic is changed:
 **Still to adapt** (M2-2): the `mask_emb` / `time_enc` input hooks from the contract above.
 The vendored `diff_CSDI.forward(x, cond_info, diffusion_step)` does not accept them yet.
 
-**Still to replace** (M2-1): upstream's internal train masking, `get_randmask`. It draws from
-the global NumPy/torch RNGs, which would break seed pairing, so `eval.TrainMasker` will supply
-the conditioning mask instead. The schedule, loss and sampler stay upstream's; we write none of
-our own (PROJECT_PLAN §0, decision 1).
+**Replaced** (M2-1): upstream's internal train masking. `get_randmask` draws from the global
+NumPy/torch RNGs, which would break seed pairing, so `models.build_model` sets
+`target_strategy: "external"` and the training loop (see [Training](#training)) supplies
+`eval.TrainMasker`'s conditioning mask. The schedule, loss and sampler stay upstream's; we write
+none of our own (PROJECT_PLAN §0, decision 1).
 
 Any later change to the vendored files gets the same `ADAPTED` marker and a line in this
 section.
@@ -123,6 +176,109 @@ section.
 `tests/test_csdi_smoke.py` trains the vendored model for a few steps on a synthetic batch
 of our shape, `(B, 48, 35)` at about 80% missing, and checks that the loss, gradients and
 sampled imputations are finite. Run it with `uv run pytest tests/test_csdi_smoke.py`.
+`tests/test_csdi_training_path.py` covers the two M2-1 additions on the training path: the
+loss is scored on exactly `TrainMasker`'s targets, the denoiser sees only conditioning
+values, and the timestep and noise come from the generator passed in.
+`tests/test_eval_sampler.py` covers the sampler side. `tests/test_forward_noising.py` checks the
+reused schedule numerically (M2-1): the model's ᾱ_t equals the quad schedule worked out by hand
+from `configs/config.yaml`, and the values it noises at every step have the closed-form mean
+√ᾱ_t · x₀ and variance 1 − ᾱ_t. Mind upstream's names when reading `CSDI_base`: `alpha` is the
+cumulative ᾱ_t and `alpha_hat` the per-step 1 − β_t, the reverse of the DDPM paper's.
+
+---
+
+## Random streams (seed pairing)
+
+Variants are compared as paired differences on a shared run seed (PROJECT_PLAN §3.3). That
+only works if every variant draws the same random numbers for the same purpose, and the
+global RNG cannot promise it: one extra draw, such as an extension's layer init, shifts
+every draw after it. `diffusion.streams.RunStreams(run_seed)` therefore gives each source of
+training randomness its own stream, seeded from `(run_seed, stream, epoch)`:
+
+| Stream | Used for | In the training loop |
+| --- | --- | --- |
+| `streams.data_order` | shuffling | `DataLoader(..., shuffle=True, generator=streams.data_order)` |
+| `streams.train_masker` | conditioning/target split of each batch | `cond, target = streams.train_masker(mask)`; `cond` goes in `batch["gt_mask"]` |
+| `streams.diffusion` | diffusion timestep and noise | `model(batch, generator=streams.diffusion)` |
+| global RNG | model init, dropout | `streams.seed_model_init()`, `streams.start_epoch(epoch)` |
+
+Rules:
+
+- Call `streams.seed_model_init()` right before building the model, and build the parts every
+  variant shares before any extension module, so shared weights start identical.
+- Call `streams.start_epoch(epoch)` at the top of every epoch, after the model is built. It
+  re-seeds all four streams in place, so a DataLoader built once keeps working.
+- **Dropout is not paired across variants.** It draws from the global RNG, and a variant with
+  extra dropout layers consumes more of it. Shuffling, masks, timesteps and noise stay
+  identical regardless.
+- **Resuming needs no RNG state.** Because every stream is a function of the run seed and the
+  epoch, a checkpoint taken at an epoch boundary needs only the model, the optimizer (plus
+  any scheduler and early-stopping counters) and the epoch number; the resumed run then ends
+  with the same weights as an uninterrupted one. A run resumed mid-epoch does not.
+- **Evaluation noise is frozen.** `eval.EvalSampler` runs one evaluation pass of the reused
+  sampler: `samples = EvalSampler.from_config()(model, values, mask, cond_mask)`, shape
+  `(K, N, 48, D)`. It re-seeds a private generator with `protocol.eval_sampling_seed` at the
+  start of every pass, so a checkpoint's samples depend on its weights alone, every variant,
+  run seed and epoch is scored with the same noise, and a validation pass during training
+  draws nothing from the global RNG. Patients go through in the order given,
+  `protocol.eval_batch_size` at a time; the noise a patient receives depends on its position
+  in the pass, which is why the batch size is frozen with the seed. The model is put in eval
+  mode for the pass and handed back as it was.
+
+---
+
+## Training
+
+`diffusion.train.train(config, dataset, run_seed, device, on_epoch_end=None)` trains one model
+and returns `(model, history)` (M2-1):
+
+```python
+from pathlib import Path
+
+import yaml
+from data.physionet import load_dataset
+from diffusion.train import train
+
+config = yaml.safe_load(Path("configs/config.yaml").read_text())
+dataset = load_dataset("data/processed/physionet_set_a.npz")
+model, history = train(config, dataset, run_seed=42, device="cuda")
+```
+
+What one run does:
+
+- Builds the model with `models.build_model(config, device)`, right after
+  `streams.seed_model_init()`. `build_model` is the only place a model is built. It converts
+  our config to upstream's layout (`models.build.config_to_dict`), and while an extension does
+  not exist yet, turning on its toggle raises (see the input-hook contract).
+- Feeds the training split only, shuffled on `streams.data_order`
+  (`diffusion.data.train_loader`), as upstream's four batch keys (`diffusion.data.to_batch`).
+- Each step: `TrainMasker` split → `model(batch, generator=streams.diffusion)`, which is
+  upstream's forward noising and masked loss → backward → `clip_grad_norm_` → Adam step.
+  Clipping is off by default (`train.clip_grad_norm: null`, as upstream), but the gradient norm
+  is still computed and recorded.
+- Steps the learning-rate schedule once per epoch (×0.1 at 75% and 90% of `train.epochs`), then
+  calls `on_epoch_end(epoch, model)` if one is given. M3 attaches validation there. Nothing the
+  hook does can shift training, because `start_epoch` re-seeds every stream at the top of the
+  next epoch and `train` puts the model back in train mode.
+- `history` has one record per step, `{"epoch", "loss", "grad_norm", "lr"}`, as plain numbers.
+
+On the CPU, the same config, dataset and run seed give bit-identical weights and history (tested).
+Some GPU kernels are nondeterministic (the backward pass of an embedding layer, for one), so GPU
+reruns may differ slightly. Still to come in M3: a command-line entry point, validation MAE,
+checkpointing, and wandb logging.
+
+Tests:
+
+- `tests/test_build_model.py`: config → upstream's dict, defaults equal upstream's published
+  values, extension toggles raise, no hidden seeding, weights on the requested device.
+- `tests/test_diffusion_data.py`: training patients only and each exactly once, values and masks
+  shuffled together, the shuffle a function of run seed and epoch, `timepoints` as in
+  `EvalSampler`.
+- `tests/test_train.py`: one step on a real batch, upstream's masking never runs, the loss
+  scores exactly `TrainMasker`'s targets, every step replayed from scratch at `lr = 0`,
+  same-seed reproducibility, clipping, the learning-rate schedule, the epoch hook.
+- `tests/test_forward_noising.py`: the schedule check described under
+  [Reused CSDI implementation](#reused-csdi-implementation).
 
 ---
 
