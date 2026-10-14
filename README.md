@@ -53,6 +53,17 @@ The evaluation sampler is frozen the same way: `eval.EvalSampler` reads
 `protocol.eval_sampling_seed`, `protocol.eval_n_samples` and `protocol.eval_batch_size`
 (see [Random streams](#random-streams-seed-pairing)).
 
+The model and training settings live in the same file, under upstream's key names (M2-1):
+`diffusion` (the reused noise schedule and denoiser size), the side-information keys in
+`model`, and `train` (Adam, weight decay, learning rate and its schedule, epochs, batch size,
+gradient clipping). Their defaults are upstream's published PhysioNet values, the
+configuration the gate is measured against (PROJECT_PLAN §3.4). Unlike the protocol
+constants they may be tuned, but every departure from upstream is documented (M4-1).
+`train.clip_grad_norm` is `null`, meaning no clipping, as upstream. Two of upstream's keys are
+deliberately absent: the head count comes from `model.n_heads` alone, and `target_strategy` is
+always `"external"`, set by `models.build_model`, because upstream's `"random"` draws its masks
+from the global RNGs.
+
 ---
 
 ## Denoiser input-hook contract
@@ -79,6 +90,27 @@ Rules:
 - Each hook is **added to the denoiser input** like a positional encoding — it does **not**
   modify the attention logits (PROJECT_PLAN §4.2).
 - Both must project to `d_model` so they are broadcast-compatible with the input stream.
+
+**Who computes the hooks** (settled in M2-1). The extensions belong to the model, not to the
+training loop:
+
+- `models.build_model(config, device)` is the one place the model is built. It reads the
+  extension toggles (`model.use_mask_embedding`, `model.use_time_encoding`) once and builds
+  each enabled extension's module into the model, after the parts every variant shares (see
+  [Random streams](#random-streams-seed-pairing)). Until an extension exists, turning its
+  toggle on raises `NotImplementedError` instead of silently training the base model.
+- The model computes `mask_emb` and `time_enc` itself, on both its training-loss path and its
+  sampler path, and hands them to the denoiser.
+- Every variant is therefore trained and scored through the same calls, and neither passes a
+  hook: `loss = model(batch, generator=streams.diffusion)` in the training loop, and
+  `eval.EvalSampler` (which calls `model.evaluate`) at evaluation. A batch carries upstream's
+  four keys and nothing else: `observed_data`, `observed_mask`, `gt_mask` (the conditioning
+  mask) and `timepoints`.
+- **Both hooks are computed from the conditioning mask** (`gt_mask`, which `CSDI_base` calls
+  `cond_mask`), never from `observed_mask` or the dataset's `delta_obs`. Those two still
+  include the held-out targets, so an extension that read them would know where the targets
+  are, which is the leak PROJECT_PLAN §3.1 rules out. For Extension 2 this means TSLO is
+  recomputed from the conditioning mask for every batch, not read from `delta_obs`.
 
 ---
 
@@ -132,8 +164,8 @@ The vendored `diff_CSDI.forward(x, cond_info, diffusion_step)` does not accept t
 
 **Still to do** (M2-1): the training loop itself. The model side of replacing upstream's
 internal train masking is in place: `get_randmask` draws from the global NumPy/torch RNGs,
-which would break seed pairing, so the loop builds the model with `target_strategy: "external"`
-and supplies `eval.TrainMasker`'s conditioning mask. The schedule, loss and sampler stay
+which would break seed pairing, so `models.build_model` sets `target_strategy: "external"` and
+the loop supplies `eval.TrainMasker`'s conditioning mask. The schedule, loss and sampler stay
 upstream's; we write none of our own (PROJECT_PLAN §0, decision 1).
 
 Any later change to the vendored files gets the same `ADAPTED` marker and a line in this

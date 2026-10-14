@@ -14,7 +14,7 @@
 
 ## Coordination notes
 - **We reuse upstream's diffusion math; only the masking is ours** (settled at the M1-2 review; §0). The vendored `CSDI_base` keeps its quad β-schedule (1e-4 → 0.5, 50 steps), forward noising, masked noise-prediction loss, reverse sampler and 8 attention heads, so the gate run matches the configuration behind the published 0.217. Its internal train masking (`get_randmask`) is the one piece replaced: it draws from the global NumPy/torch RNGs, which would break seed pairing, so conditioning masks come from `TrainMasker` (training) and `EvalMasker` (evaluation, passed as upstream's `gt_mask`).
-- The **training loop (Jake)** and the **model adaptation (Josh)** meet at one interface: the loop hands the reused model a batch plus the `TrainMasker` conditioning mask (with `mask_emb=None`, `time_enc=None`) and gets the masked loss back; noising, the denoiser call and the loss all happen inside the model. Freeze that call signature before either side is finished so the two can be built against a stub. Both issues touch `CSDI_base`'s entry points, so agree up front who edits the vendored file; every change to it carries an `ADAPTED` marker and a README line, as in `M1-2`.
+- The **training loop (Jake)** and the **model adaptation (Josh)** meet at one interface: the loop hands the reused model a batch whose `gt_mask` is the `TrainMasker` conditioning mask and gets the masked loss back; noising, the denoiser call and the loss all happen inside the model. The call is frozen as `loss = model(batch, generator=streams.diffusion)`, so both sides can be built against a stub, and it is the same for every variant: the extension toggles are read once, by `models.build_model`, and the model computes `mask_emb`/`time_enc` itself, from the conditioning mask, on its loss and sampler paths. The loop never passes them (settled in `M2-1`; README, input-hook contract). Both issues touch `CSDI_base`'s entry points, so agree up front who edits the vendored file. `M2-1`'s additions (the `generator` argument and `target_strategy: "external"`) are already in it; every change to it carries an `ADAPTED` marker and a README line, as in `M1-2`.
 - **Baselines are our floor, not our target.** Mean imputation (~0.72) and forward-fill (~0.42 @10%) are the numbers base CSDI must beat in Week 3 to prove it's learning at all (§6).
 - Keep every number in **standardized units** (§3.2) from the very first baseline, or the Week-3 "below forward-fill" check is meaningless.
 
@@ -34,13 +34,15 @@
 - Data feed: batches from `data.physionet.load_dataset` in the form the reused model consumes (`observed_data`, `observed_mask`, `gt_mask`, `timepoints`).
 - Training loop wiring `TrainMasker` (in place of upstream's `get_randmask`), the reused forward noising and **masked** loss (with `mask_emb`/`time_enc` defaulting `None`), gradient clipping, and the optimizer step.
 - A numerical check of the reused schedule: forward-noised samples have the closed-form marginal variance at sampled timesteps.
-- Config surface for the diffusion settings (schedule type, β range, steps `T`; defaults are upstream's published values), learning rate, batch size, and clip norm.
+- Config surface for the diffusion settings (schedule type, β range, steps `T`), learning rate, weight decay, LR schedule, epochs, batch size, and clip norm. Every default is upstream's published value; clipping is off by default, as upstream.
+- `models.build_model(config, device)`: the one place the model is built from config. It takes the head count from `model.n_heads`, always sets `target_strategy: "external"`, and raises `NotImplementedError` if an extension toggle is on before that extension exists; `M4-2` and `M5-2` add their modules here.
 
 **Definition of Done**
 - [ ] Forward-noising variance matches the closed-form value for the reused schedule at sampled timesteps (numerical check).
 - [ ] One training step runs end-to-end on a real batch without shape/NaN errors.
 - [ ] Loss is computed only over `TrainMasker` targets (verified against the mask); upstream's `get_randmask` is not on the training path.
-- [ ] Diffusion/optimizer settings are config-driven, not hardcoded, and the diffusion defaults equal upstream's published PhysioNet values.
+- [ ] Diffusion/optimizer settings are config-driven, not hardcoded, and their defaults equal upstream's published PhysioNet values.
+- [ ] The model is built only through `build_model`, and an extension toggle that is on raises until that extension exists.
 
 ---
 
@@ -50,7 +52,7 @@
 - **Blocked by:** `M1-1`, `M1-2`
 - **Blocks:** `M3-1`, `M4-2`, `M5-1`
 
-**Context.** Adapt the forked CSDI denoiser to our `(B, 48, D)` tensors and conditioning inputs, and — the load-bearing part for the extensions — **confirm the input hook accepts `mask_emb` and `time_enc`, both default `None`**. Getting the hooks right now means Extension 1 (Josh, W4) and Extension 2 (Jake, W5) plug in without touching the denoiser core, which is exactly what keeps those two extensions parallelizable and low-friction. Because the diffusion process is reused as well (see `M2-1`), the denoiser is called from inside `CSDI_base`'s loss and sampler, so the hooks have to be threaded through both of those paths, not only added to the denoiser's own `forward`.
+**Context.** Adapt the forked CSDI denoiser to our `(B, 48, D)` tensors and conditioning inputs, and — the load-bearing part for the extensions — **confirm the input hook accepts `mask_emb` and `time_enc`, both default `None`**. Getting the hooks right now means Extension 1 (Josh, W4) and Extension 2 (Jake, W5) plug in without touching the denoiser core, which is exactly what keeps those two extensions parallelizable and low-friction. Because the diffusion process is reused as well (see `M2-1`), the denoiser is called from inside `CSDI_base`'s loss and sampler, so the hooks have to be threaded through both of those paths, not only added to the denoiser's own `forward`. The training loop does not pass the hooks (settled in `M2-1`; see Coordination notes): the model will compute them itself from the conditioning mask, so they travel from inside `CSDI_base` to the denoiser, and `forward`/`evaluate` keep the signatures the loop and `EvalSampler` call.
 
 **Deliverables**
 - Denoiser adapted to our tensor shapes, timestep embedding, and observation-mask conditioning channel.

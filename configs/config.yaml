@@ -77,9 +77,60 @@ model:
   # Fixed across the d_model in {64,128,256} sweep so head_dim stays an integer
   # (8/16/32). 8 is upstream CSDI's value, so the gate run matches the published
   # configuration. State the rule so the ablation does not silently break.
+  # This is the ONLY place the head count is set: models.build_model copies it
+  # into upstream's diffusion.nheads, which is deliberately absent below.
   n_heads: 8
-  d_model_sweep: [64, 128, 256]
+  d_model_sweep: [64, 128, 256]   # values of diffusion.channels (§3.6)
+
+  # Upstream's side information (config/base.yaml at the pinned commit): time
+  # embedding size, feature embedding size, conditional model. Upstream's
+  # target_strategy is not set here: models.build_model always uses "external"
+  # (conditioning masks from eval.TrainMasker, M2-1), because upstream's
+  # "random" draws from the global RNGs and would break seed pairing (§3.3).
+  timeemb: 128
+  featureemb: 16
+  is_unconditional: 0
 
   # Extension toggles (default off = reproduced base CSDI). PROJECT_PLAN §4.
+  # Read once, by models.build_model, which builds the extension modules into
+  # the model; the training loop never sees them (README, input-hook contract).
   use_mask_embedding: false   # Extension 1 (--use_mask_embedding)
   use_time_encoding: false    # Extension 2 (--use_time_encoding)
+
+# -----------------------------------------------------------------------------
+# Reused diffusion process and denoiser (PROJECT_PLAN §0, decision 1; M2-1).
+# Upstream's published PhysioNet configuration (config/base.yaml at the pinned
+# commit), the setup behind the paper's 0.217, which the gate is measured
+# against (§3.4). Key names are upstream's so the block passes straight to
+# models.csdi.CSDI_Physio. Departures from these values must be documented.
+# -----------------------------------------------------------------------------
+diffusion:
+  layers: 4                     # residual layers in the denoiser
+  channels: 64                  # = d_model; the §3.6 sweep varies it (model.d_model_sweep)
+  diffusion_embedding_dim: 128
+  schedule: quad                # beta_t = linspace(sqrt(beta_start), sqrt(beta_end), T)^2
+  beta_start: 0.0001
+  beta_end: 0.5
+  num_steps: 50                 # diffusion steps T
+  is_linear: false              # standard attention, not linear attention
+
+# -----------------------------------------------------------------------------
+# Optimisation (M2-1). Defaults are upstream's (config/base.yaml, utils.train);
+# tuning on top of them is allowed but must be documented (M4-1).
+#
+# YAML: write floats with a decimal point. PyYAML reads `1e-3` as the STRING
+# "1e-3"; `1.0e-3` is a float.
+# -----------------------------------------------------------------------------
+train:
+  epochs: 200
+  batch_size: 16
+  lr: 1.0e-3                    # Adam
+  weight_decay: 1.0e-6          # hardcoded in upstream's utils.train
+  # MultiStepLR: lr is multiplied by lr_gamma at int(fraction * epochs) for each
+  # fraction, i.e. at epochs 150 and 180 of 200 (upstream's p1, p2).
+  lr_milestones: [0.75, 0.9]
+  lr_gamma: 0.1
+  # Max gradient norm for clip_grad_norm_; null = no clipping, as upstream.
+  # The norm is still computed every step so it can be logged (M3-1).
+  clip_grad_norm: null
+  # Upstream's itr_per_epoch (1.0e+8) never binds on PhysioNet, so it is left out.
