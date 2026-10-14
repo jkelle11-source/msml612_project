@@ -9,4 +9,7 @@ the two architectural extensions built on top of it:
 The denoiser forward pass follows the input-hook contract documented in the project
 README: it accepts ``mask_emb`` and ``time_enc``, both defaulting to ``None``, and adds
 them to the denoiser input (not to the attention logits).
+
+``build.build_model(config, device)`` is the one place a model is built from config (M2-1).
+The extension modules are built there, into the model, when their toggles are on.
 """
