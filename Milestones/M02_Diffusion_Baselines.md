@@ -57,7 +57,7 @@
 
 **Deliverables**
 - Denoiser adapted to our tensor shapes, timestep embedding, and observation-mask conditioning channel.
-- Input hook that **additively** accepts `mask_emb` and `time_enc` (each `(B, T, d_model)`), defaulting to `None` (no-op) when absent, threaded from the reused model's training-loss and sampler paths through to the denoiser.
+- Input hook that **additively** accepts `mask_emb` and `time_enc` (each `(B, T, D, d_model)`: one vector per hour and feature), defaulting to `None` (no-op) when absent, threaded from the reused model's training-loss and sampler paths through to the denoiser.
 - A short interface note documenting the exact call signature the training loop uses.
 
 **Definition of Done**

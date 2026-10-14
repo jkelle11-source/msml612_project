@@ -114,18 +114,21 @@ class CSDI_base(nn.Module):
         return side_info
 
     def calc_loss_valid(
-        self, observed_data, cond_mask, observed_mask, side_info, is_train, generator=None  # ADAPTED (M2-1)
+        self, observed_data, cond_mask, observed_mask, side_info, is_train, generator=None,  # ADAPTED (M2-1)
+        mask_emb=None, time_enc=None,  # ADAPTED (M2-2): input hooks, handed to calc_loss
     ):
         loss_sum = 0
         for t in range(self.num_steps):  # calculate loss for all t
             loss = self.calc_loss(
-                observed_data, cond_mask, observed_mask, side_info, is_train, set_t=t, generator=generator  # ADAPTED (M2-1)
+                observed_data, cond_mask, observed_mask, side_info, is_train, set_t=t, generator=generator,  # ADAPTED (M2-1)
+                mask_emb=mask_emb, time_enc=time_enc,  # ADAPTED (M2-2)
             )
             loss_sum += loss.detach()
         return loss_sum / self.num_steps
 
     def calc_loss(
-        self, observed_data, cond_mask, observed_mask, side_info, is_train, set_t=-1, generator=None  # ADAPTED (M2-1)
+        self, observed_data, cond_mask, observed_mask, side_info, is_train, set_t=-1, generator=None,  # ADAPTED (M2-1)
+        mask_emb=None, time_enc=None,  # ADAPTED (M2-2): input hooks, handed to the denoiser
     ):
         B, K, L = observed_data.shape
         if is_train != 1:  # for validation
@@ -138,7 +141,7 @@ class CSDI_base(nn.Module):
 
         total_input = self.set_input_to_diffmodel(noisy_data, observed_data, cond_mask)
 
-        predicted = self.diffmodel(total_input, side_info, t)  # (B,K,L)
+        predicted = self.diffmodel(total_input, side_info, t, mask_emb=mask_emb, time_enc=time_enc)  # (B,K,L)  ADAPTED (M2-2)
 
         target_mask = observed_mask - cond_mask
         residual = (noise - predicted) * target_mask
@@ -156,7 +159,8 @@ class CSDI_base(nn.Module):
 
         return total_input
 
-    def impute(self, observed_data, cond_mask, side_info, n_samples, generator=None):  # ADAPTED (M2-1)
+    def impute(self, observed_data, cond_mask, side_info, n_samples, generator=None,  # ADAPTED (M2-1)
+               mask_emb=None, time_enc=None):  # ADAPTED (M2-2): input hooks, handed to every reverse step
         B, K, L = observed_data.shape
 
         imputed_samples = torch.zeros(B, n_samples, K, L).to(self.device)
@@ -181,7 +185,9 @@ class CSDI_base(nn.Module):
                     cond_obs = (cond_mask * observed_data).unsqueeze(1)
                     noisy_target = ((1 - cond_mask) * current_sample).unsqueeze(1)
                     diff_input = torch.cat([cond_obs, noisy_target], dim=1)  # (B,2,K,L)
-                predicted = self.diffmodel(diff_input, side_info, torch.tensor([t]).to(self.device))
+                predicted = self.diffmodel(
+                    diff_input, side_info, torch.tensor([t]).to(self.device), mask_emb=mask_emb, time_enc=time_enc  # ADAPTED (M2-2)
+                )
 
                 coeff1 = 1 / self.alpha_hat[t] ** 0.5
                 coeff2 = (1 - self.alpha_hat[t]) / (1 - self.alpha[t]) ** 0.5

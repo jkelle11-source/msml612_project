@@ -8,7 +8,7 @@ License:  MIT, Copyright (c) 2021 Yusuke Tashiro (see ``LICENSE`` in this direct
 
 ``diff_models.py`` and ``main_model.py`` are copies of the upstream files at that commit.
 Every line we changed is marked with an ``ADAPTED`` comment naming the issue that changed
-it (``M1-2``, ``M2-1``); the project README lists what is reused and what is adapted.
+it (``M1-2``, ``M2-1``, ``M2-2``); the project README lists what is reused and what is adapted.
 """
 
 from .diff_models import diff_CSDI

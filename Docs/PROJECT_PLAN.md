@@ -92,27 +92,33 @@ Fix **`n_heads = 8`** — upstream CSDI's setting, so the gate run matches the p
 
 **CSDI consumes the missingness mask as a raw channel; we test whether a learned structural embedding of the mask adds signal beyond that.** 
 
-**Architecture.** The binary mask $M \in \{0,1\}^{T \times D}$ passes through a small **dual-axis** encoder $\phi_\psi$ — temporal *and* feature attention, mirroring the main denoiser — because block missingness is a *cross-feature* structure a temporal-only encoder cannot represent.
+**Architecture.** The binary mask $M \in \{0,1\}^{T \times D}$ passes through a small **dual-axis** encoder $\phi_\psi$ — temporal *and* feature attention, mirroring the main denoiser — because block missingness is a *cross-feature* structure a temporal-only encoder cannot represent. Like the denoiser, it keeps **one token per (hour, feature)**: feature attention needs features to attend over, and the output, `(B, T, D, d_model)`, gives every conditioning value its own embedding. A learned feature embedding tells the features apart, and a learned hour embedding gives temporal attention an order, without which it could not tell contiguous hours from scattered ones.
 
 ```python
-class MissingnessEncoder(nn.Module):  
-    """Dual-axis embedding of the observation mask (temporal + feature attention)."""
-    def __init__(self, n_features, d_model, n_heads=2, n_layers=2):
+class MissingnessEncoder(nn.Module):
+    """Dual-axis embedding of the conditioning mask (temporal + feature attention)."""
+    def __init__(self, n_features, n_timesteps, d_model, n_heads=2, n_layers=2):
         super().__init__()
-        self.input_proj = nn.Linear(n_features, d_model)
-        self.temporal = nn.ModuleList([
-            nn.TransformerEncoderLayer(d_model, n_heads, batch_first=True)
+        self.input_proj = nn.Linear(1, d_model)               # one token per (hour, feature)
+        self.feature_emb = nn.Embedding(n_features, d_model)  # which feature a token is
+        self.time_emb = nn.Embedding(n_timesteps, d_model)    # which hour it is
+        self.temporal = nn.ModuleList([      # dim_feedforward=64, as in the denoiser's layers
+            nn.TransformerEncoderLayer(d_model, n_heads, dim_feedforward=64, batch_first=True)
             for _ in range(n_layers)])
         self.feature = nn.ModuleList([
-            nn.TransformerEncoderLayer(d_model, n_heads, batch_first=True)
+            nn.TransformerEncoderLayer(d_model, n_heads, dim_feedforward=64, batch_first=True)
             for _ in range(n_layers)])
 
     def forward(self, mask):                 # mask: (B, T, D) float
-        x = self.input_proj(mask)            # (B, T, d_model)
+        B, T, D = mask.shape
+        x = (self.input_proj(mask.unsqueeze(-1))       # (B, T, D, d_model)
+             + self.feature_emb.weight                  # (D, d_model)
+             + self.time_emb.weight[:, None])           # (T, 1, d_model)
         for t_layer, f_layer in zip(self.temporal, self.feature):
-            x = t_layer(x)                   # attend over time
-            x = f_layer(x.transpose(1, 2)).transpose(1, 2)  # attend over features
-        return x                             # (B, T, d_model), added to denoiser input
+            x = t_layer(x.transpose(1, 2).reshape(B * D, T, -1))          # attend over time
+            x = x.reshape(B, D, T, -1).transpose(1, 2)
+            x = f_layer(x.reshape(B * T, D, -1)).reshape(B, T, D, -1)     # attend over features
+        return x                             # (B, T, D, d_model), added to denoiser input
 ```
 
 - **Toggle:** `--use_mask_embedding`. Trained end-to-end (not pretrained).
@@ -127,20 +133,21 @@ class MissingnessEncoder(nn.Module):
 
 $$\text{T2V}(\delta)_k = \begin{cases}\omega_0\delta + \phi_0 & k=0\\ \sin(\omega_k\delta + \phi_k) & 1 \le k \le d_k-1\end{cases}$$
 
+Each (hour, feature) is encoded and projected to `d_model` on its own, so the value at that position is told its own staleness rather than a summary of every feature's. The projection is shared across features; the denoiser's feature embedding tells them apart.
+
 ```python
 class ContinuousTimeEncoding(nn.Module):
-    """True Time2Vec of per-feature TSLO; projected to d_model and added like a PE."""
-    def __init__(self, d_k, n_features, d_model):
+    """True Time2Vec of per-feature TSLO; projected to d_model at each (hour, feature), added like a PE."""
+    def __init__(self, d_k, d_model):
         super().__init__()
         self.w0 = nn.Linear(1, 1)             # linear component (k=0)
         self.w  = nn.Linear(1, d_k - 1)       # periodic components (k>=1)
-        self.proj = nn.Linear(n_features * d_k, d_model)
+        self.proj = nn.Linear(d_k, d_model)   # shared by every (hour, feature)
 
     def forward(self, delta):                 # delta: (B, T, D) TSLO in hours
-        B, T, D = delta.shape
         d = delta.unsqueeze(-1)               # (B, T, D, 1)
         t2v = torch.cat([self.w0(d), torch.sin(self.w(d))], dim=-1)  # (B,T,D,d_k)
-        return self.proj(t2v.reshape(B, T, -1))                      # (B, T, d_model)
+        return self.proj(t2v)                                        # (B, T, D, d_model)
 ```
 
 - **Toggle:** `--use_time_encoding`. The encoding is **added to the denoiser input** like a positional encoding — it does **not** touch the attention logits.
