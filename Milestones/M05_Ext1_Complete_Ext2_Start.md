@@ -47,10 +47,10 @@
 - **Blocked by:** `M5-1`, `M2-2`
 - **Blocks:** `M6-1`
 
-**Context.** The TSLO encoder (§4.2): embed δ with a **true Time2Vec** (linear dim + sinusoidal dims, concatenated), project to `d_model`, and **add** it to the denoiser input via the `time_enc` hook. Jake owns it because it's the δ consumer and he owns δ. Toggle: `--use_time_encoding`. Validate on high-autocorrelation variables (HR, SpO2), where recency should matter most — but only for mechanical health this week.
+**Context.** The TSLO encoder (§4.2): embed δ with a **true Time2Vec** (linear dim + sinusoidal dims, concatenated), project each (hour, feature) to `d_model`, and **add** it to the denoiser input via the `time_enc` hook. Jake owns it because it's the δ consumer and he owns δ. Toggle: `--use_time_encoding`. Validate on high-autocorrelation variables (HR, SpO2), where recency should matter most — but only for mechanical health this week.
 
 **Deliverables**
-- `ContinuousTimeEncoding(d_k, n_features, d_model)`: `w0` linear (k=0) + `w` sinusoidal (k≥1), concatenated, projected `(n_features·d_k) → d_model`, output `(B, T, d_model)`.
+- `ContinuousTimeEncoding(d_k, d_model)`: `w0` linear (k=0) + `w` sinusoidal (k≥1), concatenated, projected `d_k → d_model` at each (hour, feature), output `(B, T, D, d_model)`.
 - `--use_time_encoding` CLI toggle; default off reproduces base exactly; added to input, attention logits untouched.
 - Mechanical-health validation run on high-autocorrelation variables (gradients flow, loss drops, no NaNs).
 

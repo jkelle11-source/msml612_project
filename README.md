@@ -76,8 +76,8 @@ two optional hooks, both defaulting to `None`:
 
 | Hook | Produced by | Shape | How it enters the denoiser |
 | --- | --- | --- | --- |
-| `mask_emb` | `MissingnessEncoder` (Ext 1, `--use_mask_embedding`) | `(B, T, d_model)` | **added to the denoiser input** |
-| `time_enc` | `ContinuousTimeEncoding` (Ext 2, `--use_time_encoding`) | `(B, T, d_model)` | **added to the denoiser input** |
+| `mask_emb` | `MissingnessEncoder` (Ext 1, `--use_mask_embedding`) | `(B, T, D, d_model)` | **added to the denoiser input** |
+| `time_enc` | `ContinuousTimeEncoding` (Ext 2, `--use_time_encoding`) | `(B, T, D, d_model)` | **added to the denoiser input** |
 
 ```python
 # models/csdi/diff_models.py (M2-2)
@@ -92,7 +92,10 @@ Rules:
 - Both hooks default to `None`; with both `None` the model **is** the reproduced base CSDI.
 - Each hook is **added to the denoiser input** like a positional encoding — it does **not**
   modify the attention logits (PROJECT_PLAN §4.2).
-- Both must project to `d_model` so they are broadcast-compatible with the input stream.
+- Each hook gives every (hour, feature) its own `d_model` vector, so the value at that hour
+  and feature gets its own embedding. Both extensions encode per-value quantities (which
+  values are hidden, how stale each feature is), and a vector shared by every feature at an
+  hour could not say which feature it describes.
 
 **Who computes the hooks** (settled in M2-1). The extensions belong to the model, not to the
 training loop:
@@ -139,11 +142,12 @@ Shapes, since the axes swap on the way in:
 
 - Our data is `(B, T, D)`. `CSDI_base.process_data` turns it into `(B, D, T)`, and the
   denoiser's stream is `(B, channels, D, T)`.
-- A hook is `(B, T, channels)`: one vector per hour, the same for all 35 features.
+- A hook is `(B, T, D, channels)`, in our axis order: one vector per hour and feature.
   `channels` is upstream's name for `d_model` (`diffusion.channels` in the config, 64).
-- The denoiser adds it as `(B, channels, 1, T)` right after its first projection, so it
-  reaches every feature at that hour. A hook of any other shape raises `ValueError`, which
-  catches one built `(B, D, T)` by mistake.
+- The denoiser reorders it to `(B, channels, D, T)` and adds it right after its first
+  projection, so each vector lands on its own hour and feature. A hook of any other shape
+  raises `ValueError`, which catches one built `(B, D, T, channels)` by mistake, or a single
+  vector per hour.
 
 ---
 
@@ -196,7 +200,7 @@ M2-2, the input hooks from the contract above. With both `None` (the only value 
 calls pass) the model computes exactly what it did before:
 
 - `diff_CSDI.forward` takes keyword-only `mask_emb` and `time_enc` and adds each to its
-  input stream after the first projection, broadcast over the features.
+  input stream after the first projection, each vector at its own hour and feature.
 - `calc_loss`, `calc_loss_valid` and `impute` take the same two arguments and pass them to
   every denoiser call they make. `forward` and `evaluate` are unchanged.
 
@@ -218,8 +222,8 @@ values, and the timestep and noise come from the generator passed in.
 `tests/test_eval_sampler.py` covers the sampler side. `tests/test_denoiser_hooks.py` covers
 M2-2: with no hooks the loss and samples equal the frozen calls' exactly; a nonzero hook
 changes the training loss, the validation loss and the samples; every denoiser call on those
-paths receives the hooks; a hook adds one vector per hour to every feature; a wrongly shaped
-hook is refused; and a real Set A batch trains through both hooks with gradients reaching them. `tests/test_forward_noising.py` checks the
+paths receives the hooks; each vector of a hook lands at its own hour and feature; a wrongly
+shaped hook is refused; and a real Set A batch trains through both hooks with gradients reaching them. `tests/test_forward_noising.py` checks the
 reused schedule numerically (M2-1): the model's ᾱ_t equals the quad schedule worked out by hand
 from `configs/config.yaml`, and the values it noises at every step have the closed-form mean
 √ᾱ_t · x₀ and variance 1 − ᾱ_t. Mind upstream's names when reading `CSDI_base`: `alpha` is the
