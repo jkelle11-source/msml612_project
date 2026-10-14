@@ -88,13 +88,25 @@ class diff_CSDI(nn.Module):
             ]
         )
 
-    def forward(self, x, cond_info, diffusion_step):
+    def forward(self, x, cond_info, diffusion_step, *, mask_emb=None, time_enc=None):  # ADAPTED (M2-2): input hooks
         B, inputdim, K, L = x.shape
 
         x = x.reshape(B, inputdim, K * L)
         x = self.input_projection(x)
         x = F.relu(x)
         x = x.reshape(B, self.channels, K, L)
+
+        # ADAPTED (M2-2): ours. Each hook is added to the input stream like a positional
+        # encoding, never to the attention logits (README, input-hook contract). A hook is one
+        # (B, L, channels) vector per timestep, shared by all K features. None skips the add,
+        # so the base model is computed exactly as upstream computes it.
+        for name, hook in (("mask_emb", mask_emb), ("time_enc", time_enc)):
+            if hook is not None:
+                if hook.shape != (B, L, self.channels):
+                    raise ValueError(
+                        f"{name} must be (B, T, channels) = {(B, L, self.channels)}, got {tuple(hook.shape)}"
+                    )
+                x = x + hook.permute(0, 2, 1).unsqueeze(2)  # (B,channels,1,L), broadcast over K
 
         diffusion_emb = self.diffusion_embedding(diffusion_step)
 

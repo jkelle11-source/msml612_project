@@ -80,7 +80,8 @@ two optional hooks, both defaulting to `None`:
 | `time_enc` | `ContinuousTimeEncoding` (Ext 2, `--use_time_encoding`) | `(B, T, d_model)` | **added to the denoiser input** |
 
 ```python
-def forward(self, x, cond, diffusion_step, *, mask_emb=None, time_enc=None):
+# models/csdi/diff_models.py (M2-2)
+def forward(self, x, cond_info, diffusion_step, *, mask_emb=None, time_enc=None):
     # When a hook is None the denoiser behaves exactly as the reproduced base CSDI,
     # so base / Ext1 / Ext2 / Ext1+2 are the four toggle combinations of one model.
     ...
@@ -113,6 +114,36 @@ training loop:
   include the held-out targets, so an extension that read them would know where the targets
   are, which is the leak PROJECT_PLAN §3.1 rules out. For Extension 2 this means TSLO is
   recomputed from the conditioning mask for every batch, not read from `delta_obs`.
+
+**Where the hooks travel** (M2-2). The frozen calls above stay as they are; the hooks run
+inside the model, from the two places `CSDI_base` calls the denoiser:
+
+```text
+training    model(batch, generator=...)              # frozen, M2-1
+              -> calc_loss(..., mask_emb=None, time_enc=None)        # one denoiser call
+              -> diffmodel(x, side_info, t, mask_emb=..., time_enc=...)
+validation  model(batch, is_train=0, generator=...)
+              -> calc_loss_valid(..., mask_emb, time_enc)            # calc_loss at every step
+evaluation  model.evaluate(batch, n_samples, generator=...)   # frozen, via EvalSampler
+              -> impute(..., mask_emb=None, time_enc=None)           # every reverse step
+              -> diffmodel(x, side_info, t, mask_emb=..., time_enc=...)
+```
+
+Nothing computes a hook yet, so `forward` and `evaluate` pass none and the model is the base.
+An extension (M4-2, M5-2) adds its module in `build_model`, computes its hook from
+`cond_mask` inside `forward` and `evaluate`, and hands it to `calc_loss` or `impute`; their
+signatures already accept it. The same hook is used at every reverse step, since it depends
+on the conditioning mask and not on the diffusion step.
+
+Shapes, since the axes swap on the way in:
+
+- Our data is `(B, T, D)`. `CSDI_base.process_data` turns it into `(B, D, T)`, and the
+  denoiser's stream is `(B, channels, D, T)`.
+- A hook is `(B, T, channels)`: one vector per hour, the same for all 35 features.
+  `channels` is upstream's name for `d_model` (`diffusion.channels` in the config, 64).
+- The denoiser adds it as `(B, channels, 1, T)` right after its first projection, so it
+  reaches every feature at that hour. A hook of any other shape raises `ValueError`, which
+  catches one built `(B, D, T)` by mistake.
 
 ---
 
@@ -161,8 +192,13 @@ M2-1, two opt-in additions to `main_model.py`. With upstream's own settings
 (`dataset_*.py`, `exe_*.py`, `utils.py`, `config/`). Ours are in `data/`, `eval/` and
 `configs/`.
 
-**Still to adapt** (M2-2): the `mask_emb` / `time_enc` input hooks from the contract above.
-The vendored `diff_CSDI.forward(x, cond_info, diffusion_step)` does not accept them yet.
+M2-2, the input hooks from the contract above. With both `None` (the only value the frozen
+calls pass) the model computes exactly what it did before:
+
+- `diff_CSDI.forward` takes keyword-only `mask_emb` and `time_enc` and adds each to its
+  input stream after the first projection, broadcast over the features.
+- `calc_loss`, `calc_loss_valid` and `impute` take the same two arguments and pass them to
+  every denoiser call they make. `forward` and `evaluate` are unchanged.
 
 **Replaced** (M2-1): upstream's internal train masking. `get_randmask` draws from the global
 NumPy/torch RNGs, which would break seed pairing, so `models.build_model` sets
@@ -179,7 +215,11 @@ sampled imputations are finite. Run it with `uv run pytest tests/test_csdi_smoke
 `tests/test_csdi_training_path.py` covers the two M2-1 additions on the training path: the
 loss is scored on exactly `TrainMasker`'s targets, the denoiser sees only conditioning
 values, and the timestep and noise come from the generator passed in.
-`tests/test_eval_sampler.py` covers the sampler side. `tests/test_forward_noising.py` checks the
+`tests/test_eval_sampler.py` covers the sampler side. `tests/test_denoiser_hooks.py` covers
+M2-2: with no hooks the loss and samples equal the frozen calls' exactly; a nonzero hook
+changes the training loss, the validation loss and the samples; every denoiser call on those
+paths receives the hooks; a hook adds one vector per hour to every feature; a wrongly shaped
+hook is refused; and a real Set A batch trains through both hooks with gradients reaching them. `tests/test_forward_noising.py` checks the
 reused schedule numerically (M2-1): the model's ᾱ_t equals the quad schedule worked out by hand
 from `configs/config.yaml`, and the values it noises at every step have the closed-form mean
 √ᾱ_t · x₀ and variance 1 − ᾱ_t. Mind upstream's names when reading `CSDI_base`: `alpha` is the

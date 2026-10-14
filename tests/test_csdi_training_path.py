@@ -23,7 +23,7 @@ class FixedDenoiser(nn.Module):
         super().__init__()
         self.predicted = torch.zeros(B, D, T, device=device, requires_grad=True)
 
-    def forward(self, total_input, side_info, diffusion_step):
+    def forward(self, total_input, side_info, diffusion_step, *, mask_emb=None, time_enc=None):
         self.total_input, self.side_info, self.diffusion_step = total_input, side_info, diffusion_step
         return self.predicted
 

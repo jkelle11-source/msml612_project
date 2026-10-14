@@ -30,7 +30,7 @@ def as_batch(values, mask, cond, rows=slice(None)):
 class ZeroDenoiser(nn.Module):
     """Predicts no noise at all, which leaves the sampler's own arithmetic easy to do by hand."""
 
-    def forward(self, total_input, side_info, diffusion_step):
+    def forward(self, total_input, side_info, diffusion_step, *, mask_emb=None, time_enc=None):
         return torch.zeros(total_input.shape[0], *total_input.shape[2:], device=total_input.device)
 
 @pytest.fixture(scope="module")

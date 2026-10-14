@@ -18,7 +18,7 @@ class RecordingDenoiser(nn.Module):
         super().__init__()
         self.seen = []
 
-    def forward(self, total_input, side_info, diffusion_step):
+    def forward(self, total_input, side_info, diffusion_step, *, mask_emb=None, time_enc=None):
         # Channel 1 is (1 - cond_mask) * x_t; with an all-zero conditioning mask it is all of x_t.
         self.seen.append((diffusion_step.clone(), total_input[:, 1].clone()))
         return torch.zeros_like(total_input[:, 1])
