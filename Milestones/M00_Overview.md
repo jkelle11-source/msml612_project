@@ -32,9 +32,9 @@ Issues owned (including co-owned). The five shared kickoff/writing issues (`M1-4
 
 | Person | Issues | Heavy weeks | Primary surface |
 |---|---|---|---|
-| **Jake** `@jkelle11-source` | 12 | W1, W2, W5, W7 | Data/training engine, block holdout, TSLO + Ext 2, seed sweep, latency, conformal, reproducibility |
+| **Jake** `@jkelle11-source` | 11 | W1, W2, W5, W7 | Data/training engine, TSLO + Ext 2, seed sweep, latency, conformal, reproducibility |
 | **Josh** `@JoshOlu` | 10 | W2, W3, W4 | Fork, denoiser, Ext 1, combined model, qualitative + per-variable |
-| **Sankha** `@SankhaS` | 10 | W3, W6, W7, W8 | Maskers, baselines, harness, headline table, ablation, final eval |
+| **Sankha** `@SankhaS` | 11 | W3, W6, W7, W8 | Maskers, block holdout, baselines, harness, headline table, ablation, final eval |
 
 **Watch item:** Josh's W2–W4 is the tightest stretch (denoiser → lead reproduction → gate + Ext 1). It's mitigated by moving Ext 2 to Jake and pairing Jake on reproduction/gate — but if Josh has lighter availability, swap his track with Sankha's to even it further.
 
@@ -44,7 +44,7 @@ Issues owned (including co-owned). The five shared kickoff/writing issues (`M1-4
 
 `M1-1`/`M1-2` (data + fork) → `M2-1`/`M2-2` (loop + denoiser) → **`M3-1` (reproduction, paired)** → **`M4-1` (gate, paired)** → `M5-2` (Ext 2) + `M4-2` (Ext 1) → `M6-1` (combined) + `M6-2` (harness) → **`M7-1` (30-run sweep: 20 headline + 10 block-aware)** → `M7-2` (headline table) → `M8-1`/`M8-2` (ablation + runtime) → `M9-1` (final table) → `M10-2` (final report).
 
-Off the main chain but with a hard date: `M2-4` (the block-missingness holdout, added Oct 14) must land by Oct 21, because `M4-2`'s overfit check and every block-regime number after it are scored on it.
+Off the main chain but with a hard date: `M2-4` (the block-missingness holdout, added Oct 14) is due Oct 15; `M4-2`'s overfit check and every block-regime number after it are scored on it.
 
 Everything downstream of `M4-1` assumes a **passed gate**. If the gate fails by Oct 29, the interim (`M4-3`) says so honestly and Week 5 becomes baseline debugging (§3.4); Extension 3 (conformal) is an explicit stretch gated at the end of Week 8 (`M8-3`) and can be cut cleanly without weakening the core project.
 
