@@ -53,11 +53,11 @@
 
 **Deliverables**
 - wandb logging of loss/step, val MAE & RMSE/epoch, gradient norms, and the full run config (including seed and toggle flags).
-- A project workspace/dashboard the whole team can view, with runs named by `variant × seed`.
+- A project workspace/dashboard the whole team can view, with runs named by `variant × seed` and, from Week 6, the training regime (random or block-aware, §3.1).
 
 **Definition of Done**
 - [ ] A base-CSDI run streams loss, val MAE/RMSE, grad norms, and config to wandb.
-- [ ] Run naming encodes variant + seed so the Week-7 sweep is legible.
+- [ ] Run naming encodes variant + seed (+ training regime) so the Week-7 sweep is legible.
 - [ ] All three can open the shared workspace.
 
 ---
@@ -65,17 +65,17 @@
 ### `M3-3` — BRITS baseline (or bi-GRU fallback)
 - **Assignee:** @SankhaS
 - **Labels:** `eval`, `baselines`, `mvp`
-- **Blocked by:** `M2-3`
+- **Blocked by:** `M2-3`, `M2-4` *(block holdout, for the block-holdout score only)*
 - **Blocks:** `M7-2`
 
-**Context.** A *learned* baseline stronger than mean/forward-fill, run inside our own harness so it shares our masking and metrics. BRITS is the target; a simplified bi-GRU imputer is an acceptable, clearly-labeled fallback if BRITS integration eats the week. Published BRITS/V-RIN numbers are cited separately (§6) and carry no SE of ours.
+**Context.** A *learned* baseline stronger than mean/forward-fill, run inside our own harness so it shares our masking and metrics. BRITS is the target; a simplified bi-GRU imputer is an acceptable, clearly-labeled fallback if BRITS integration eats the week. Published BRITS/V-RIN numbers are cited separately (§6) and carry no SE of ours. Like every model we run ourselves, it is also scored on the block holdout (`BlockEvalMasker`, `M2-4`; §3.1), which costs one extra evaluation pass, not extra training.
 
 **Deliverables**
 - BRITS (or bi-GRU fallback) trained and evaluated with `EvalMasker` in standardized units.
-- Its MAE @10% recorded to the results log next to mean/forward-fill.
+- Its MAE @10% recorded to the results log next to mean/forward-fill, under both holdouts (random `EvalMasker`, block `BlockEvalMasker`).
 - A one-line note stating whether it's BRITS or the fallback, and why.
 
 **Definition of Done**
-- [ ] A learned baseline produces a logged MAE @10% in our harness.
+- [ ] A learned baseline produces a logged MAE @10% in our harness, under both holdouts.
 - [ ] Fallback (if used) is explicitly labeled in the results log and report notes.
 - [ ] Number stored where the Week-7 headline table can cite it.

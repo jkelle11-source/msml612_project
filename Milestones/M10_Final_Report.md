@@ -15,7 +15,7 @@
 ## Coordination notes
 - **Reproducibility is a graded line** (§7, "clean reproducible code," 20 pts). The README's command→result table is the artifact that proves it: a grader runs one command per variant and sees the reported number. Fixed/logged seeds and docstrings are part of the same score.
 - **The report structure is already fixed (§8)** — Introduction, Related Work, Method (Ext 1 honest framing, Ext 2 TSLO + true Time2Vec + why no attention bias, Ext 3 if done), Experiments (normalization, dual-mask, paired 5-seed, headline paired-Δ ± SE, ablation, per-variable, runtime, coverage), Discussion (main effects vs. exploratory interaction; nulls as findings), Limitations, Conclusion/future work.
-- **Nulls stay stated as findings** (§3.5, §7). The Discussion frames flat contrasts as rigor, and Limitations names the real ones: patient-level exchangeability, grid vs. native-timestamp TSLO, reduced scale vs. published, single dataset.
+- **Nulls stay stated as findings** (§3.5, §7). The Discussion frames flat contrasts as rigor, and Limitations names the real ones: patient-level exchangeability, grid vs. native-timestamp TSLO, reduced scale vs. published, single dataset, and synthetic block missingness (one window shape, which the block-aware regime also trains on).
 - Cite the reused CSDI implementation and all references (§9) — this is its own graded line (10 pts).
 
 ---

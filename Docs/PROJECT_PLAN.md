@@ -51,21 +51,26 @@ US Thanksgiving falls **Thu Nov 26**; the week of Nov 23–27 is treated as a li
 These rules are non-negotiable and apply to **every** run — base and all extensions. They are what make the "Δ vs. base" numbers trustworthy; without them a 0.01–0.02 gain is unpublishable noise.
 
 ### 3.1 Two masks, not one (this is the subtle one)
-CSDI's self-supervision requires *randomizing* which observed values are conditioning vs. target each iteration; the *evaluation* target set must be fixed. Freezing the training mask would depress our base MAE and poison the gate. We therefore implement **two** objects:
+CSDI's self-supervision requires *randomizing* which observed values are conditioning vs. target each iteration; the *evaluation* target set must be fixed. Freezing the training mask would depress our base MAE and poison the gate. We therefore implement **two** kinds of object, frozen evaluation holdouts and a fresh training split:
 
 - **`EvalMasker`** — seeded **once**, holds out a fixed 10% of observed values as evaluation targets, identical across every model and every seed. This is the "frozen masking strategy."
-- **`TrainMasker`** — draws a *fresh* conditioning/target split each iteration; its stream is reproducible from the run seed but is **not** pinned to a single pattern.
+- **`BlockEvalMasker`** — a second frozen holdout beside `EvalMasker`, for the block-missingness regime (§4.1). It is seeded the same way (its own frozen seed, one generator per patient) and hides exactly as many values per patient as `EvalMasker` does, `floor(0.10 · n_observed)`, but as contiguous **3-hour windows across all 35 features**: the 48 hours are tiled into 16 fixed 3-hour slots, the slots are drawn in random order, and every observed value in each slot is hidden until the next slot would overshoot the count; that slot is trimmed to a random subset of its observed values so the count is exact. The two holdouts therefore differ only in *where* values are hidden, not how many, so block and random results compare at one rate. Neither changes the other: `EvalMasker`'s targets stay exactly as frozen.
+- **`TrainMasker`** — draws a *fresh* conditioning/target split each iteration; its stream is reproducible from the run seed but is **not** pinned to a single pattern. Its `random` strategy trains every variant; its `mix` strategy trains the block-aware regime below.
 
-**How these map onto the reused code.** The two maskers are the only part of base CSDI we do not reuse (§0). Upstream draws its training split inside the model (`get_randmask`) from the global NumPy/torch RNGs, so anything else that consumes random numbers — an extension's extra parameter initialisation, for example — would shift the mask stream and break the pairing in §3.3. `TrainMasker` therefore replaces it and draws from its **own** generator; it keeps upstream's `random` strategy (a per-sample target ratio drawn uniformly from [0, 1]), so the only thing that changes is where the random numbers come from. `EvalMasker`'s conditioning mask is passed to the reused model as upstream's `gt_mask`.
+**Two training regimes.** The headline sweep trains all four variants with `TrainMasker`'s `random` strategy, upstream's published setup and the one the gate is measured against. Random training alone does not prepare a model for block missingness. It hides a whole 3-hour stretch of every feature only when most of the record is hidden: on our training split, the samples that contain such a gap keep a median 9% of their values visible, and no sample that keeps 60% or more contains one, whereas `BlockEvalMasker` leaves 90% visible around its gaps. So **base and Ext 1 are also trained in a block-aware regime**, at the same seeds 42–46 (10 more runs), with `TrainMasker`'s `mix` strategy. For each sample a fair coin, drawn from `TrainMasker`'s own generator, picks either the `random` split or block targets: `round(r · n_observed)` values with `r ~ U(0, 1)` as in `random`, hidden as 3-hour all-feature slots drawn and trimmed as in `BlockEvalMasker`. This is upstream's own answer to structured missingness (its `mix` strategy mixes random targets with a structured pattern), applied with our block shape. Each regime is paired only within itself; the two are never compared with each other. Because the block-aware regime trains on the same window shape the holdout uses, it is matched to our synthetic pattern, and the report says so (§8, Limitations).
 
-Unit test: `EvalMasker` targets are byte-identical across seeds; `TrainMasker` targets differ across iterations; eval targets never enter any conditioning input (no leakage).
+**Scoring under both holdouts.** Every run's selected checkpoint is scored on the test split under both holdouts, which costs one extra evaluation pass per run. Early stopping and checkpoint selection use the validation MAE of the holdout the run is trained for: `EvalMasker`'s in the random regime, `BlockEvalMasker`'s in the block-aware regime. Ext 1's block-missingness contrast (§4.1) is read from the block-aware regime; the random regime's block scores are reported alongside, as a check of how well random-trained models carry over to blocks.
+
+**How these map onto the reused code.** The maskers are the only part of base CSDI we do not reuse (§0). Upstream draws its training split inside the model (`get_randmask`) from the global NumPy/torch RNGs, so anything else that consumes random numbers — an extension's extra parameter initialisation, for example — would shift the mask stream and break the pairing in §3.3. `TrainMasker` therefore replaces it and draws from its **own** generator; it keeps upstream's `random` strategy (a per-sample target ratio drawn uniformly from [0, 1]), so the only thing that changes is where the random numbers come from. Adding `mix` leaves the `random` stream exactly as it was. `EvalMasker`'s conditioning mask is passed to the reused model as upstream's `gt_mask`, and so is `BlockEvalMasker`'s.
+
+Unit test: `EvalMasker` and `BlockEvalMasker` targets are byte-identical across seeds; `BlockEvalMasker` hides exactly `EvalMasker`'s per-patient count, and every target outside the one trimmed slot lies in a 3-hour slot whose observed values are all hidden; `TrainMasker` targets differ across iterations; `TrainMasker`'s `random` output is byte-identical before and after `mix` is added, and `mix`'s block samples have the same slot structure as `BlockEvalMasker`'s; eval targets never enter any conditioning input (no leakage).
 
 ### 3.2 Normalization (load-bearing for every comparison)
 Per-variable **z-scoring** using **training-split statistics only**, applied to val/test. All MAE/RMSE are reported in **standardized units**, so the published 0.217 is a valid comparison. We additionally report raw-unit per-variable MAE for clinical readability. Conformal residuals stay in standardized units so a single global quantile is coherent across variables.
 
 ### 3.3 Paired 5-seed evaluation
 - Seeds **42–46** (field-standard set).
-- **Common random numbers:** the same 5 seeds across all four variants, so each variant shares data order, train-mask stream, and init RNG with the others at the matching seed. The diffusion timestep and noise draws are paired as well, each stream drawn from its own generator rather than the global RNG (as `TrainMasker` is, §3.1); **dropout is the one stream that is not paired**, because a variant with extra dropout layers consumes more of the global RNG. Comparisons are **paired differences**; we report the mean paired Δ and the **SE of the paired Δ**, which is typically far smaller than the SE of either mean.
+- **Common random numbers:** the same 5 seeds across all four variants, so each variant shares data order, train-mask stream, and init RNG with the others at the matching seed. The diffusion timestep and noise draws are paired as well, each stream drawn from its own generator rather than the global RNG (as `TrainMasker` is, §3.1); **dropout is the one stream that is not paired**, because a variant with extra dropout layers consumes more of the global RNG. Comparisons are **paired differences**; we report the mean paired Δ and the **SE of the paired Δ**, which is typically far smaller than the SE of either mean. The block-aware regime (§3.1) uses the same seeds and the same rules: its base and Ext 1 are paired with each other, never with the random regime's runs.
 - **Frozen evaluation noise:** the reverse sampler's noise comes from one frozen seed (`eval_sampling_seed`), re-seeded at the start of every evaluation pass and run at a fixed batch size and patient order, so a checkpoint's score depends on its weights alone and every variant, seed and epoch is scored with identical noise.
 - Every headline number is mean ± SE over the 5 seeds. A contrast whose paired-Δ error bar overlaps zero is reported as **"no significant effect,"** never hidden or spun.
 
@@ -111,8 +116,8 @@ class MissingnessEncoder(nn.Module):
 ```
 
 - **Toggle:** `--use_mask_embedding`. Trained end-to-end (not pretrained).
-- **Primary evaluation regime:** **block/structured missingness** — Ext 1's headline test, plus a synthetic block-missingness stress test. If the embedding helps anywhere, it is here.
-- **Named risk:** Ext 1 shows ≈0 gain because the base already sees the mask. Mitigated by the dual-axis encoder (richer than the raw channel) and the block-missingness primary regime; if still null, that is a legitimate, reportable finding, not a failure.
+- **Primary evaluation regime:** **block/structured missingness** — Ext 1's headline test, scored on `BlockEvalMasker`'s frozen holdout (§3.1): contiguous 3-hour windows hidden across all 35 features. That synthetic holdout *is* the block-missingness stress test: PhysioNet's own missingness cannot be controlled, so the block structure is imposed on held-out values. The contrast is base vs. Ext 1 in the block-aware training regime (§3.1), so the encoder has been trained on the structure it is scored on. If the embedding helps anywhere, it is here.
+- **Named risk:** Ext 1 shows ≈0 gain because the base already sees the mask. Mitigated by the dual-axis encoder (richer than the raw channel) and the block-missingness primary regime, trained block-aware (§3.1); if still null, that is a legitimate, reportable finding, not a failure.
 
 ### 4.2 Extension 2 — TSLO-Based Continuous-Time Encoding
 
@@ -169,7 +174,7 @@ Nominal cadence ~3 hrs/student/week.
 - **▶ DELIVERABLE — Proposal due Wed Oct 8.**
 
 **Week 2 · Oct 8 – Oct 14 — Diffusion process, objective, baselines start**
-- **A:** Training loop on the **reused** diffusion process (`TrainMasker → reused forward noising → denoiser → masked loss → clip → step`), with `TrainMasker` replacing upstream's internal masking; numerically check the reused quad schedule's forward-noising variance. No schedule or `q_sample` of our own (§0).
+- **A:** Training loop on the **reused** diffusion process (`TrainMasker → reused forward noising → denoiser → masked loss → clip → step`), with `TrainMasker` replacing upstream's internal masking; numerically check the reused quad schedule's forward-noising variance. No schedule or `q_sample` of our own (§0). Then `BlockEvalMasker`, the frozen block-missingness holdout (§3.1), which must land before Week 4's Ext 1 overfit check uses it.
 - **B:** Adapt the reused model to our tensor shapes and conditioning; thread the `mask_emb`/`time_enc` hooks (both default `None`) through its loss and sampler paths to the denoiser.
 - **C:** Mean + forward-fill baselines recorded; shape/NaN check of the reused reverse sampler, driven through `EvalMasker`.
 
@@ -181,7 +186,7 @@ Nominal cadence ~3 hrs/student/week.
 
 **Week 4 · Oct 22 – Oct 28 — Gate + Extension 1 + interim drafting**
 - **A + B (baseline hardening, ~6 hrs across the two):** Drive base CSDI to the **reproduction gate** (§3.4): ≤ ~0.24 @10%, ≥3 seeds. This is the fiddly dual-axis core everything is measured against; it ends on the gate, not on "converging."
-- **C:** Implement `MissingnessEncoder` (§4.1), wire via `mask_emb`; confirm nonzero gradients reach it; overfit sanity check (10-patient block-masked subset, MAE < 0.1 in 50 epochs).
+- **C:** Implement `MissingnessEncoder` (§4.1), wire via `mask_emb`; confirm nonzero gradients reach it; overfit sanity check (10-patient subset scored on `BlockEvalMasker`'s targets, MAE < 0.1 in 50 epochs).
 - **All (writing):** Draft **Interim Report** — baselines, protocol, gate status, Ext 1 preliminary (mechanical-health, single-seed; *not* an effect claim).
 - **▶ DELIVERABLE — Interim Report due Wed Oct 29.** Must include a **passed gate**; if the gate is not passed, the interim says so honestly and Week 5 becomes baseline debugging (§3.4).
 
@@ -194,13 +199,13 @@ Nominal cadence ~3 hrs/student/week.
 
 **Week 6 · Nov 5 – Nov 11 — Combined model, ready for the seed sweep**
 - **A:** Combined Ext 1+2; confirm both hooks compose and the model runs with all four toggle combinations.
-- **B + C:** Stand up the **paired-seed harness** (§3.3): one driver runs all four variants at each of seeds 42–46 sharing data order and RNG. Dry-run at 20 epochs to confirm pairing and logging.
+- **B + C:** Stand up the **paired-seed harness** (§3.3): one driver runs all four variants at each of seeds 42–46 sharing data order and RNG, plus base and Ext 1 in the block-aware regime (`TrainMasker`'s `mix` strategy, §3.1). Dry-run at 20 epochs to confirm pairing and logging.
 
 ### Phase 4 — Evaluation, Ablation, Runtime (Weeks 7–8)
 
 **Week 7 · Nov 12 – Nov 18 — Full paired 5-seed training**
-- **A:** Full training (100 epochs, early stop on val MAE, patience 10) for all four variants × seeds 42–46 (20 runs).
-- **B:** Populate the **headline table** — mean ± SE and **paired Δ vs. base with its SE**; stratify by missingness type (block vs. random). Main effects confirmatory, interaction exploratory.
+- **A:** Full training (100 epochs, early stop on val MAE, patience 10) for all four variants × seeds 42–46 (20 runs), plus base and Ext 1 in the block-aware regime × seeds 42–46 (10 runs): 30 in total.
+- **B:** Populate the **headline table** — mean ± SE and **paired Δ vs. base with its SE**; stratify by missingness type, scoring every run under both frozen holdouts (random `EvalMasker`, block `BlockEvalMasker`, §3.1). Main effects confirmatory, interaction exploratory.
 - **C:** Qualitative trajectories (5 patients × 3 variables: HR, serum sodium, GCS); temporal coherence vs. mean/forward-fill.
 
 **Week 8 · Nov 19 – Nov 25 — Ablation + runtime**
@@ -209,6 +214,7 @@ Three **one-factor sensitivity studies** on the **best** variant, plus mask-enco
 | Study | Values | Variants | Seeds | Runs |
 |---|---|---|---|---|
 | Headline | — | all 4 | 5 | 20 |
+| Block-aware regime (§3.1) | — | base, Ext 1 | 5 | 10 |
 | `d_model` | 64 / 128 / 256 | best only | 3 | 9 |
 | Diffusion steps `T` (each a full retrain) | 50 / 100 / 200 | best only | 3 | 9* |
 | Mask-encoder layers | 1 / 2 / 3 | the **two** with an encoder | 3 | 18 |
@@ -235,7 +241,7 @@ Three **one-factor sensitivity studies** on the **best** variant, plus mask-enco
 
 ## 6. Baselines & Targets (corrected scale)
 
-CSDI is benchmarked at three masked-value rates, not one number. Headline rate is **10%** (matches our blackout protocol); 50/90% are robustness. Baseline-of-baselines numbers (BRITS, V-RIN) are **cited, not re-derived**, so they carry no SE of ours.
+CSDI is benchmarked at three masked-value rates, not one number. Headline rate is **10%** (matches our blackout protocol); 50/90% are robustness. Baseline-of-baselines numbers (BRITS, V-RIN) are **cited, not re-derived**, so they carry no SE of ours. The table is the random holdout; every model we run ourselves (mean, forward-fill, our BRITS, all CSDI variants) is also scored on the block holdout at the same 10% rate (§3.1), which has no published counterpart.
 
 | Model | MAE @10% | MAE @50% | MAE @90% | Source |
 |---|---|---|---|---|
@@ -298,19 +304,20 @@ Proposal (Oct 8) · Interim Report (Oct 29) · Presentation (Dec 2) · Final Rep
 1. Introduction — imputation in clinical TS; limits of deterministic methods; why diffusion.
 2. Related Work — CSDI, BRITS, V-RIN, Time2Vec, conformal; our contribution distinguished from each.
 3. Method — CSDI background; Ext 1 (honest framing, dual-axis encoder); Ext 2 (TSLO + true Time2Vec, why no attention bias); Ext 3 (studentized patient-level conformal, if done).
-4. Experiments — dataset, **normalization**, dual-mask protocol, **paired 5-seed** design, baselines, headline table (paired Δ ± SE), ablation, per-variable, runtime, coverage.
+4. Experiments — dataset, **normalization**, dual-mask protocol (random and block holdouts, two training regimes), **paired 5-seed** design, baselines, headline table (paired Δ ± SE), ablation, per-variable, runtime, coverage.
 5. Discussion — main effects vs. exploratory interaction; where/why extensions help; nulls stated as findings.
-6. Limitations — patient-level exchangeability; grid vs. native-timestamp choice for TSLO; reduced scale vs. published; single dataset.
+6. Limitations — patient-level exchangeability; grid vs. native-timestamp choice for TSLO; reduced scale vs. published; single dataset; block missingness is synthetic (one window shape imposed on held-out values), and the block-aware regime trains on that same shape.
 7. Conclusion & future work (per-feature TSLO attention bias; native-timestamp irregular grid).
 
 ### Risk register
 | Risk | Likelihood | Mitigation |
 |---|---|---|
 | Base CSDI misses the gate (>~0.24 @10%) | Medium | Reuse + adapt; 2 students in Week 4; ≥3-seed gate; freeze extensions until passed. |
-| **Ext 1 ≈0 gain (base already sees mask)** | Medium | Dual-axis encoder; block-missingness as primary regime + synthetic stress test; null is a reportable finding. |
+| **Ext 1 ≈0 gain (base already sees mask)** | Medium | Dual-axis encoder; block-missingness as primary regime (frozen `BlockEvalMasker` holdout), with base and Ext 1 trained block-aware so the encoder sees the structure it is scored on (§3.1); null is a reportable finding. |
+| Sweep compute (30 runs) exceeds GPU time | Medium | Block-aware runs go after the 20 headline runs; if time runs out, drop them to 3 seeds and label the block contrast exploratory, stated as such. |
 | Extension gain within seed noise | Medium-High | **Paired** 5 seeds; report SE of the paired Δ; overlapping bars → null, not spun. |
 | **Interaction not resolvable at 5 seeds** | Medium | Scope confirmatory claims to main effects; interaction exploratory. |
-| Masking choice confounds the delta | Medium | One frozen `EvalMasker`; `TrainMasker` randomized (§3.1). |
+| Masking choice confounds the delta | Medium | Frozen holdouts (`EvalMasker`, `BlockEvalMasker`); `TrainMasker` randomized (§3.1). |
 | Ablation labor under-budgeted | Medium | Restructured to ~35–40 runs; drop to 3 seeds/cell if tight and state it; runtime hours are a real line item. |
 | Deliverable milestones missed | Medium | Proposal/interim/slides are explicit tasks with owners and dates in §5. |
 | Conformal not reached | Medium | Explicit stretch; gated at end of Week 8; cut cleanly. |
