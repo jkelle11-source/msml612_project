@@ -5,16 +5,17 @@
 > **Timeframe:** Week 6 · Nov 5 – Nov 11
 > **Depends on:** `M5`
 > **Description:**
-> Assemble the four-variant matrix and the machinery that will train it. Josh composes the **combined Ext 1 + 2 model** and confirms all four toggle combinations (base / +Ext1 / +Ext2 / +both) run. Jake + Sankha stand up the **paired-seed harness** (§3.3) — one driver that runs all four variants at each of seeds 42–46 sharing data order, train-mask stream, and init RNG, so every variant-vs-base comparison is a *paired* difference. A 20-epoch dry-run confirms the pairing and logging are correct before the expensive full sweep in Week 7. This is the last setup week; nothing here chases accuracy, it chases *correct experimental plumbing*.
+> Assemble the four-variant matrix and the machinery that will train it. Josh composes the **combined Ext 1 + 2 model** and confirms all four toggle combinations (base / +Ext1 / +Ext2 / +both) run. Jake + Sankha stand up the **paired-seed harness** (§3.3) — one driver that runs all four variants at each of seeds 42–46 sharing data order, train-mask stream, and init RNG, so every variant-vs-base comparison is a *paired* difference. The same driver also runs base and Ext 1 in the **block-aware training regime** (§3.1), using a `mix` strategy Jake adds to `TrainMasker`. A 20-epoch dry-run confirms the pairing and logging are correct before the expensive full sweep in Week 7. This is the last setup week; nothing here chases accuracy, it chases *correct experimental plumbing*.
 
 ## Assignment summary
 - **Josh** — Combined Ext 1 + 2 model; confirm both hooks compose and the model runs with all four toggle combinations
-- **Jake + Sankha** — Stand up the **paired-seed harness** (§3.3): one driver runs all four variants at each of seeds 42–46 sharing data order and RNG; dry-run at 20 epochs to confirm pairing and logging
+- **Jake + Sankha** — Stand up the **paired-seed harness** (§3.3): one driver runs all four variants at each of seeds 42–46 sharing data order and RNG, plus base and Ext 1 in the block-aware regime; dry-run at 20 epochs to confirm pairing and logging. Jake also adds `TrainMasker`'s `mix` strategy, which the block-aware regime trains with (§3.1)
 
 ## Coordination notes
 - **Common random numbers is the whole point of pairing** (§3.3). At a given seed, all four variants must share the *same* data order, the *same* `TrainMasker` stream, and the *same* init RNG — only the toggles differ. If the harness reseeds differently per variant, the pairing is broken and the SE-of-paired-Δ argument collapses.
+- **Two training regimes, each paired only within itself** (§3.1). The random regime (all four variants, `TrainMasker`'s `random` strategy) is the headline sweep and the gate setup. The block-aware regime (base and Ext 1, `TrainMasker`'s `mix` strategy) exists because random training never shows a model a whole 3-hour all-feature gap inside otherwise dense data, which is exactly what `BlockEvalMasker` scores. Base and Ext 1 in the block-aware regime share seeds with each other; no contrast crosses regimes.
 - **The combined model is a composition test, not a tuning task.** The two hooks (`mask_emb`, `time_enc`) were built additive and independent precisely so `+both` is just both toggles on. Confirm it, don't re-engineer it.
-- **Dry-run before the real sweep.** 20 epochs × 4 variants × a couple of seeds is enough to prove pairing + logging are correct. Discovering a pairing bug during the 20-run Week-7 sweep is the expensive failure this dry-run prevents.
+- **Dry-run before the real sweep.** 20 epochs × 4 variants × a couple of seeds is enough to prove pairing + logging are correct. Discovering a pairing bug during the 30-run Week-7 sweep is the expensive failure this dry-run prevents.
 
 ---
 
@@ -44,19 +45,21 @@
 ### `M6-2` — Paired-seed harness (common random numbers)
 - **Assignee:** @jkelle11-source, @SankhaS
 - **Labels:** `eval`, `protocol`, `infra`, `mvp`, `critical-path`
-- **Blocked by:** `M3-2`, `M6-1`
+- **Blocked by:** `M2-4`, `M3-2`, `M6-1`
 - **Blocks:** `M7-1`, `M7-2`
 
-**Context.** The harness that makes the statistics defensible (§3.3, the single most important statistical decision in the plan). One driver iterates seeds 42–46 and, at each seed, runs all four variants under **common random numbers** — identical data order, train-mask stream, and init RNG — so contrasts are paired differences with a small SE. Jake owns the run/RNG plumbing (his training-engine track); Sankha owns the results capture and the pairing assertions (his eval track).
+**Context.** The harness that makes the statistics defensible (§3.3, the single most important statistical decision in the plan). One driver iterates seeds 42–46 and, at each seed, runs all four variants under **common random numbers** — identical data order, train-mask stream, and init RNG — so contrasts are paired differences with a small SE. Jake owns the run/RNG plumbing (his training-engine track); Sankha owns the results capture and the pairing assertions (his eval track). The harness also runs a second, **block-aware training regime** for base and Ext 1 (§3.1), and Jake adds the `TrainMasker` strategy it trains with.
 
 **Deliverables**
-- A single harness driver: `for seed in 42..46: for variant in {base, ext1, ext2, both}: train+eval` with shared RNG per seed.
-- Guarantees that, within a seed, data order / `TrainMasker` stream / init RNG are identical across variants (only toggles differ).
-- Structured results capture (per variant × seed: MAE/RMSE @10%, plus config) ready for the Week-7 headline table.
-- A **20-epoch dry-run** over the four variants at ≥2 seeds proving pairing + logging.
+- A single harness driver: `for seed in 42..46: for variant in {base, ext1, ext2, both}: train+eval` with shared RNG per seed, plus `for seed in 42..46: for variant in {base, ext1}: train+eval` in the block-aware regime.
+- `TrainMasker`'s `mix` strategy (Jake): for each sample, a fair coin from its own generator picks the `random` split or block targets, `round(r · n_observed)` values with `r ~ U(0, 1)` hidden as 3-hour all-feature slots, reusing `M2-4`'s slot selection. The `random` strategy's output must not change.
+- Guarantees that, within a seed and regime, data order / `TrainMasker` stream / init RNG are identical across variants (only toggles differ).
+- Structured results capture (per variant × regime × seed × holdout: MAE/RMSE @10% under the random `EvalMasker` and the block `BlockEvalMasker` holdouts, plus config) ready for the Week-7 headline table. Early stopping uses the validation MAE of the holdout the regime trains for (random regime: `EvalMasker`; block-aware regime: `BlockEvalMasker`); the selected checkpoint is scored on test under both (§3.1).
+- A **20-epoch dry-run** over the four variants and the block-aware pair at ≥2 seeds proving pairing + logging.
 
 **Definition of Done**
-- [ ] Within a seed, the four variants demonstrably share data order and RNG (asserted in-harness or logged and diffed).
-- [ ] Dry-run completes for all four variants at ≥2 seeds; results land in the structured log.
-- [ ] Resuming/rerunning a `(variant, seed)` cell reproduces its numbers.
-- [ ] Harness is config-driven and ready to scale to the full 20-run sweep.
+- [ ] Within a seed and regime, the variants demonstrably share data order and RNG (asserted in-harness or logged and diffed).
+- [ ] `TrainMasker`'s `random` output is byte-identical to before `mix` was added; `mix`'s block samples are whole 3-hour all-feature slots apart from one trimmed slot (tests green).
+- [ ] Dry-run completes for all four variants and the block-aware pair at ≥2 seeds; results under both holdouts land in the structured log.
+- [ ] Resuming/rerunning a `(variant, regime, seed)` cell reproduces its numbers.
+- [ ] Harness is config-driven and ready to scale to the full 30-run sweep (20 random-regime + 10 block-aware).

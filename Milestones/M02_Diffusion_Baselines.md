@@ -5,10 +5,10 @@
 > **Timeframe:** Week 2 · Oct 8 – Oct 14
 > **Depends on:** `M1`
 > **Description:**
-> With the data, eval objects, and reused model in place, wire our protocol around the reused diffusion machinery and start the baseline suite. **The diffusion math is reused, not rewritten** (settled at the M1-2 review): upstream's quad noise schedule, forward noising, masked loss and reverse sampler stay as vendored, and only the masking is ours. Jake builds the training loop on top of it (`TrainMasker → reused forward noising → denoiser → masked loss → clip → step`); Josh adapts the reused model to our tensor shapes and conditioning and confirms the `mask_emb`/`time_enc` hooks accept extension inputs (still defaulting `None`); Sankha records the trivial baselines (mean, forward-fill) and shape/NaN-checks the reused reverse sampler through `EvalMasker`. Nothing here is tuned for accuracy yet — the goal is a training loop that steps cleanly and a reverse sampler that produces correctly-shaped, non-NaN output, so Week 3 can chase the reproduction number.
+> With the data, eval objects, and reused model in place, wire our protocol around the reused diffusion machinery and start the baseline suite. **The diffusion math is reused, not rewritten** (settled at the M1-2 review): upstream's quad noise schedule, forward noising, masked loss and reverse sampler stay as vendored, and only the masking is ours. Jake builds the training loop on top of it (`TrainMasker → reused forward noising → denoiser → masked loss → clip → step`); Josh adapts the reused model to our tensor shapes and conditioning and confirms the `mask_emb`/`time_enc` hooks accept extension inputs (still defaulting `None`); Sankha records the trivial baselines (mean, forward-fill) and shape/NaN-checks the reused reverse sampler through `EvalMasker`. Jake then adds `BlockEvalMasker` (`M2-4`, added Oct 14), the frozen block-missingness holdout that Extension 1's primary regime is scored on (§3.1, §4.1); it trails into Week 3 and must land before `M4-2` starts on Oct 22. Nothing here is tuned for accuracy yet — the goal is a training loop that steps cleanly and a reverse sampler that produces correctly-shaped, non-NaN output, so Week 3 can chase the reproduction number.
 
 ## Assignment summary
-- **Jake** — Training loop on the reused diffusion process (`TrainMasker → reused forward noising → denoiser → masked loss → clip → step`), with `TrainMasker` replacing upstream's internal masking; numerical check of the reused schedule
+- **Jake** — Training loop on the reused diffusion process (`TrainMasker → reused forward noising → denoiser → masked loss → clip → step`), with `TrainMasker` replacing upstream's internal masking; numerical check of the reused schedule. Then `BlockEvalMasker`, the frozen block-missingness holdout (`M2-4`, due by Tue Oct 21)
 - **Josh** — Adapt the reused model to our tensor shapes and conditioning; thread the `mask_emb`/`time_enc` hooks (both default `None`) through its loss and sampler paths
 - **Sankha** — Mean + forward-fill baselines recorded; shape/NaN check of the reused reverse sampler, driven through `EvalMasker`
 
@@ -17,6 +17,7 @@
 - The **training loop (Jake)** and the **model adaptation (Josh)** meet at one interface: the loop hands the reused model a batch whose `gt_mask` is the `TrainMasker` conditioning mask and gets the masked loss back; noising, the denoiser call and the loss all happen inside the model. The call is frozen as `loss = model(batch, generator=streams.diffusion)`, so both sides can be built against a stub, and it is the same for every variant: the extension toggles are read once, by `models.build_model`, and the model computes `mask_emb`/`time_enc` itself, from the conditioning mask, on its loss and sampler paths. The loop never passes them (settled in `M2-1`; README, input-hook contract). Both issues touch `CSDI_base`'s entry points, so agree up front who edits the vendored file. `M2-1`'s additions (the `generator` argument and `target_strategy: "external"`) are already in it; every change to it carries an `ADAPTED` marker and a README line, as in `M1-2`.
 - **Baselines are our floor, not our target.** Mean imputation (~0.72) and forward-fill (~0.42 @10%) are the numbers base CSDI must beat in Week 3 to prove it's learning at all (§6).
 - Keep every number in **standardized units** (§3.2) from the very first baseline, or the Week-3 "below forward-fill" check is meaningless.
+- **The block holdout was added late (Oct 14).** §4.1 makes block missingness Extension 1's primary regime, and `M4-2` and `M7-2` assume block masks exist, but no issue built them. `M2-4` closes that gap. It is frozen exactly like `EvalMasker`, with its own seed, and leaves `EvalMasker` untouched: `EvalMasker`'s golden fingerprint must not change. Training stays on `TrainMasker`'s `random` strategy for every variant; a second, block-aware training regime for base and Ext 1 is added later, in `M6-2` (§3.1).
 
 ---
 
@@ -83,3 +84,28 @@
 - [ ] Reused sampler returns samples in our `(K, B, 48, D)` layout (upstream's native layout is `(B, K, D, 48)`) with no NaNs.
 - [ ] The scored target set (observed minus conditioning) is exactly `EvalMasker`'s held-out targets.
 - [ ] Baseline numbers stored where the Week-7 headline table can cite them.
+
+---
+
+### `M2-4` — `BlockEvalMasker`: frozen block-missingness holdout
+- **Assignee:** @jkelle11-source
+- **Labels:** `eval`, `protocol`, `mvp`
+- **Blocked by:** `M1-3` *(`EvalMasker`, which it mirrors)*; `M2-3` *(the baseline functions; only for the block-holdout baseline numbers)*
+- **Blocks:** `M3-3`, `M4-2`, `M6-2`, `M7-2`
+
+**Context.** §4.1 makes block (cross-feature, contiguous) missingness Extension 1's primary regime, `M4-2`'s overfit check uses a block-masked subset, and `M7-2` splits the headline table into block and random. But the only holdout we have, `EvalMasker`, hides values uniformly at random, and no issue built a block one. This issue adds it as a second frozen holdout (§3.1). It mirrors `EvalMasker` in everything except *where* values are hidden: its own frozen seed, one generator per patient seeded from `(seed, record_id)`, the same `floor(fraction · n_observed)` count per patient, and the same call, `(mask, record_ids) → (cond_mask, target_mask)`, so `EvalSampler`, the reused sampler and the metrics take it unchanged. Hidden values come as contiguous 3-hour windows across all 35 features. Three hours is about the longest window that fits the 10% budget on our data: the median patient has 332 observed values, about 6 per hour, so 10% is roughly 5–6 hours of full blackout in total, and at 3 hours 95% of patients still get at least one complete window before the trim. Added Oct 14; it trails into Week 3 and must land before `M4-2` starts on Oct 22.
+
+**Deliverables**
+- `BlockEvalMasker` in `eval/masking.py`, exported from `eval`, with a `from_config()`. Per patient: tile the 48 hours into 16 fixed 3-hour slots, draw the slots in random order, and hide every observed value in each slot until the next slot would overshoot `floor(fraction · n_observed)`; trim that slot to a random subset of its observed values so the count is exact. A slot with nothing observed hides nothing. Write the slot selection as a function of `(mask, count, generator)`, so `TrainMasker`'s `mix` strategy (`M6-2`, block-aware training regime, §3.1) reuses it with its own generator and budget.
+- Config: a new frozen seed under `protocol` (distinct from `eval_masker_seed` 2012, `eval_sampling_seed` 2021, `split_seed` 612 and the run seeds 42–46) and the window length (3 hours), both marked do-not-change like `eval_masker_seed`. The fraction is `eval_holdout_fraction`, shared with `EvalMasker`.
+- Tests mirroring `tests/test_eval_masker.py`: byte-identical across run seeds and independent of patient order or subset; exactly `EvalMasker`'s count per patient; every target outside the one trimmed slot lies in a slot whose observed values are all hidden; targets are observed and `cond + target == mask` (no leakage); the input mask is not modified; a wrong grid layout raises; a golden SHA-256 fingerprint.
+- Mean and forward-fill (from `M2-3`) scored on the block holdout of val and test, in standardized units, recorded next to their random-holdout numbers.
+- README: the new keys under "Frozen protocol constants".
+
+**Definition of Done**
+- [ ] Each patient loses exactly `floor(0.10 · n_observed)` values, in contiguous 3-hour all-feature slots apart from the one trimmed slot (tests green).
+- [ ] Targets are byte-identical across run seeds; golden fingerprint committed.
+- [ ] `EvalMasker`'s golden fingerprint is unchanged.
+- [ ] Seed and window length committed to `configs/config.yaml`.
+- [ ] Mean and forward-fill block-holdout MAE recorded next to their random-holdout numbers.
+- [ ] Merged by **Tue Oct 21**, before `M4-2` starts.

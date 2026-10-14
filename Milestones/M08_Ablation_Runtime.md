@@ -18,6 +18,7 @@
   | Study | Values | Variants | Seeds | Runs |
   |---|---|---|---|---|
   | Headline | — | all 4 | 5 | 20 *(from M7)* |
+  | Block-aware regime (§3.1) | — | base, Ext 1 | 5 | 10 *(from M7)* |
   | `d_model` | 64 / 128 / 256 | best only | 3 | 9 |
   | Diffusion steps `T` (each a full retrain) | 50 / 100 / 200 | best only | 3 | 9\* |
   | Mask-encoder layers | 1 / 2 / 3 | the **two** with an encoder | 3 | 18 |
@@ -42,7 +43,7 @@
 **Deliverables**
 - `d_model ∈ {64, 128, 256}` sweep on the best variant, 3 seeds, `n_heads = 8` fixed (§3.6).
 - Diffusion-steps `T ∈ {50, 100, 200}` sweep (each a full retrain), best variant, 3 seeds — or at a single `d_model` if compute is tight, with that noted.
-- Mask-encoder layers `∈ {1, 2, 3}` for the two encoder-bearing variants, 3 seeds.
+- Mask-encoder layers `∈ {1, 2, 3}` for the two encoder-bearing variants, 3 seeds, reported under the block holdout (`BlockEvalMasker`, Ext 1's primary regime) as well as the random one.
 - Results folded into the results store with paired-Δ ± SE; null cells labeled.
 
 **Definition of Done**

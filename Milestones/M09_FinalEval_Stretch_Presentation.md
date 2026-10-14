@@ -31,7 +31,7 @@
 **Context.** Consolidate the headline sweep, the ablation, and the runtime study into the single final results table the report and slides cite. Sankha owns it on the eval/stats track. This is where the confirmatory main effects and the exploratory interaction get their final, frozen numbers.
 
 **Deliverables**
-- Final table: all four variants (mean ± SE @10%, paired Δ ± SE), best-config selection justified, baselines included, block/random stratification retained.
+- Final table: all four variants (mean ± SE @10%, paired Δ ± SE), best-config selection justified, baselines included, block/random stratification retained, and Ext 1's block-aware-regime contrast (§3.1) reported beside it.
 - A one-paragraph results summary stating which effects are SE-separated and which are null.
 
 **Definition of Done**
