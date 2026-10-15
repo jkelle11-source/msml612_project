@@ -13,7 +13,7 @@
 
 ## Coordination notes
 - **Pairing is deliberate, not doubling-up.** Josh owns the denoiser internals; Jake owns the loop/masker wiring/data feed. Reproduction bugs live at that seam (conditioning wiring, mask alignment, masker hand-off), so both owners on it in the same week resolves them fastest. Keep a shared debugging log.
-- **"Below forward-fill" is the Week-3 success bar** — roughly < 0.42 @10% standardized. The **gate** (≤ ~0.24, ≥3 seeds) is Week 4; do not conflate them.
+- **"Below forward-fill" is the Week-3 success bar** — < 0.437 @10% standardized, forward-fill's validation MAE (`M2-3`). The **gate** (≤ ~0.24, ≥3 seeds) is Week 4; do not conflate them.
 - BRITS is **cited, not re-derived**, for its published numbers (§6); our *run* of it is only to have a learned baseline in our own harness. If BRITS is fiddly, the simplified bi-GRU fallback is acceptable and must be labeled as such.
 - Stand up wandb this week so the Week-4 gate runs and the Week-7 sweep are tracked from the start, not retrofitted.
 
@@ -37,7 +37,7 @@
 
 **Definition of Done**
 - [ ] Base CSDI trains without divergence; grad norms bounded through the first 500 steps.
-- [ ] Val MAE @10% (standardized) is below forward-fill (< ~0.42) on ≥1 seed.
+- [ ] Val MAE @10% (standardized) is below forward-fill (< 0.437, its val MAE from `M2-3`) on ≥1 seed.
 - [ ] Runs are launched from config + fixed seed and reproduce on a rerun.
 - [ ] Debugging log committed so Week-4 hardening starts from known state.
 
@@ -47,7 +47,7 @@
 - **Assignee:** @SankhaS
 - **Labels:** `eval`, `infra`, `wandb`, `mvp`
 - **Blocked by:** `M2-1`
-- **Blocks:** `M4-1`, `M7-1`
+- **Blocks:** `M3-3`, `M4-1`, `M7-1`
 
 **Context.** Tracking has to exist *before* the gate runs and the seed sweep, or we lose the very curves that prove the gate passed and the sweep was healthy. Wire wandb to log the metrics that matter for the protocol (§3).
 
@@ -65,17 +65,19 @@
 ### `M3-3` — BRITS baseline (or bi-GRU fallback)
 - **Assignee:** @SankhaS
 - **Labels:** `eval`, `baselines`, `mvp`
-- **Blocked by:** `M2-3`, `M2-4` *(block holdout, for the block-holdout score only)*
+- **Blocked by:** `M2-3`, `M2-4` *(block holdout, for the block-holdout score only)*, `M3-2` *(wandb workspace, for logging the baselines only)*
 - **Blocks:** `M7-2`
 
 **Context.** A *learned* baseline stronger than mean/forward-fill, run inside our own harness so it shares our masking and metrics. BRITS is the target; a simplified bi-GRU imputer is an acceptable, clearly-labeled fallback if BRITS integration eats the week. Published BRITS/V-RIN numbers are cited separately (§6) and carry no SE of ours. Like every model we run ourselves, it is also scored on the block holdout (`BlockEvalMasker`, `M2-4`; §3.1), which costs one extra evaluation pass, not extra training.
 
 **Deliverables**
 - BRITS (or bi-GRU fallback) trained and evaluated with `EvalMasker` in standardized units.
-- Its MAE @10% recorded to the results log next to mean/forward-fill, under both holdouts (random `EvalMasker`, block `BlockEvalMasker`).
+- Its MAE @10% recorded to the results log (the README's baseline table and `results/baselines.json`) next to mean/forward-fill, under both holdouts (random `EvalMasker`, block `BlockEvalMasker`).
+- All the baselines logged to wandb, in `M3-2`'s workspace: mean and forward-fill from `results/baselines.json` (`M2-3`, `M2-4`) and this learned baseline.
 - A one-line note stating whether it's BRITS or the fallback, and why.
 
 **Definition of Done**
 - [ ] A learned baseline produces a logged MAE @10% in our harness, under both holdouts.
+- [ ] Mean, forward-fill and the learned baseline are logged to wandb.
 - [ ] Fallback (if used) is explicitly labeled in the results log and report notes.
 - [ ] Number stored where the Week-7 headline table can cite it.
