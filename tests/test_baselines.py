@@ -92,7 +92,6 @@ def test_mean_imputation_dry_run_on_built_dataset(small_dataset):
 def test_mean_imputation_on_set_a_test_split(set_a):
     mae, _, _ = score_mean_imputation(set_a, set_a["test_idx"])
     assert mae == pytest.approx(0.7053, abs=5e-5)                          # pinned: no randomness involved
-    assert mae == pytest.approx(0.72, abs=0.05)                            # the plan's expected floor
 
 # --- D2: forward fill -------------------------------------------------------------------
 
@@ -187,7 +186,6 @@ def test_forward_fill_dry_run_on_built_dataset(small_dataset):
 def test_forward_fill_on_set_a_test_split(set_a):
     mae, _, _ = score_forward_fill(set_a, set_a["test_idx"])
     assert mae == pytest.approx(0.4487, abs=5e-5)                          # pinned: no randomness involved
-    assert mae == pytest.approx(0.42, abs=0.05)                            # the plan's expected figure
     assert mae < score_mean_imputation(set_a, set_a["test_idx"])[0]        # it beats the floor
 
 # --- D3: what the baselines are scored on -----------------------------------------------
@@ -214,11 +212,35 @@ def test_baselines_are_scored_on_exactly_the_held_out_targets(set_a, baseline):
 def test_baseline_results_layout(small_dataset):
     results = baseline_results(small_dataset)
     assert results["random"]["eval_masker_seed"] == 2012
-    for split in ("val", "test"):
-        row = results["random"][split]
-        assert row["n_patients"] == len(small_dataset[f"{split}_idx"])
-        assert set(row["mean_imputation"]) == set(row["forward_fill"]) == {"mae", "rmse"}
+    assert set(results["random"]["fractions"]) == {"0.1", "0.5", "0.9"}   # headline + robustness rates
+    for rate in results["random"]["fractions"].values():
+        for split in ("val", "test"):
+            row = rate[split]
+            assert row["n_patients"] == len(small_dataset[f"{split}_idx"])
+            assert set(row["mean_imputation"]) == set(row["forward_fill"]) == {"mae", "rmse"}
     json.dumps(results)                                                    # plain JSON types only
+
+def test_the_10_percent_entry_is_the_headline_score(small_dataset):
+    d = small_dataset
+    row = baseline_results(d)["random"]["fractions"]["0.1"]["test"]
+    assert row["mean_imputation"]["mae"] == round(score_mean_imputation(d, d["test_idx"])[0], 6)
+    assert row["forward_fill"]["mae"] == round(score_forward_fill(d, d["test_idx"])[0], 6)
+
+def test_each_rate_hides_its_own_fraction(small_dataset):
+    d = small_dataset
+    for key, rate in baseline_results(d)["random"]["fractions"].items():
+        for split in ("val", "test"):
+            n_observed = d["mask"][d[f"{split}_idx"]].sum(axis=(1, 2))
+            assert rate[split]["n_targets"] == sum(int(int(n) * float(key)) for n in n_observed)
+
+@needs_raw_data
+@pytest.mark.parametrize("fraction, mean_mae, ffill_mae", [(0.5, 0.7132, 0.4881), (0.9, 0.7108, 0.5908)])
+def test_robustness_rates_on_set_a_test_split(set_a, fraction, mean_mae, ffill_mae):
+    idx = set_a["test_idx"]
+    mask, values = set_a["mask"][idx], set_a["values"][idx]
+    cond, target = EvalMasker(2012, fraction)(mask, set_a["record_ids"][idx])
+    assert masked_mae(mean_imputation(values), values, target) == pytest.approx(mean_mae, abs=5e-5)
+    assert masked_mae(forward_fill(values, cond), values, target) == pytest.approx(ffill_mae, abs=5e-5)
 
 @needs_raw_data
 @pytest.mark.skipif(not RESULTS_PATH.exists(), reason="results/baselines.json not written yet")

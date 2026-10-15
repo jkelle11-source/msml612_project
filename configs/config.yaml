@@ -23,6 +23,12 @@ protocol:
   # (the "10% masked" headline rate). PROJECT_PLAN §3.1, §6.
   eval_holdout_fraction: 0.10
 
+  # CSDI's two robustness rates (PROJECT_PLAN §6): the same EvalMasker, same
+  # eval_masker_seed, holding out 50% and 90% of observed values instead. Each
+  # is a frozen holdout like the 10% one; the headline stays at 10%.
+  # Consumed by eval.baselines (M2-3).
+  robustness_fractions: [0.50, 0.90]
+
   # Imputations sampled per patient when scoring; the reported guess is their
   # median (eval.median_imputation, the lower-middle value as in upstream's
   # torch.median). 100 is upstream's evaluation default (exe_physio.py --nsample),

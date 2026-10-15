@@ -4,28 +4,84 @@
   "eval_holdout_fraction": 0.1,
   "random": {
     "eval_masker_seed": 2012,
-    "val": {
-      "n_patients": 400,
-      "n_targets": 12886,
-      "mean_imputation": {
-        "mae": 0.695559,
-        "rmse": 0.953657
+    "fractions": {
+      "0.1": {
+        "val": {
+          "n_patients": 400,
+          "n_targets": 12886,
+          "mean_imputation": {
+            "mae": 0.695559,
+            "rmse": 0.953657
+          },
+          "forward_fill": {
+            "mae": 0.436614,
+            "rmse": 0.740869
+          }
+        },
+        "test": {
+          "n_patients": 800,
+          "n_targets": 26027,
+          "mean_imputation": {
+            "mae": 0.705297,
+            "rmse": 0.990608
+          },
+          "forward_fill": {
+            "mae": 0.448729,
+            "rmse": 3.325094
+          }
+        }
       },
-      "forward_fill": {
-        "mae": 0.436614,
-        "rmse": 0.740869
-      }
-    },
-    "test": {
-      "n_patients": 800,
-      "n_targets": 26027,
-      "mean_imputation": {
-        "mae": 0.705297,
-        "rmse": 0.990608
+      "0.5": {
+        "val": {
+          "n_patients": 400,
+          "n_targets": 65213,
+          "mean_imputation": {
+            "mae": 0.700259,
+            "rmse": 0.965088
+          },
+          "forward_fill": {
+            "mae": 0.484426,
+            "rmse": 0.819683
+          }
+        },
+        "test": {
+          "n_patients": 800,
+          "n_targets": 131739,
+          "mean_imputation": {
+            "mae": 0.713181,
+            "rmse": 2.287
+          },
+          "forward_fill": {
+            "mae": 0.488118,
+            "rmse": 2.641896
+          }
+        }
       },
-      "forward_fill": {
-        "mae": 0.448729,
-        "rmse": 3.325094
+      "0.9": {
+        "val": {
+          "n_patients": 400,
+          "n_targets": 117387,
+          "mean_imputation": {
+            "mae": 0.699982,
+            "rmse": 0.964115
+          },
+          "forward_fill": {
+            "mae": 0.592286,
+            "rmse": 0.9084
+          }
+        },
+        "test": {
+          "n_patients": 800,
+          "n_targets": 237119,
+          "mean_imputation": {
+            "mae": 0.710813,
+            "rmse": 2.117772
+          },
+          "forward_fill": {
+            "mae": 0.590824,
+            "rmse": 2.091257
+          }
+        }
       }
     }
   }

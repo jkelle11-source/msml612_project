@@ -34,8 +34,9 @@ def forward_fill(values, cond_mask):
     """Forward-fill baseline (M2-3): carry each variable's last visible value forward in time.
 
     Only boxes where ``cond_mask == 1`` are ever read, so the held-out targets cannot leak into
-    the guess. Hours before a variable's first visible value take that first value (backward
-    fill), and a variable the patient never shows gets the training mean, 0. Returns a fresh
+    the guess. The rule for the hours before a variable's first visible value is backward fill:
+    they take that first value (filling them with the training mean instead scores worse on
+    Set A). A variable the patient never shows gets the training mean, 0. Returns a fresh
     ``(N, 48, D)`` float32 grid: ``masked_mae(forward_fill(values, cond), values, target)``.
     """
     values, cond = check_grid(values), check_grid(cond_mask) == 1
@@ -51,22 +52,29 @@ def forward_fill(values, cond_mask):
 def baseline_results(dataset):
     """Both baselines' MAE/RMSE on ``EvalMasker``'s val and test targets: the record in ``RESULTS_PATH``.
 
-    Keyed by holdout, so the block holdout (``M2-4``) is recorded next to the random one.
+    Scored at the headline rate (``eval_holdout_fraction``, 10%) and at CSDI's robustness rates
+    (``robustness_fractions``, 50% and 90%), all with the frozen ``eval_masker_seed``, under
+    ``random["fractions"][str(fraction)]``. Keyed by holdout, so the block holdout (``M2-4``) is
+    recorded next to the random one.
     """
-    random = {"eval_masker_seed": _CONFIG["protocol"]["eval_masker_seed"]}
-    for split in ("val", "test"):
-        idx = dataset[f"{split}_idx"]
-        values, mask = dataset["values"][idx], dataset["mask"][idx]
-        cond, target = EvalMasker.from_config()(mask, dataset["record_ids"][idx])
-        row = {"n_patients": len(idx), "n_targets": int(target.sum())}
-        for name, guess in (("mean_imputation", mean_imputation(values)), ("forward_fill", forward_fill(values, cond))):
-            row[name] = {"mae": round(masked_mae(guess, values, target), 6),
-                         "rmse": round(masked_rmse(guess, values, target), 6)}
-        random[split] = row
+    protocol = _CONFIG["protocol"]
+    random = {"eval_masker_seed": protocol["eval_masker_seed"], "fractions": {}}
+    for fraction in (protocol["eval_holdout_fraction"], *protocol["robustness_fractions"]):
+        masker = EvalMasker(protocol["eval_masker_seed"], fraction, GRID)
+        rate = random["fractions"][str(fraction)] = {}
+        for split in ("val", "test"):
+            idx = dataset[f"{split}_idx"]
+            values, mask = dataset["values"][idx], dataset["mask"][idx]
+            cond, target = masker(mask, dataset["record_ids"][idx])
+            row = {"n_patients": len(idx), "n_targets": int(target.sum())}
+            for name, guess in (("mean_imputation", mean_imputation(values)), ("forward_fill", forward_fill(values, cond))):
+                row[name] = {"mae": round(masked_mae(guess, values, target), 6),
+                             "rmse": round(masked_rmse(guess, values, target), 6)}
+            rate[split] = row
     return {
         "units": "standardized (train-split z-scores)",
         "split_seed": _CONFIG["data"]["split_seed"],
-        "eval_holdout_fraction": _CONFIG["protocol"]["eval_holdout_fraction"],
+        "eval_holdout_fraction": protocol["eval_holdout_fraction"],
         "random": random,
     }
 
