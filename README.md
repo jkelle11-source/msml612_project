@@ -33,6 +33,8 @@ diffusion/     # training data feed, loop and random streams around the
                #   own.                                                     [M2-1]
 eval/          # EvalMasker / TrainMasker + masked, standardized metrics;
                #   EvalSampler (frozen-noise evaluation pass).              [M1-3]
+               #   Mean and forward-fill baselines.                         [M2-3]
+results/       # recorded results (baselines.json).                         [M2-3]
 configs/       # frozen protocol config (config.yaml).
 Docs/          # project plan + shared notes (e.g. CSDI_Objective.md).
 Milestones/    # per-milestone GitHub issue breakdown (M00-M10).
@@ -50,6 +52,11 @@ load-bearing one is the **`EvalMasker` seed** (`protocol.eval_masker_seed`), whi
 the fixed 10% evaluation-target holdout identically across every model and every seed for
 the entire project (PROJECT_PLAN §3.1, §4.1). **It must never change** — doing so silently
 invalidates every comparison. `eval.EvalMasker` (M1-3) reads it from this config.
+
+The same seed also pins two more holdouts at CSDI's robustness rates (PROJECT_PLAN §6):
+`protocol.robustness_fractions` (`[0.50, 0.90]`) holds out 50% and 90% of observed values
+instead of 10%. The headline rate stays `protocol.eval_holdout_fraction` (10%). The baselines
+are scored at all three (see [Baselines](#baselines)).
 
 The evaluation sampler is frozen the same way: `eval.EvalSampler` reads
 `protocol.eval_sampling_seed`, `protocol.eval_n_samples` and `protocol.eval_batch_size`
@@ -372,6 +379,89 @@ This writes `data/processed/physionet_set_a.npz` (about 10 MB) in a few seconds.
 70/10/20 by patient, fixed by `data.split_seed` in [`configs/config.yaml`](configs/config.yaml).
 `delta_obs` is computed from the full observation mask; `data.physionet.compute_tslo`
 recomputes it for any other mask.
+
+**Known bad values, kept as recorded.** Raw Set A contains data-entry errors, and
+`data.physionet` keeps them, as upstream CSDI's loader does, so our numbers rest on the same
+data as the published 0.217 (decided at the M2-3 review):
+
+- pH: 10 of 23,437 values lie outside 6.5–8.0. They are 733, 734 and 735 (a dropped decimal
+  point); 94, 95, 96 and 100 (apparently SaO2 logged under pH); and 187, 1 and 3.
+- Temp: 73 of 71,213 values lie below 25 °C, most of them −17.8.
+- K: one value of 22.9; the next highest is 15.6.
+
+What this does to our numbers:
+
+- **pH and Temp count for less than they should in pooled MAE.** The bad values widen the
+  training-split scaling: pH's std is 1.395 instead of 0.077 without them, and Temp's 1.675
+  instead of 0.843. Every pH error therefore shrinks about 18× in standardized units and every
+  Temp error about 2×. Upstream's published numbers come from the same uncleaned data. Upstream
+  scales with all patients, where pH's std is 8.385.
+- **pH's and Temp's per-variable MAE (M9-2) can't be trusted,** in raw or standardized units.
+  One bad value, scored or carried into a scored value, can dominate it, and every model sees the
+  two features compressed. Forward fill's pH MAE on the 10% test holdout, for example, is 1.20
+  standardized units, almost all of it one carried-forward pH of 735.
+- **RMSE is inflated wherever a bad value is scored or carried forward** (see the footnote under
+  [Baselines](#baselines)). MAE is the headline metric.
+
+---
+
+## Baselines
+
+Mean imputation and forward fill (`eval/baselines.py`, M2-3) are the floor every model we
+train must beat (PROJECT_PLAN §6). Both are scored like any model, on `EvalMasker`'s held-out
+values, in standardized units:
+
+- `mean_imputation(values)` guesses each variable's training-split mean, which is 0 in
+  standardized units, everywhere. It never looks at the patient.
+- `forward_fill(values, cond_mask)` carries each variable's last visible value forward. It
+  reads only boxes where `cond_mask == 1`, so held-out values can't leak in. **The rule for the
+  hours before a variable's first visible value is backward fill:** they take that first value.
+  Filling them with the training mean instead scores worse (MAE 0.460 on val and 0.470 on test at
+  10%). A variable the patient never shows gets 0.
+
+MAE and RMSE in standardized units; val has 400 patients and test 800:
+
+| Holdout | Split | Mean imp. MAE | Mean imp. RMSE | Forward fill MAE | Forward fill RMSE |
+| --- | --- | --- | --- | --- | --- |
+| 10% (headline) | val | 0.6956 | 0.9537 | 0.4366 | 0.7409 |
+| 10% (headline) | test | 0.7053 | 0.9906 | 0.4487 | 3.3251 * |
+| 50% | val | 0.7003 | 0.9651 | 0.4844 | 0.8197 |
+| 50% | test | 0.7132 | 2.2870 * | 0.4881 | 2.6419 * |
+| 90% | val | 0.7000 | 0.9641 | 0.5923 | 0.9084 |
+| 90% | test | 0.7108 | 2.1178 * | 0.5908 | 2.0913 * |
+
+\* Inflated by the [known bad values](#dataset). At 10% none of them is scored, but a pH of 735
+is visible in one test patient and forward fill carries it into a scored pH value. That one
+error is 521.5 standardized units; without it, forward fill's test RMSE would be 0.7798
+instead of 3.3251 and its MAE 0.4287 instead of 0.4487. At 50% and 90% some bad values are
+scored themselves (9 and 12 on test, 3 and 4 on val), which inflates both baselines' test RMSE.
+
+Forward fill's 10% validation MAE, **0.437**, is M3-1's "below forward fill" bar, because M3-1
+tracks validation MAE. The 50% and 90% rows are CSDI's robustness rates, each its own frozen
+holdout (see [Frozen protocol constants](#frozen-protocol-constants)).
+
+The same numbers are recorded, unrounded, in [`results/baselines.json`](results/baselines.json),
+keyed `random` → `fractions` → `"0.1"` / `"0.5"` / `"0.9"` → `val` / `test`. The block holdout
+(M2-4) is recorded next to `random`, and M3-3 logs the baselines to wandb. To regenerate the
+file, run from the repo root:
+
+```text
+uv run python -m eval.baselines
+```
+
+`tests/test_baselines.py` fails when the recorded file no longer matches a fresh run, so rerun
+it, and update this table, whenever the baselines, the data pipeline or the protocol change.
+
+Tests:
+
+- `tests/test_baselines.py`: hand-worked fixtures; forward fill checked against a plain-loop
+  reference; no leakage from held-out values; the scored values exactly `EvalMasker`'s held-out
+  targets; each rate holding out its own fraction; pinned Set A test MAEs at 10%, 50% and 90%;
+  the recorded file matching a fresh run.
+- `tests/test_sampler_real_batch.py`: the reused reverse sampler on real Set A patients (M2-3).
+  An untrained model runs upstream's full 50-step schedule, with `EvalMasker`'s conditioning
+  mask passed as `gt_mask`. The samples come back as `(K, B, 48, D)` with no NaNs, the K draws
+  differ, and the held-out values can't reach them.
 
 ---
 
