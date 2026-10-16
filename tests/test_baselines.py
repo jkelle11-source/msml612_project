@@ -1,12 +1,14 @@
 import json
+import subprocess
+import sys
 
 import numpy as np
 import pytest
 import torch
-from conftest import RAW_DIR
+from conftest import RAW_DIR, ROOT
 from data.physionet import invert_scaler
-from eval import EvalMasker, forward_fill, masked_errors, masked_mae, mean_imputation
-from eval.baselines import RESULTS_PATH, baseline_results
+from eval import EvalMasker, masked_errors, masked_mae
+from eval.baselines import RESULTS_PATH, baseline_results, forward_fill, mean_imputation
 
 needs_raw_data = pytest.mark.skipif(not RAW_DIR.exists(), reason="raw Set A not downloaded")
 
@@ -241,6 +243,12 @@ def test_robustness_rates_on_set_a_test_split(set_a, fraction, mean_mae, ffill_m
     cond, target = EvalMasker(2012, fraction)(mask, set_a["record_ids"][idx])
     assert masked_mae(mean_imputation(values), values, target) == pytest.approx(mean_mae, abs=5e-5)
     assert masked_mae(forward_fill(values, cond), values, target) == pytest.approx(ffill_mae, abs=5e-5)
+
+def test_importing_eval_leaves_the_baselines_script_alone():
+    # `python -m eval.baselines` runs the module as __main__. If importing the package had
+    # already imported it, Python would run it twice and warn (runpy's RuntimeWarning).
+    code = "import sys, eval; assert 'eval.baselines' not in sys.modules"
+    subprocess.run([sys.executable, "-c", code], cwd=ROOT, check=True)
 
 @needs_raw_data
 @pytest.mark.skipif(not RESULTS_PATH.exists(), reason="results/baselines.json not written yet")

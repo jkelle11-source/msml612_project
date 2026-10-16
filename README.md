@@ -409,7 +409,9 @@ What this does to our numbers:
 
 Mean imputation and forward fill (`eval/baselines.py`, M2-3) are the floor every model we
 train must beat (PROJECT_PLAN §6). Both are scored like any model, on `EvalMasker`'s held-out
-values, in standardized units:
+values, in standardized units. Import them from `eval.baselines`: the `eval` package leaves
+that module unimported, as `data` leaves `data.physionet`, so `python -m eval.baselines` runs it
+only once.
 
 - `mean_imputation(values)` guesses each variable's training-split mean, which is 0 in
   standardized units, everywhere. It never looks at the patient.
@@ -457,7 +459,7 @@ Tests:
 - `tests/test_baselines.py`: hand-worked fixtures; forward fill checked against a plain-loop
   reference; no leakage from held-out values; the scored values exactly `EvalMasker`'s held-out
   targets; each rate holding out its own fraction; pinned Set A test MAEs at 10%, 50% and 90%;
-  the recorded file matching a fresh run.
+  the recorded file matching a fresh run; importing `eval` leaving `eval.baselines` unimported.
 - `tests/test_sampler_real_batch.py`: the reused reverse sampler on real Set A patients (M2-3).
   An untrained model runs upstream's full 50-step schedule, with `EvalMasker`'s conditioning
   mask passed as `gt_mask`. The samples come back as `(K, B, 48, D)` with no NaNs, the K draws

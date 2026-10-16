@@ -8,7 +8,9 @@ from .metrics import masked_mae, masked_rmse
 
 _CONFIG = yaml.safe_load(Path(CONFIG_PATH).read_text())
 GRID = (_CONFIG["data"]["n_timesteps"], _CONFIG["data"]["n_features"])
-RESULTS_PATH = Path(CONFIG_PATH).resolve().parents[1] / "results" / "baselines.json"
+ROOT = Path(CONFIG_PATH).resolve().parents[1]
+DATASET_PATH = ROOT / "data" / "processed" / "physionet_set_a.npz"
+RESULTS_PATH = ROOT / "results" / "baselines.json"
 
 def check_grid(x):
     """Return ``x`` (NumPy array or CPU torch tensor) as an array, rejecting anything not ``(N, 48, D)``.
@@ -83,6 +85,6 @@ if __name__ == "__main__":
     from data.physionet import load_dataset
 
     RESULTS_PATH.parent.mkdir(exist_ok=True)
-    results = baseline_results(load_dataset("data/processed/physionet_set_a.npz"))
+    results = baseline_results(load_dataset(DATASET_PATH))
     RESULTS_PATH.write_text(json.dumps(results, indent=2) + "\n")
     print(json.dumps(results, indent=2))
