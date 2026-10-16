@@ -15,7 +15,7 @@
 ## Coordination notes
 - **We reuse upstream's diffusion math; only the masking is ours** (settled at the M1-2 review; §0). The vendored `CSDI_base` keeps its quad β-schedule (1e-4 → 0.5, 50 steps), forward noising, masked noise-prediction loss, reverse sampler and 8 attention heads, so the gate run matches the configuration behind the published 0.217. Its internal train masking (`get_randmask`) is the one piece replaced: it draws from the global NumPy/torch RNGs, which would break seed pairing, so conditioning masks come from `TrainMasker` (training) and `EvalMasker` (evaluation, passed as upstream's `gt_mask`).
 - The **training loop (Jake)** and the **model adaptation (Josh)** meet at one interface: the loop hands the reused model a batch whose `gt_mask` is the `TrainMasker` conditioning mask and gets the masked loss back; noising, the denoiser call and the loss all happen inside the model. The call is frozen as `loss = model(batch, generator=streams.diffusion)`, so both sides can be built against a stub, and it is the same for every variant: the extension toggles are read once, by `models.build_model`, and the model computes `mask_emb`/`time_enc` itself, from the conditioning mask, on its loss and sampler paths. The loop never passes them (settled in `M2-1`; README, input-hook contract). Both issues touch `CSDI_base`'s entry points, so agree up front who edits the vendored file. `M2-1`'s additions (the `generator` argument and `target_strategy: "external"`) are already in it; every change to it carries an `ADAPTED` marker and a README line, as in `M1-2`.
-- **Baselines are our floor, not our target.** Mean imputation (~0.72) and forward-fill (~0.42 @10%) are the numbers base CSDI must beat in Week 3 to prove it's learning at all (§6).
+- **Baselines are our floor, not our target.** Mean imputation (0.705 test, 0.696 val) and forward-fill (0.449 test, 0.437 val), @10% as measured in `M2-3`, are the numbers base CSDI must beat in Week 3 to prove it's learning at all (§6).
 - Keep every number in **standardized units** (§3.2) from the very first baseline, or the Week-3 "below forward-fill" check is meaningless.
 - **The block holdout was added late (Oct 14).** §4.1 makes block missingness Extension 1's primary regime, and `M4-2` and `M7-2` assume block masks exist, but no issue built them. `M2-4` closes that gap. It is frozen exactly like `EvalMasker`, with its own seed, and leaves `EvalMasker` untouched: `EvalMasker`'s golden fingerprint must not change. Training stays on `TrainMasker`'s `random` strategy for every variant; a second, block-aware training regime for base and Ext 1 is added later, in `M6-2` (§3.1).
 
@@ -76,11 +76,13 @@
 **Context.** The cheap deterministic baselines that define the performance floor (§6), plus an early correctness check on the reverse sampler. The sampler is **reused** (`CSDI_base.impute`, kept as vendored per the `M1-2` review decision) and the real denoiser has existed since `M1-2`, so no stub is needed: the check runs an untrained model on a real batch with `EvalMasker` supplying the conditioning mask, which catches shape/NaN and mask hand-off bugs before anything is trained. Mean and forward-fill are *our* runs, so they carry our own measurement conventions.
 
 **Deliverables**
-- Mean-imputation and forward-fill baselines, evaluated with `EvalMasker` in standardized units, recorded to the results log.
+- Mean-imputation and forward-fill baselines, evaluated with `EvalMasker` in standardized units, recorded to the results log (the README's baseline table and `results/baselines.json`).
+- Both also scored at CSDI's robustness rates, 50% and 90% (§6), each a frozen holdout from the same `EvalMasker` seed (`protocol.robustness_fractions`).
 - Reused reverse sampler exercised end-to-end with an untrained model: `EvalMasker`'s conditioning mask passed as upstream's `gt_mask`, output shape correct, no NaNs, K-draw stacking works.
 
 **Definition of Done**
-- [ ] Mean ≈ 0.72 and forward-fill ≈ 0.42 @10% reproduced in standardized units and logged.
+- [ ] Mean and forward-fill @10% measured in standardized units and logged (test: 0.705 and 0.449; the plan's estimates were ~0.72 and ~0.42).
+- [ ] Both measured and logged @50% and @90% as well.
 - [ ] Reused sampler returns samples in our `(K, B, 48, D)` layout (upstream's native layout is `(B, K, D, 48)`) with no NaNs.
 - [ ] The scored target set (observed minus conditioning) is exactly `EvalMasker`'s held-out targets.
 - [ ] Baseline numbers stored where the Week-7 headline table can cite them.

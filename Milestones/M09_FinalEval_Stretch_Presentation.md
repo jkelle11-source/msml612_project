@@ -49,6 +49,8 @@
 
 **Context.** The mechanistic story behind the aggregate numbers (§5, §7): per-variable MAE across all 35 variables, ranking the top-5/bottom-5 improvers, and testing the hypothesis that Ext-2 gains concentrate on **high-autocorrelation variables** (HR, SpO2) where recency matters most. Josh owns it, building on the Week-7 qualitative work.
 
+**Caution: pH and Temp** (README, Dataset; §8; found in `M2-3`). Their per-variable MAE can't be trusted, in raw or standardized units. The raw data's known bad values widen both features' scaling, so every model sees them compressed, and a single bad value that is scored, or carried into a scored value, can dominate a feature's MAE. Flag both wherever they appear in the per-variable table and the top-5/bottom-5 lists.
+
 **Deliverables**
 - Per-variable MAE (all 35) for base vs. best variant, with top-5/bottom-5 improvers identified.
 - An explicit check of whether Ext-2 improvements concentrate on high-autocorrelation variables.

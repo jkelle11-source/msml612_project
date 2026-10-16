@@ -248,12 +248,12 @@ Three **one-factor sensitivity studies** on the **best** variant, plus mask-enco
 
 ## 6. Baselines & Targets (corrected scale)
 
-CSDI is benchmarked at three masked-value rates, not one number. Headline rate is **10%** (matches our blackout protocol); 50/90% are robustness. Baseline-of-baselines numbers (BRITS, V-RIN) are **cited, not re-derived**, so they carry no SE of ours. The table is the random holdout; every model we run ourselves (mean, forward-fill, our BRITS, all CSDI variants) is also scored on the block holdout at the same 10% rate (§3.1), which has no published counterpart.
+CSDI is benchmarked at three masked-value rates, not one number. Headline rate is **10%** (matches our blackout protocol); 50/90% are robustness. Baseline-of-baselines numbers (BRITS, V-RIN) are **cited, not re-derived**, so they carry no SE of ours. The table is the random holdout; every model we run ourselves (mean, forward-fill, our BRITS, all CSDI variants) is also scored on the block holdout at the same 10% rate (§3.1), which has no published counterpart. Mean and forward-fill are measured on our test split (M2-3); the README has their validation numbers and RMSE, and forward-fill's 10% validation MAE, 0.437, is the Week-3 "below forward-fill" bar.
 
 | Model | MAE @10% | MAE @50% | MAE @90% | Source |
 |---|---|---|---|---|
-| Mean imputation | ~0.72 | ~0.72 | ~0.72 | our run (floor) |
-| Forward fill | ~0.42 | ~0.55 | ~0.72 | our run |
+| Mean imputation | 0.705 | 0.713 | 0.711 | our run (floor) |
+| Forward fill | 0.449 | 0.488 | 0.591 | our run |
 | BRITS | 0.284 | 0.368 | 0.517 | Tashiro 2021, Table 3 |
 | V-RIN | 0.271 | 0.365 | 0.606 | Tashiro 2021, Table 3 |
 | CSDI (paper) | 0.217 | 0.301 | 0.481 | Tashiro 2021 |
@@ -313,7 +313,7 @@ Proposal (Oct 8) · Interim Report (Oct 29) · Presentation (Dec 2) · Final Rep
 3. Method — CSDI background; Ext 1 (honest framing, dual-axis encoder); Ext 2 (TSLO + true Time2Vec, why no attention bias); Ext 3 (studentized patient-level conformal, if done).
 4. Experiments — dataset, **normalization**, dual-mask protocol (random and block holdouts, two training regimes), **paired 5-seed** design, baselines, headline table (paired Δ ± SE), ablation, per-variable, runtime, coverage.
 5. Discussion — main effects vs. exploratory interaction; where/why extensions help; nulls stated as findings.
-6. Limitations — patient-level exchangeability; grid vs. native-timestamp choice for TSLO; reduced scale vs. published; single dataset; block missingness is synthetic (one window shape imposed on held-out values), and the block-aware regime trains on that same shape.
+6. Limitations — patient-level exchangeability; grid vs. native-timestamp choice for TSLO; reduced scale vs. published; single dataset; block missingness is synthetic (one window shape imposed on held-out values), and the block-aware regime trains on that same shape; known data-entry errors kept in the raw data to match upstream (10 pH values such as 733–735, 73 Temp values such as −17.8, one K of 22.9), which widen pH's and Temp's scaling so the two count for less than they should in pooled standardized MAE, make their per-variable MAE unreliable, and inflate RMSE wherever a bad value is scored or carried forward (README, Dataset).
 7. Conclusion & future work (per-feature TSLO attention bias; native-timestamp irregular grid).
 
 ### Risk register

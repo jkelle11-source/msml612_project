@@ -12,6 +12,11 @@ Also houses masked MAE/RMSE metrics reported in standardized units (§3.2), comp
 over held-out eval targets, with an optional raw-unit per-variable readout, and
 ``EvalSampler``, which runs the reused sampler for one evaluation pass with its noise
 re-seeded from a frozen seed (``eval_sampling_seed``, §3.3).
+
+Baselines (M2-3): ``eval.baselines`` holds ``mean_imputation`` and ``forward_fill``, scored
+with the same metrics. It is deliberately not imported here, the way ``data`` leaves
+``data.physionet`` alone: ``python -m eval.baselines`` runs that module as a script, and
+importing it with the package first would make Python run it twice and warn.
 """
 
 from .masking import EvalMasker, TrainMasker
