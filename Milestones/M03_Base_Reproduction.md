@@ -29,6 +29,8 @@
 
 **Context.** The first real training of the adapted base CSDI on PhysioNet. Josh leads on the model, Jake co-drives on the loop and data feed. Success is a model that *learns* — validation MAE dropping below forward-fill with healthy optimization dynamics — which sets up the Week-4 push to the reproduction gate. Most bugs here are at the model↔loop seam (conditioning channel wiring, mask/δ alignment, masker hand-off), which is why the two owners share it.
 
+**Expect loss spikes from the known bad values** (README, Dataset; found in `M2-3`). Our train-split scaling puts the training split's bad pH entries up to 66 standard deviations out and its bad Temp entries up to 33. Upstream's all-patient scaling puts a pH of 100 at 11. They are 17 of the 21 training values beyond 30; the other 4 are Urine. Whenever `TrainMasker` makes one of them a target, or it sits in the conditioning, the masked loss and grad norm can jump. Upstream trained through the same values without clipping. If the spikes destabilize training, revisit cleaning then, before the gate is measured (§3.4), not after.
+
 **Deliverables**
 - Base CSDI training run on the full Set A training split with the frozen protocol (z-scored inputs, `TrainMasker`, masked loss) and upstream's published diffusion configuration (quad schedule, 50 steps, 8 heads).
 - Validation MAE (via `EvalMasker`, standardized) tracked per epoch and confirmed dropping **below forward-fill**.
