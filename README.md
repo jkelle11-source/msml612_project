@@ -314,9 +314,46 @@ What one run does:
 - `history` has one record per step, `{"epoch", "loss", "grad_norm", "lr"}`, as plain numbers.
 
 On the CPU, the same config, dataset and run seed give bit-identical weights and history (tested).
-Some GPU kernels are nondeterministic (the backward pass of an embedding layer, for one), so GPU
-reruns may differ slightly. Still to come in M3: a command-line entry point, validation MAE,
-checkpointing, and wandb logging.
+On an Apple M-series GPU (MPS) they did too: two runs of 20 real-data steps matched bit for bit
+(M3-1). Some CUDA kernels are nondeterministic (the backward pass of an embedding layer, for
+one), so CUDA reruns may differ slightly. `on_step_end(record)`, if given, is called with each
+history record as it is made (M3-1); the run log uses it, and wandb (M3-2) can too.
+
+### Launching a run (M3-1)
+
+```text
+uv run python -m diffusion.run --seed 42
+```
+
+`diffusion/run.py` trains one model from `configs/config.yaml` and a run seed, scores the
+validation split as it goes, and writes to `outputs/<variant>_seed<seed>/` (git-ignored). Options:
+`--device` (`cuda`, `mps`, `cpu`, default the first available), `--epochs` to override
+`train.epochs`, `--config`, `--dataset`, `--out`. Everything is written while the run is going,
+so a stopped run keeps what it has done:
+
+| File | Contents |
+| --- | --- |
+| `config.yaml` | the resolved config, `--epochs` included. `--config` on it reruns the run. |
+| `history.jsonl` | one line per training step: `epoch`, `loss`, `grad_norm`, `lr` |
+| `curve.json` | one row per epoch: mean loss, largest gradient norm, training seconds, and `val_mae` / `val_rmse` / `val_seconds` when scored |
+| `model.pt`, `best.pt` | weights after the latest scored epoch, and at the lowest val MAE |
+| `summary.json` | the 500-step health report, best and final val MAE, forward fill's val MAE, `below_forward_fill` |
+
+**Validation while training is for tracking, not reporting.** Every `validation.every_n_epochs`
+epochs (and on the last), the run scores the val split's `EvalMasker` targets at 10%, exactly
+as the baselines are scored, using the median of `validation.n_samples` draws (default 5). The
+frozen protocol uses 100 draws (`eval.EvalSampler.from_config()`), but one draw over the 400 val
+patients takes about 130 s on MPS, so 100 would take hours. Fewer draws make the median
+noisier, which raises MAE slightly, so a tracked MAE below forward fill is a conservative claim.
+
+**The health report** (`diffusion.run.health_report`) checks the first 500 steps. They pass if
+every loss and gradient norm is finite, the loss over the last tenth is below the first tenth
+(learning), it has not collapsed toward 0 (below 1e-3, which would mean targets are leaked or
+skipped), and the gradient norm has not exploded (the last tenth's median more than 10× the
+overall median). Isolated spikes above 10× the median are listed, not failed, since the known bad
+values in Set A cause some (see [Dataset](#dataset)). The thresholds are ours.
+
+Run results and seam issues are recorded in [`Docs/M3_debug_log.md`](Docs/M3_debug_log.md).
 
 Tests:
 
@@ -328,6 +365,10 @@ Tests:
 - `tests/test_train.py`: one step on a real batch, upstream's masking never runs, the loss
   scores exactly `TrainMasker`'s targets, every step replayed from scratch at `lr = 0`,
   same-seed reproducibility, clipping, the learning-rate schedule, the epoch hook.
+- `tests/test_run.py` (M3-1): the health report on made-up histories (healthy, one spike,
+  explosion, flat, collapsed, NaN); validation scoring exactly `EvalMasker`'s targets without
+  showing them to the model; a run's output files; validation every n epochs and on the last;
+  the command line rerunning a run from its saved config with identical results; the step hook.
 - `tests/test_forward_noising.py`: the schedule check described under
   [Reused CSDI implementation](#reused-csdi-implementation).
 

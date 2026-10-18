@@ -5,7 +5,7 @@ from diffusion.streams import RunStreams
 from diffusion.data import train_loader, to_batch
 from models.build import build_model
 
-def train(config, dataset, run_seed, device, on_epoch_end = None):
+def train(config, dataset, run_seed, device, on_epoch_end = None, on_step_end = None):
     
     streams = RunStreams(run_seed)
     streams.seed_model_init()
@@ -57,7 +57,11 @@ def train(config, dataset, run_seed, device, on_epoch_end = None):
                                   "loss": loss.item(),
                                   "grad_norm": grad_norm.item(),
                                   "lr": scheduler.get_last_lr()[0]})
-            
+
+            # Live view of the history (M3-1): the run log and wandb (M3-2) read each record here.
+            if on_step_end is not None:
+                on_step_end(train_history[-1])
+
         scheduler.step()
         
         if on_epoch_end is not None:
