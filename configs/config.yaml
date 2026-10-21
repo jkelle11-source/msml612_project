@@ -19,6 +19,25 @@ protocol:
   # Consumed by eval.EvalMasker (M1-3).
   eval_masker_seed: 2012
 
+  # -------------------------------------------------------------------------
+  # FROZEN BlockEvalMasker seed (PROJECT_PLAN §3.1, §4.1; M2-4).
+  # Seeds the block-missingness holdout, frozen like EvalMasker's: one
+  # generator per patient from (seed, record_id). Each patient loses the same
+  # number of values as under EvalMasker (eval_holdout_fraction; there is no
+  # block fraction of its own), hidden as whole block_window_hours windows
+  # across all 35 features. Distinct from eval_masker_seed (2012),
+  # eval_sampling_seed (2021), split_seed (612) and the run seeds (42-46).
+  #
+  # !!! DO NOT CHANGE. Changing it silently invalidates every block comparison. !!!
+  # Consumed by eval.BlockEvalMasker (M2-4).
+  block_eval_masker_seed: 8080
+
+  # Length in hours of each hidden window: the 48-hour grid is tiled into
+  # 48 / 3 = 16 fixed slots. Must divide data.n_timesteps.
+  #
+  # !!! DO NOT CHANGE. It decides which values the block holdout scores. !!!
+  block_window_hours: 3
+
   # Fraction of observed values held out as the fixed evaluation target set
   # (the "10% masked" headline rate). PROJECT_PLAN §3.1, §6.
   eval_holdout_fraction: 0.10
@@ -39,7 +58,8 @@ protocol:
   # eval.EvalSampler re-seeds its generator with this at the start of every
   # evaluation pass, so a checkpoint's score depends on its weights alone and
   # every variant, run seed and epoch is scored with the same noise. Distinct
-  # from eval_masker_seed (2012), split_seed (612) and the run seeds (42-46).
+  # from eval_masker_seed (2012), split_seed (612), block_eval_masker_seed (8080),
+  # and the run seeds (42-46).
   #
   # !!! DO NOT CHANGE once results exist. !!!
   eval_sampling_seed: 2021
@@ -70,10 +90,10 @@ data:
   normalization: zscore_train_only
 
   # Seed for the fixed 70/10/20 patient-level train/val/test split (M1-1).
-  # Deliberately distinct from eval_masker_seed (2012) and the run seeds
-  # (42-46) so the three kinds of randomness can never be confused. It decides
-  # which patients are scored, so treat it as frozen once results exist.
-  # Consumed by data.physionet.build_dataset.
+  # Deliberately distinct from eval_masker_seed (2012), block_eval_masker_seed
+  # (8080) and the run seeds (42-46) so the kinds of randomness can never be
+  # confused. It decides which patients are scored, so treat it as frozen once
+  # results exist. Consumed by data.physionet.build_dataset.
   split_seed: 612
 
 # -----------------------------------------------------------------------------
