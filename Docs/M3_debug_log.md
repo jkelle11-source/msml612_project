@@ -52,7 +52,10 @@ now match bit for bit, and their seconds per epoch, against 23.5 s, show what it
 **2026-10-21, Jake. Deterministic kernels, checked on CUDA.** Two 2-epoch runs of seed 42 on a
 Colab T4 (`--device cuda --epochs 2`, separate output folders) matched bit for bit: history, curve
 (timings aside), summary and weights. CUDA reruns now reproduce exactly, so M3-1's rerun item holds
-on CPU, MPS and CUDA.
+on CPU, MPS and CUDA. Epochs took 32.3 and 25.7 s in one run and 28.9 and 26.7 s in the other (the
+first includes warm-up), against 29 and 23.5 s without deterministic kernels (2026-10-17, another
+session): the steady epoch is about 11% slower, about 26 s, so a 200-epoch run trains in about
+87 min instead of 78. That rests on one steady epoch per run, so treat it as an estimate.
 
 ## Seam checks
 

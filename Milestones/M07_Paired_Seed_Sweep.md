@@ -13,7 +13,7 @@
 - **Josh** — Qualitative trajectories (5 patients × 3 variables: HR, serum sodium, GCS); temporal coherence vs. mean/forward-fill
 
 ## Coordination notes
-- **GPU access is the schedule risk** (§8). 30 × 200-epoch runs need reliable single-GPU time: on a Colab T4, about 39 h of training and 190 h of test scoring (§8 risk register); if it's shared/queued, start Monday and checkpoint aggressively so a preemption doesn't cost a whole cell. Run the 20 random-regime runs first: if time runs out, the 10 block-aware runs drop to 3 seeds and the block contrast is labelled exploratory (§8 risk register).
+- **GPU access is the schedule risk** (§8). 30 × 200-epoch runs need reliable single-GPU time: on a Colab T4, about 44 h of training and 190 h of test scoring (§8 risk register); if it's shared/queued, start Monday and checkpoint aggressively so a preemption doesn't cost a whole cell. Run the 20 random-regime runs first: if time runs out, the 10 block-aware runs drop to 3 seeds and the block contrast is labelled exploratory (§8 risk register).
 - **Report the paired Δ, not two independent means** (§3.3). The SE of the paired difference is what separates signal from noise here; expected gains (~0.01–0.02) are the same magnitude as CSDI's masking sensitivity, which is *why* masking is frozen and seeds are paired (§6).
 - **Nulls are findings, stated as such** (§3.5, §7). An overlapping error bar is "no significant effect," reported plainly. This is the honesty bar the whole grade strategy leans on.
 - Block-vs-random stratification matters: Ext 1's honest home is **block missingness** and Ext 2's is **high-autocorrelation variables** (§4.1, §4.2), so the table must let those regimes be read separately.
