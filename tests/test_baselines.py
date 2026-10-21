@@ -7,7 +7,7 @@ import pytest
 import torch
 from conftest import RAW_DIR, ROOT
 from data.physionet import invert_scaler
-from eval import EvalMasker, masked_errors, masked_mae
+from eval import BlockEvalMasker, EvalMasker, masked_errors, masked_mae
 from eval.baselines import RESULTS_PATH, baseline_results, forward_fill, mean_imputation
 
 needs_raw_data = pytest.mark.skipif(not RAW_DIR.exists(), reason="raw Set A not downloaded")
@@ -256,3 +256,57 @@ def test_recorded_baselines_match_a_fresh_run(set_a):
     # Fails if the code, the data pipeline or the frozen protocol changed without
     # re-running `uv run python -m eval.baselines` to rewrite results/baselines.json.
     assert json.loads(RESULTS_PATH.read_text()) == baseline_results(set_a)
+
+# --- M2-4: the block holdout --------------------------------------------------------------
+
+def test_block_entry_sits_next_to_random(small_dataset):
+    block = baseline_results(small_dataset)["block"]
+    assert block["block_eval_masker_seed"] == 8080
+    assert block["block_window_hours"] == 3
+    assert set(block["fractions"]) == {"0.1"}                              # the headline rate only
+    for split in ("val", "test"):
+        row = block["fractions"]["0.1"][split]
+        assert row["n_patients"] == len(small_dataset[f"{split}_idx"])
+        assert set(row["mean_imputation"]) == set(row["forward_fill"]) == {"mae", "rmse"}
+
+def test_block_entry_hides_the_random_headline_count(small_dataset):
+    results = baseline_results(small_dataset)
+    for split in ("val", "test"):
+        block_row = results["block"]["fractions"]["0.1"][split]
+        assert block_row["n_targets"] == results["random"]["fractions"]["0.1"][split]["n_targets"]
+
+def test_block_entry_is_scored_on_block_eval_maskers_targets(small_dataset):
+    d = small_dataset
+    row = baseline_results(d)["block"]["fractions"]["0.1"]["test"]
+    idx = d["test_idx"]
+    values, mask = d["values"][idx], d["mask"][idx]
+    cond, target = BlockEvalMasker.from_config()(mask, d["record_ids"][idx])
+    assert row["mean_imputation"]["mae"] == round(masked_mae(mean_imputation(values), values, target), 6)
+    assert row["forward_fill"]["mae"] == round(masked_mae(forward_fill(values, cond), values, target), 6)
+
+@needs_raw_data
+def test_block_holdout_on_set_a_test_split(set_a):
+    idx = set_a["test_idx"]
+    mask, values = set_a["mask"][idx], set_a["values"][idx]
+    cond, target = BlockEvalMasker.from_config()(mask, set_a["record_ids"][idx])
+    assert masked_mae(mean_imputation(values), values, target) == pytest.approx(0.7338, abs=5e-5)
+    assert masked_mae(forward_fill(values, cond), values, target) == pytest.approx(0.4786, abs=5e-5)
+
+KNOWN_BAD = {"pH": lambda x: (x < 6.5) | (x > 8.0), "Temp": lambda x: x < 25, "K": lambda x: x > 20}
+
+@needs_raw_data
+def test_block_test_targets_include_three_known_bad_values(set_a):
+    # The README's † footnote under Baselines; the bad values themselves are listed under Dataset.
+    features = list(set_a["features"])
+    raw = invert_scaler(set_a["values"], set_a["mean"], set_a["std"])
+    scored = {}
+    for split in ("val", "test"):
+        idx = set_a[f"{split}_idx"]
+        _, target = BlockEvalMasker.from_config()(set_a["mask"][idx], set_a["record_ids"][idx])
+        scored[split] = []
+        for name, is_bad in KNOWN_BAD.items():
+            k = features.index(name)
+            held_out = raw[idx][..., k][target[..., k] == 1]
+            scored[split] += [(name, round(float(x), 1)) for x in held_out[is_bad(held_out)]]
+    assert sorted(scored["val"]) == []
+    assert sorted(scored["test"]) == [("Temp", 0.0), ("pH", 1.0), ("pH", 733.0)]
