@@ -321,8 +321,8 @@ floating-point numbers in whatever order their threads finish), so `train` first
 `CUBLAS_WORKSPACE_CONFIG=:4096:8` unless that is already set. cuBLAS reads that variable when
 CUDA first runs a matrix multiply, so in a notebook that has already used CUDA, restart the
 runtime first. The switch is process-wide, so a run's validation passes are covered; a separate
-scoring script must call it before any CUDA work. Whether CUDA reruns now match bit for bit is
-checked on Colab ([`Docs/M3_debug_log.md`](Docs/M3_debug_log.md)). `on_step_end(record)`, if
+scoring script must call it before any CUDA work. With it, CUDA reruns match bit for bit too: two
+2-epoch runs on a Colab T4 did ([`Docs/M3_debug_log.md`](Docs/M3_debug_log.md)). `on_step_end(record)`, if
 given, is called with a copy of each history record as it is made (M3-1); the run log uses it,
 and wandb (M3-2) can too.
 

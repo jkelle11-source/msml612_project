@@ -49,6 +49,11 @@ for bit too. On MPS with it on, a 3-epoch run of seed 42 (525 steps) and a rerun
 the change: it changes nothing on MPS. Still to check on Colab: two 2-epoch runs of seed 42 should
 now match bit for bit, and their seconds per epoch, against 23.5 s, show what it costs.
 
+**2026-10-21, Jake. Deterministic kernels, checked on CUDA.** Two 2-epoch runs of seed 42 on a
+Colab T4 (`--device cuda --epochs 2`, separate output folders) matched bit for bit: history, curve
+(timings aside), summary and weights. CUDA reruns now reproduce exactly, so M3-1's rerun item holds
+on CPU, MPS and CUDA.
+
 ## Seam checks
 
 Covered by tests before the first real run, so a bad number is not one of these:
