@@ -58,6 +58,23 @@ The same seed also pins two more holdouts at CSDI's robustness rates (PROJECT_PL
 instead of 10%. The headline rate stays `protocol.eval_holdout_fraction` (10%). The baselines
 are scored at all three (see [Baselines](#baselines)).
 
+The block-missingness holdout, `eval.BlockEvalMasker` (M2-4; PROJECT_PLAN §3.1, §4.1), has two
+frozen keys of its own. **Neither may change**, for the same reason as `eval_masker_seed`:
+
+- `protocol.block_eval_masker_seed` (8080) seeds it the way `eval_masker_seed` seeds
+  `EvalMasker`, with one generator per patient from `(seed, record_id)`.
+- `protocol.block_window_hours` (3) is the length of each hidden window. The 48 hours are tiled
+  into 16 fixed 3-hour slots.
+
+It has no fraction of its own: it reads `protocol.eval_holdout_fraction`, so every patient loses
+exactly as many values as under `EvalMasker`. The difference is where they are hidden. The slots
+are visited in a random order and each is hidden whole, across all 35 features, until the next
+one would overshoot the count; that one is trimmed to a random subset of its observed values.
+On Set A, 94% of patients lose at least one complete window. The slot walk is
+`eval.masking.block_targets(mask, count, generator, window)`, which M6-2's block-aware training
+(`TrainMasker`'s `mix`) reuses with its own generator. `EvalMasker`'s holdout is unchanged by
+it. Tests: `tests/test_block_eval_masker.py`, including a golden fingerprint of the holdout.
+
 The evaluation sampler is frozen the same way: `eval.EvalSampler` reads
 `protocol.eval_sampling_seed`, `protocol.eval_n_samples` and `protocol.eval_batch_size`
 (see [Random streams](#random-streams-seed-pairing)).
@@ -462,8 +479,9 @@ What this does to our numbers:
 ## Baselines
 
 Mean imputation and forward fill (`eval/baselines.py`, M2-3) are the floor every model we
-train must beat (PROJECT_PLAN §6). Both are scored like any model, on `EvalMasker`'s held-out
-values, in standardized units. Import them from `eval.baselines`: the `eval` package leaves
+train must beat (PROJECT_PLAN §6). Both are scored like any model, on the frozen holdouts'
+held-out values (`EvalMasker`'s random holdout and `BlockEvalMasker`'s block holdout, M2-4), in
+standardized units. Import them from `eval.baselines`: the `eval` package leaves
 that module unimported, as `data` leaves `data.physionet`, so `python -m eval.baselines` runs it
 only once.
 
@@ -479,27 +497,42 @@ MAE and RMSE in standardized units; val has 400 patients and test 800:
 
 | Holdout | Split | Mean imp. MAE | Mean imp. RMSE | Forward fill MAE | Forward fill RMSE |
 | --- | --- | --- | --- | --- | --- |
-| 10% (headline) | val | 0.6956 | 0.9537 | 0.4366 | 0.7409 |
-| 10% (headline) | test | 0.7053 | 0.9906 | 0.4487 | 3.3251 * |
-| 50% | val | 0.7003 | 0.9651 | 0.4844 | 0.8197 |
-| 50% | test | 0.7132 | 2.2870 * | 0.4881 | 2.6419 * |
-| 90% | val | 0.7000 | 0.9641 | 0.5923 | 0.9084 |
-| 90% | test | 0.7108 | 2.1178 * | 0.5908 | 2.0913 * |
+| Random 10% (headline) | val | 0.6956 | 0.9537 | 0.4366 | 0.7409 |
+| Random 10% (headline) | test | 0.7053 | 0.9906 | 0.4487 | 3.3251 * |
+| Random 50% | val | 0.7003 | 0.9651 | 0.4844 | 0.8197 |
+| Random 50% | test | 0.7132 | 2.2870 * | 0.4881 | 2.6419 * |
+| Random 90% | val | 0.7000 | 0.9641 | 0.5923 | 0.9084 |
+| Random 90% | test | 0.7108 | 2.1178 * | 0.5908 | 2.0913 * |
+| Block 10% | val | 0.6895 | 0.9530 | 0.4749 | 0.8105 |
+| Block 10% | test | 0.7338 † | 3.3892 † | 0.4786 † | 3.3191 † |
 
-\* Inflated by the [known bad values](#dataset). At 10% none of them is scored, but a pH of 735
-is visible in one test patient and forward fill carries it into a scored pH value. That one
-error is 521.5 standardized units; without it, forward fill's test RMSE would be 0.7798
-instead of 3.3251 and its MAE 0.4287 instead of 0.4487. At 50% and 90% some bad values are
-scored themselves (9 and 12 on test, 3 and 4 on val), which inflates both baselines' test RMSE.
+\* Inflated by the [known bad values](#dataset). On the random holdout at 10% none of them is
+scored, but a pH of 735 is visible in one test patient and forward fill carries it into a scored
+pH value. That one error is 521.5 standardized units; without it, forward fill's test RMSE would
+be 0.7798 instead of 3.3251 and its MAE 0.4287 instead of 0.4487. At 50% and 90% some bad values
+are scored themselves (9 and 12 on test, 3 and 4 on val), which inflates both baselines' test
+RMSE.
+
+† Inflated by the known bad values, MAE as well as RMSE. On the block holdout three of them are
+test targets themselves: a pH of 733, a pH of 1 and a Temp of 0. The pH of 733 dominates: it is
+about 520 standardized units from any plausible pH, so every model misses it by about that much,
+which adds about 0.02 to every model's block test MAE. Differences between models barely change, but
+block test RMSE is mostly that one value. Without it, mean imputation's test MAE and RMSE would be
+0.7139 and 1.0477, and forward fill's 0.4587 and 0.7910. No bad value is a block val target.
 
 Forward fill's 10% validation MAE, **0.437**, is M3-1's "below forward fill" bar, because M3-1
-tracks validation MAE. The 50% and 90% rows are CSDI's robustness rates, each its own frozen
-holdout (see [Frozen protocol constants](#frozen-protocol-constants)).
+tracks validation MAE. Its block validation MAE, **0.475**, is the matching bar for runs validated
+on the block holdout (M6-2's block-aware regime, PROJECT_PLAN §3.1). Forward fill does worse on
+blocks because a whole 3-hour window of every feature is hidden at once, so the value it carries
+in is older. The 50% and 90% rows are CSDI's robustness rates, each its own frozen holdout, and
+the block rows hide the same number of values per patient as the random 10% rows (see
+[Frozen protocol constants](#frozen-protocol-constants)).
 
 The same numbers are recorded, unrounded, in [`results/baselines.json`](results/baselines.json),
-keyed `random` → `fractions` → `"0.1"` / `"0.5"` / `"0.9"` → `val` / `test`. The block holdout
-(M2-4) is recorded next to `random`, and M3-3 logs the baselines to wandb. To regenerate the
-file, run from the repo root:
+keyed `random` → `fractions` → `"0.1"` / `"0.5"` / `"0.9"` → `val` / `test`, and
+`block` → `fractions` → `"0.1"` → `val` / `test`. Each holdout's frozen seed is stored next to its
+fractions (`eval_masker_seed`; `block_eval_masker_seed` and `block_window_hours`). M3-3 logs the
+baselines to wandb. To regenerate the file, run from the repo root:
 
 ```text
 uv run python -m eval.baselines
@@ -514,6 +547,9 @@ Tests:
   reference; no leakage from held-out values; the scored values exactly `EvalMasker`'s held-out
   targets; each rate holding out its own fraction; pinned Set A test MAEs at 10%, 50% and 90%;
   the recorded file matching a fresh run; importing `eval` leaving `eval.baselines` unimported.
+  For the block holdout (M2-4): its entry sitting next to `random` with its seed and window, at
+  10% only; the same target count as the random 10% holdout; scores taken on exactly
+  `BlockEvalMasker`'s targets; pinned Set A test MAEs; the three bad values it scores on test.
 - `tests/test_sampler_real_batch.py`: the reused reverse sampler on real Set A patients (M2-3).
   An untrained model runs upstream's full 50-step schedule, with `EvalMasker`'s conditioning
   mask passed as `gt_mask`. The samples come back as `(K, B, 48, D)` with no NaNs, the K draws
