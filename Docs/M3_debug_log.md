@@ -42,6 +42,13 @@ nondeterminism noted in the README. MPS and CPU reruns are exact.
 steps (seed 42) gave identical losses and bit-identical weights. CPU was already tested
 (`tests/test_train.py`). CUDA reruns may still differ slightly (README, Training).
 
+**2026-10-20, Jake (M3-1 review). Deterministic kernels, checked on MPS.** `diffusion.train.train`
+now starts with `use_deterministic_kernels()` (README, Training), so CUDA reruns should match bit
+for bit too. On MPS with it on, a 3-epoch run of seed 42 (525 steps) and a rerun from its saved
+`config.yaml` gave identical history, curve and weights, and the same weights as a run made before
+the change: it changes nothing on MPS. Still to check on Colab: two 2-epoch runs of seed 42 should
+now match bit for bit, and their seconds per epoch, against 23.5 s, show what it costs.
+
 ## Seam checks
 
 Covered by tests before the first real run, so a bad number is not one of these:
@@ -104,12 +111,14 @@ M3-1 Definition of Done, from this run:
 ### 2026-10-17, Josh. Base, seed 42, 200 epochs, Colab (T4, CUDA)
 
 ```text
-uv run python -m diffusion.run --seed 42 --device cuda --out /content/drive/MyDrive/msml612/base_seed42
+uv run python -m diffusion.run --seed 42 --device cuda --validate-every 25 --out /content/drive/MyDrive/msml612/base_seed42
 ```
 
 Upstream's full configuration, 200 epochs, with `validation.every_n_epochs` set to 25 (8 tracking
-passes) to keep the session about 2 h. Outputs are in Josh's Google Drive (`msml612/base_seed42/`),
-not in the repo.
+passes) to keep the session about 2 h. `--validate-every` did not exist yet: the 25 came from the
+config the run read, and the run's saved `config.yaml` records it. Validation cannot shift
+training's random streams, so the cadence does not change what is trained. Outputs are in Josh's Google Drive
+(`msml612/base_seed42/`), not in the repo.
 
 **First 500 steps: healthy.** Loss 0.507 (first 50 steps) to 0.316 (last 50); median gradient
 norm 0.81, max 7.56 at step 16, as on MPS. No step above 10× the median.
@@ -139,9 +148,17 @@ in the whole run**, so there is no stability reason to clean them before the gat
 ## Starting state for Week 4 (gate)
 
 - One 200-epoch run exists (seed 42, Colab): tracked val MAE 0.2483 at epoch 200. Next is scoring
-  its `model.pt` with the frozen sampler (`EvalSampler.from_config()`, 100 draws). On a T4 that
-  is about 100 × 56 s ≈ 1.5 h per split, going by the 281 s measured for 5 draws.
-- The gate needs ≥ 3 seeds (43 and 44 next), each about 2 h on Colab at every-25 validation.
+  its final weights (`model.pt`) with the frozen sampler (`EvalSampler.from_config()`, 100 draws).
+  Going by the 281 s measured for 5 draws over the 400 val patients at batch 64, that is about
+  1.6 h on a T4 for the val split and 3.1 h for the 800 test patients. The frozen batch size is
+  16, not yet timed on a T4, and may be slower.
+- The gate needs ≥ 3 seeds (43 and 44 next), each about 2 h of training on Colab at every-25
+  validation, plus its test scoring.
+- Seed 42's 200-epoch run predates deterministic kernels, so a rerun will not reproduce its
+  weights exactly. Rerunning it with 43 and 44 would make all three gate seeds reproducible, for
+  about 2 h more on Colab.
+- No early stopping or checkpoint selection (M3-1 review, PROJECT_PLAN §3.1): every run trains
+  the fixed 200 epochs, and its final weights are scored.
 - The known bad values did not destabilize training over 200 epochs (seed 42), so cleaning them
   is not needed for stability. Whether they affect the *scores* is a separate question (README,
   Baselines: a visible bad value can be carried into a scored one).
