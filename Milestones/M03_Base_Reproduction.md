@@ -9,7 +9,7 @@
 
 ## Assignment summary
 - **Josh (lead) + Jake** — Drive the adapted base CSDI to train and converge below forward-fill; log grad norms; confirm no explosion/collapse in the first 500 steps
-- **Sankha** — BRITS baseline (or simplified bi-GRU fallback, noted as such); wandb tracking live (loss/step, val MAE-RMSE/epoch, grad norms, config)
+- **Sankha** — BRITS baseline (or simplified bi-GRU fallback, noted as such); wandb tracking live (loss/step, val MAE-RMSE per validation pass, grad norms, config)
 
 ## Coordination notes
 - **Pairing is deliberate, not doubling-up.** Josh owns the denoiser internals; Jake owns the loop/masker wiring/data feed. Reproduction bugs live at that seam (conditioning wiring, mask alignment, masker hand-off), so both owners on it in the same week resolves them fastest. Keep a shared debugging log.
@@ -33,7 +33,7 @@
 
 **Deliverables**
 - Base CSDI training run on the full Set A training split with the frozen protocol (z-scored inputs, `TrainMasker`, masked loss) and upstream's published diffusion configuration (quad schedule, 50 steps, 8 heads).
-- Validation MAE (via `EvalMasker`, standardized) tracked per epoch and confirmed dropping **below forward-fill**.
+- Validation MAE (via `EvalMasker`, standardized) tracked every `validation.every_n_epochs` epochs and confirmed dropping **below forward-fill**. Not every epoch: one tracking pass takes about 5 min on a Colab T4, which would add about 15 h to a 200-epoch run (M3-1 debug log).
 - Gradient-norm logging; a documented check that the first 500 steps show no loss explosion or collapse.
 - A shared debugging log capturing any seam issues (conditioning, alignment, masking) and their fixes.
 
@@ -54,7 +54,7 @@
 **Context.** Tracking has to exist *before* the gate runs and the seed sweep, or we lose the very curves that prove the gate passed and the sweep was healthy. Wire wandb to log the metrics that matter for the protocol (§3).
 
 **Deliverables**
-- wandb logging of loss/step, val MAE & RMSE/epoch, gradient norms, and the full run config (including seed and toggle flags).
+- wandb logging of loss/step, val MAE & RMSE at each validation pass, gradient norms, and the full run config (including seed and toggle flags).
 - A project workspace/dashboard the whole team can view, with runs named by `variant × seed` and, from Week 6, the training regime (random or block-aware, §3.1).
 
 **Definition of Done**

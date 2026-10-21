@@ -1,5 +1,6 @@
 import copy
 import math
+import os
 from pathlib import Path
 
 import numpy as np
@@ -110,6 +111,18 @@ def test_same_seed_reproduces_the_run_and_another_seed_does_not(small_dataset):
     weights_c, _ = run(small_dataset, seed=43)
     assert torch.equal(weights_a, weights_b) and history_a == history_b
     assert not torch.equal(weights_a, weights_c)
+
+def test_training_switches_on_deterministic_kernels(small_dataset, monkeypatch):
+    monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
+    torch.use_deterministic_algorithms(False)
+    run(small_dataset, epochs=1)
+    assert torch.are_deterministic_algorithms_enabled()
+    assert os.environ["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"    # needed by cuBLAS for deterministic CUDA
+
+def test_a_cublas_workspace_that_is_already_set_is_kept(small_dataset, monkeypatch):
+    monkeypatch.setenv("CUBLAS_WORKSPACE_CONFIG", ":16:8")
+    run(small_dataset, epochs=1)
+    assert os.environ["CUBLAS_WORKSPACE_CONFIG"] == ":16:8"
 
 def test_an_epoch_end_hook_cannot_shift_the_training_streams(small_dataset):
     # M3's validation runs here; whatever it draws or switches must not change training.

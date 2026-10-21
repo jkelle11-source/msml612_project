@@ -140,3 +140,18 @@ train:
   # The norm is still computed every step so it can be logged (M3-1).
   clip_grad_norm: null
   # Upstream's itr_per_epoch (1.0e+8) never binds on PhysioNet, so it is left out.
+
+# -----------------------------------------------------------------------------
+# Validation while training (M3-1): diffusion.run scores the val split's
+# EvalMasker targets (10%) every every_n_epochs epochs and on the last epoch.
+# TRACKING ONLY, not the frozen protocol: the median of n_samples draws, with the
+# frozen eval_sampling_seed, in batches of batch_size. Reported results use
+# eval.EvalSampler.from_config() (eval_n_samples: 100, eval_batch_size: 16).
+# Fewer draws make the median noisier, which raises MAE slightly, so a tracked
+# MAE below forward fill is a conservative claim. Cost: one draw over the 400
+# val patients is about 130 s on an Apple M-series GPU (MPS), at any batch size.
+# -----------------------------------------------------------------------------
+validation:
+  every_n_epochs: 10
+  n_samples: 5
+  batch_size: 64

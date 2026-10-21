@@ -1,3 +1,6 @@
+import os
+
+import torch
 from torch.optim import Adam
 from torch.optim.lr_scheduler import MultiStepLR
 from torch.nn.utils import clip_grad_norm_
@@ -5,8 +8,22 @@ from diffusion.streams import RunStreams
 from diffusion.data import train_loader, to_batch
 from models.build import build_model
 
-def train(config, dataset, run_seed, device, on_epoch_end = None):
-    
+def use_deterministic_kernels():
+    """Make reruns bit-identical on CUDA too (M3-1).
+
+    Some CUDA kernels add floating-point numbers in whatever order their threads finish, so two
+    identical runs drift apart. This switches PyTorch to deterministic kernels, and makes it raise
+    on any op that has none. cuBLAS reads CUBLAS_WORKSPACE_CONFIG when CUDA first runs a matrix
+    multiply, so this must come before any CUDA work in the process; a value already set is kept.
+    The switch is process-wide and stays on, so validation and scoring passes after it are covered.
+    """
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    torch.use_deterministic_algorithms(True)
+
+def train(config, dataset, run_seed, device, on_epoch_end = None, on_step_end = None):
+
+    use_deterministic_kernels()
+
     streams = RunStreams(run_seed)
     streams.seed_model_init()
     
@@ -57,7 +74,11 @@ def train(config, dataset, run_seed, device, on_epoch_end = None):
                                   "loss": loss.item(),
                                   "grad_norm": grad_norm.item(),
                                   "lr": scheduler.get_last_lr()[0]})
-            
+
+            # Live view of the history (M3-1): the run log and wandb (M3-2) read each record here.
+            if on_step_end is not None:
+                on_step_end(dict(train_history[-1]))
+
         scheduler.step()
         
         if on_epoch_end is not None:

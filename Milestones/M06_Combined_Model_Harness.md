@@ -54,7 +54,7 @@
 - A single harness driver: `for seed in 42..46: for variant in {base, ext1, ext2, both}: train+eval` with shared RNG per seed, plus `for seed in 42..46: for variant in {base, ext1}: train+eval` in the block-aware regime.
 - `TrainMasker`'s `mix` strategy (Jake): for each sample, a fair coin from its own generator picks the `random` split or block targets, `round(r · n_observed)` values with `r ~ U(0, 1)` hidden as 3-hour all-feature slots, reusing `M2-4`'s slot selection. The `random` strategy's output must not change.
 - Guarantees that, within a seed and regime, data order / `TrainMasker` stream / init RNG are identical across variants (only toggles differ).
-- Structured results capture (per variant × regime × seed × holdout: MAE/RMSE @10% under the random `EvalMasker` and the block `BlockEvalMasker` holdouts, plus config) ready for the Week-7 headline table. Early stopping uses the validation MAE of the holdout the regime trains for (random regime: `EvalMasker`; block-aware regime: `BlockEvalMasker`); the selected checkpoint is scored on test under both (§3.1).
+- Structured results capture (per variant × regime × seed × holdout: MAE/RMSE @10% under the random `EvalMasker` and the block `BlockEvalMasker` holdouts, plus config) ready for the Week-7 headline table. Every run trains the fixed 200 epochs and its final weights are scored on test under both holdouts; validation MAE is tracked, for the curves only, on the holdout the regime trains for (random regime: `EvalMasker`; block-aware regime: `BlockEvalMasker`) (§3.1).
 - A **20-epoch dry-run** over the four variants and the block-aware pair at ≥2 seeds proving pairing + logging.
 
 **Definition of Done**
