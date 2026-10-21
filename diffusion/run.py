@@ -10,9 +10,13 @@ Trains with ``diffusion.train.train``, scores the validation split every
 - ``history.jsonl``: one record per training step, ``{"epoch", "loss", "grad_norm", "lr"}``.
 - ``curve.json``: one row per epoch: mean loss, largest gradient norm, seconds, and val
   MAE/RMSE on the epochs that were scored.
-- ``model.pt`` (weights after the latest scored epoch) and ``best.pt`` (lowest val MAE).
-- ``summary.json``: the 500-step health report, the best val MAE, and whether it is below
+- ``model.pt``: the weights after the latest scored epoch. The last epoch is always scored, so a
+  finished run leaves its final weights here, the ones that are scored (PROJECT_PLAN §3.1).
+- ``summary.json``: the 500-step health report, the final val MAE, and whether it is below
   forward fill's.
+
+The run refuses an output folder that is not empty, so two runs' files never mix; with
+``--overwrite`` it first deletes the files a run writes (``RUN_FILES``), and nothing else.
 """
 
 import argparse
@@ -34,6 +38,7 @@ CONFIG_PATH = ROOT / "configs" / "config.yaml"
 DATASET_PATH = ROOT / "data" / "processed" / "physionet_set_a.npz"
 BASELINES_PATH = ROOT / "results" / "baselines.json"
 OUTPUTS = ROOT / "outputs"
+RUN_FILES = ("config.yaml", "history.jsonl", "curve.json", "model.pt", "summary.json")
 
 # Health-report thresholds (ours, M3-1). A spike is a step whose gradient norm is this many
 # times the median over the steps checked; an explosion is the last tenth of those steps
@@ -97,12 +102,26 @@ def health_report(history, n_steps=500):
     report["learning"] = report["loss_last_tenth"] < report["loss_first_tenth"]
     report["collapsed"] = report["loss_last_tenth"] < COLLAPSE_LOSS
     report["exploded"] = bool(np.median(norm[-k:]) > SPIKE_FACTOR * median)
-    report["healthy"] = report["finite"] and report["learning"] and not report["collapsed"] and not report["exploded"]
+    report["complete"] = report["n_steps"] == n_steps
+    report["healthy"] = (report["finite"]
+                         and report["learning"]
+                         and not report["collapsed"]
+                         and not report["exploded"]
+                         and report["complete"])
     return report
 
-def run(config, dataset, seed, device, out_dir, log=print):
-    """Train one model and score it on the validation split as it goes; returns ``(model, summary)``."""
+def run(config, dataset, seed, device, out_dir, log=print, overwrite=False):
+    """Train one model and score it on the validation split as it goes; returns ``(model, summary)``.
+
+    ``out_dir`` must be empty or new. With ``overwrite`` an earlier run's files are deleted first,
+    so a run that stops early cannot leave them next to its own.
+    """
     out_dir = Path(out_dir)
+    if out_dir.exists() and any(out_dir.iterdir()):
+        if not overwrite:
+            raise FileExistsError(f"{out_dir} is not empty; pass --overwrite to replace the run in it")
+        for name in RUN_FILES:      # only a run's own files: a mistaken --out must not wipe a folder
+            (out_dir / name).unlink(missing_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
     (out_dir / "history.jsonl").write_text("")
@@ -132,8 +151,6 @@ def run(config, dataset, seed, device, out_dir, log=print):
             row.update({f"val_{k}": v for k, v in validate(model, dataset, sampler, masker).items()})
             row["val_seconds"] = round(time.time() - started, 1)
             torch.save(model.state_dict(), out_dir / "model.pt")
-            if row["val_mae"] <= min((r["val_mae"] for r in curve if "val_mae" in r), default=np.inf):
-                torch.save(model.state_dict(), out_dir / "best.pt")
             line += f"  val MAE {row['val_mae']:.4f}  val RMSE {row['val_rmse']:.4f}  [val {row['val_seconds']:.0f}s]"
             if bar is not None:
                 line += f"  (forward fill {bar:.4f})"
@@ -144,19 +161,16 @@ def run(config, dataset, seed, device, out_dir, log=print):
 
     model, _ = train(config, dataset, seed, device, on_epoch_end=on_epoch_end, on_step_end=on_step_end)
 
-    scored = [r for r in curve if "val_mae" in r]
-    best = min(scored, key=lambda r: r["val_mae"])
+    final = curve[-1]                                       # the last epoch is always scored
     summary = {
         "variant": variant_name(config),
         "seed": seed,
         "device": device,
         "validation": {"split": "val", "n_samples": validation["n_samples"], "batch_size": validation["batch_size"]},
         "health": health_report(history),
-        "best_val_mae": best["val_mae"],
-        "best_epoch": best["epoch"],
-        "final_val_mae": scored[-1]["val_mae"],
+        "final_val_mae": final["val_mae"],
         "forward_fill_val_mae": bar,
-        "below_forward_fill": None if bar is None else best["val_mae"] < bar,
+        "below_forward_fill": None if bar is None else final["val_mae"] < bar,
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=1) + "\n")
     return model, summary
@@ -168,17 +182,23 @@ def main(argv=None):
     parser.add_argument("--dataset", type=Path, default=DATASET_PATH)
     parser.add_argument("--device", default="auto", help="cuda, mps, cpu, or auto (the first available)")
     parser.add_argument("--epochs", type=int, help="override train.epochs; recorded in the saved config")
+    parser.add_argument("--validate-every", type=int,
+                        help="override validation.every_n_epochs; recorded in the saved config")
     parser.add_argument("--out", type=Path, help="output folder (default outputs/<variant>_seed<seed>)")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="delete an earlier run's files in the output folder first")
     args = parser.parse_args(argv)
 
     config = copy.deepcopy(yaml.safe_load(args.config.read_text()))
     if args.epochs is not None:
         config["train"]["epochs"] = args.epochs
+    if args.validate_every is not None:
+        config["validation"]["every_n_epochs"] = args.validate_every
     device = pick_device(args.device)
     out_dir = args.out or OUTPUTS / f"{variant_name(config)}_seed{args.seed}"
     print(f"{variant_name(config)} seed {args.seed} on {device}, {config['train']['epochs']} epochs -> {out_dir}", flush=True)
     _, summary = run(config, load_dataset(args.dataset), args.seed, device, out_dir,
-                     log=lambda line: print(line, flush=True))
+                     log=lambda line: print(line, flush=True), overwrite=args.overwrite)
     print(json.dumps(summary, indent=1))
 
 if __name__ == "__main__":

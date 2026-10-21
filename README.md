@@ -264,7 +264,7 @@ Rules:
   identical regardless.
 - **Resuming needs no RNG state.** Because every stream is a function of the run seed and the
   epoch, a checkpoint taken at an epoch boundary needs only the model, the optimizer (plus
-  any scheduler and early-stopping counters) and the epoch number; the resumed run then ends
+  the learning-rate scheduler) and the epoch number; the resumed run then ends
   with the same weights as an uninterrupted one. A run resumed mid-epoch does not.
 - **Evaluation noise is frozen.** `eval.EvalSampler` runs one evaluation pass of the reused
   sampler: `samples = EvalSampler.from_config()(model, values, mask, cond_mask)`, shape
@@ -314,10 +314,17 @@ What one run does:
 - `history` has one record per step, `{"epoch", "loss", "grad_norm", "lr"}`, as plain numbers.
 
 On the CPU, the same config, dataset and run seed give bit-identical weights and history (tested).
-On an Apple M-series GPU (MPS) they did too: two runs of 20 real-data steps matched bit for bit
-(M3-1). Some CUDA kernels are nondeterministic (the backward pass of an embedding layer, for
-one), so CUDA reruns may differ slightly. `on_step_end(record)`, if given, is called with each
-history record as it is made (M3-1); the run log uses it, and wandb (M3-2) can too.
+On an Apple M-series GPU (MPS) they did too: two runs of 525 real-data steps (3 epochs) matched
+bit for bit, weights included (M3-1). Some CUDA kernels are nondeterministic by default (they add
+floating-point numbers in whatever order their threads finish), so `train` first calls
+`diffusion.train.use_deterministic_kernels()`: `torch.use_deterministic_algorithms(True)`, with
+`CUBLAS_WORKSPACE_CONFIG=:4096:8` unless that is already set. cuBLAS reads that variable when
+CUDA first runs a matrix multiply, so in a notebook that has already used CUDA, restart the
+runtime first. The switch is process-wide, so a run's validation passes are covered; a separate
+scoring script must call it before any CUDA work. Whether CUDA reruns now match bit for bit is
+checked on Colab ([`Docs/M3_debug_log.md`](Docs/M3_debug_log.md)). `on_step_end(record)`, if
+given, is called with a copy of each history record as it is made (M3-1); the run log uses it,
+and wandb (M3-2) can too.
 
 ### Launching a run (M3-1)
 
@@ -328,16 +335,18 @@ uv run python -m diffusion.run --seed 42
 `diffusion/run.py` trains one model from `configs/config.yaml` and a run seed, scores the
 validation split as it goes, and writes to `outputs/<variant>_seed<seed>/` (git-ignored). Options:
 `--device` (`cuda`, `mps`, `cpu`, default the first available), `--epochs` to override
-`train.epochs`, `--config`, `--dataset`, `--out`. Everything is written while the run is going,
-so a stopped run keeps what it has done:
+`train.epochs`, `--validate-every` to override `validation.every_n_epochs`, `--config`,
+`--dataset`, `--out`, `--overwrite`. The output folder must be empty or new, so two runs' files
+never mix; `--overwrite` first deletes the files listed below from it, and nothing else.
+Everything is written while the run is going, so a stopped run keeps what it has done:
 
 | File | Contents |
 | --- | --- |
-| `config.yaml` | the resolved config, `--epochs` included. `--config` on it reruns the run. |
+| `config.yaml` | the resolved config, `--epochs` and `--validate-every` included. `--config` on it reruns the run. |
 | `history.jsonl` | one line per training step: `epoch`, `loss`, `grad_norm`, `lr` |
 | `curve.json` | one row per epoch: mean loss, largest gradient norm, training seconds, and `val_mae` / `val_rmse` / `val_seconds` when scored |
-| `model.pt`, `best.pt` | weights after the latest scored epoch, and at the lowest val MAE |
-| `summary.json` | the 500-step health report, best and final val MAE, forward fill's val MAE, `below_forward_fill` |
+| `model.pt` | weights after the latest scored epoch. The last epoch is always scored, so a finished run's are its final weights, the ones that are scored (no best-epoch checkpoint; PROJECT_PLAN §3.1). |
+| `summary.json` | the 500-step health report, the final val MAE, forward fill's val MAE, `below_forward_fill` |
 
 **Validation while training is for tracking, not reporting.** Every `validation.every_n_epochs`
 epochs (and on the last), the run scores the val split's `EvalMasker` targets at 10%, exactly
@@ -347,7 +356,8 @@ patients takes about 130 s on MPS, so 100 would take hours. Fewer draws make the
 noisier, which raises MAE slightly, so a tracked MAE below forward fill is a conservative claim.
 
 **The health report** (`diffusion.run.health_report`) checks the first 500 steps. They pass if
-every loss and gradient norm is finite, the loss over the last tenth is below the first tenth
+all 500 were run (`complete`; a shorter run is not reported healthy), every loss and gradient
+norm is finite, the loss over the last tenth is below the first tenth
 (learning), it has not collapsed toward 0 (below 1e-3, which would mean targets are leaked or
 skipped), and the gradient norm has not exploded (the last tenth's median more than 10× the
 overall median). Isolated spikes above 10× the median are listed, not failed, since the known bad
@@ -364,11 +374,14 @@ Tests:
   `EvalSampler`.
 - `tests/test_train.py`: one step on a real batch, upstream's masking never runs, the loss
   scores exactly `TrainMasker`'s targets, every step replayed from scratch at `lr = 0`,
-  same-seed reproducibility, clipping, the learning-rate schedule, the epoch hook.
+  same-seed reproducibility, clipping, the learning-rate schedule, the epoch hook, deterministic
+  kernels switched on (an existing `CUBLAS_WORKSPACE_CONFIG` kept).
 - `tests/test_run.py` (M3-1): the health report on made-up histories (healthy, one spike,
-  explosion, flat, collapsed, NaN); validation scoring exactly `EvalMasker`'s targets without
-  showing them to the model; a run's output files; validation every n epochs and on the last;
-  the command line rerunning a run from its saved config with identical results; the step hook.
+  explosion, flat, collapsed, NaN, too short); validation scoring exactly `EvalMasker`'s targets
+  without showing them to the model; a run's output files; validation every n epochs and on the
+  last; the command line rerunning a run from its saved config with identical results;
+  `--validate-every` recorded in the saved config; a folder that is not empty refused, and
+  `--overwrite` deleting only a run's own files; the step hook, which gets a copy of each record.
 - `tests/test_forward_noising.py`: the schedule check described under
   [Reused CSDI implementation](#reused-csdi-implementation).
 
