@@ -447,13 +447,15 @@ folder until wandb has started, so a run that can't start it (not logged in, no 
 leaves the folder empty, and the same command works again once you're logged in, without
 `--overwrite`.
 
-Tracking doesn't change training, as far as tested: on the CPU, a run tracked by wandb offline
-has history and weights bit-identical to an untracked one's (`tests/test_run.py`). Still to
-confirm on CUDA with wandb online, where the real runs are: M3-2's tracked check run on Colab.
+Tracking doesn't change training: a tracked run's history and weights are bit-identical to an
+untracked one's, on the CPU with wandb offline (`tests/test_run.py`) and on a Colab T4 with wandb
+online (M3-2's check run, [`Docs/M3_debug_log.md`](Docs/M3_debug_log.md)).
 
-Any `--epochs` works for a quick check, 1 included (see [Training](#training)). M3-2's first
-check run (`m3-2_smoke_check`, tagged `smoke`) predates that fix: it trained its one epoch at
-lr 1e-5, so its val MAE means nothing. It is kept as the record that logging works.
+Any `--epochs` works for a quick check, 1 included (see [Training](#training)). The record that
+logging works is M3-2's check run, `base_random_seed42` tagged `check`
+([run 85b9o6ls](https://wandb.ai/DATA612/msml612-csdi/runs/85b9o6ls)): seed 42 for 3 epochs on a
+Colab T4. The earlier `m3-2_smoke_check` (tagged `smoke`) trained its one epoch at lr 1e-5,
+before the learning-rate fix, so its val MAE means nothing.
 
 Tests:
 
