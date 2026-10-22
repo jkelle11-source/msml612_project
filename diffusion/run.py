@@ -12,18 +12,18 @@ Trains with ``diffusion.train.train``, scores the validation split every
   MAE/RMSE on the epochs that were scored.
 - ``model.pt``: the weights after the latest scored epoch. The last epoch is always scored, so a
   finished run leaves its final weights here, the ones that are scored (PROJECT_PLAN §3.1).
-- ``summary.json``: the 500-step health report, the final val MAE, and whether it is below
-  forward fill's.
+- ``summary.json``: the 500-step health report, the final val MAE, whether it is below
+  forward fill's, and the run's path on wandb (``entity/project/id``; null if untracked).
 
 The run refuses an output folder that is not empty, so two runs' files never mix; with
 ``--overwrite`` it first deletes the files a run writes (``RUN_FILES``), and nothing else.
 
 The same numbers stream to wandb as the run goes (M3-2), to the team and project in the
 config's ``tracking`` block, under the name ``run_name()`` gives: every step's loss, gradient
-norm and learning rate, every epoch's ``curve.json`` row, the config, and ``summary.json`` as
-the run's summary. ``--wandb`` picks the mode (online, offline, disabled); without it wandb
-follows ``WANDB_MODE`` if that is set, else goes online. ``run()`` called from Python is
-untracked unless given ``wandb_mode``.
+norm and learning rate, every epoch's ``curve.json`` row, the config and output folder, and
+``summary.json`` as the run's summary. ``--wandb`` picks the mode (online, offline, disabled);
+without it wandb follows ``WANDB_MODE`` if that is set, else goes online, and so does ``run()``
+called from Python without ``wandb_mode``. ``--tag`` adds tags that say what a run is for.
 """
 
 import argparse
@@ -48,10 +48,10 @@ BASELINES_PATH = ROOT / "results" / "baselines.json"
 OUTPUTS = ROOT / "outputs"
 RUN_FILES = ("config.yaml", "history.jsonl", "curve.json", "model.pt", "summary.json")
 
-# Where runs are logged (M3-2), read from the repo's config rather than the run's, so a
-# config saved before M3-2 (no ``tracking`` block) still reruns.
+# Where runs are logged (M3-2). Not part of a run: read from the repo's config, and left out
+# of a run's saved config and its wandb config, so every saved config reruns the same way.
 TRACKING = yaml.safe_load(CONFIG_PATH.read_text())["tracking"]
-# ponytail: every run trains in the random regime until M6-2 adds TrainMasker's block-aware
+# TODO(M6-2): every run trains in the random regime until M6-2 adds TrainMasker's block-aware
 # ``mix`` strategy; then read the regime from the config here.
 REGIME = "random"
 
@@ -129,23 +129,24 @@ def health_report(history, n_steps=500):
                          and report["complete"])
     return report
 
-def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wandb_mode="disabled"):
+def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wandb_mode=None, tags=()):
     """Train one model and score it on the validation split as it goes; returns ``(model, summary)``.
 
     ``out_dir`` must be empty or new. With ``overwrite`` an earlier run's files are deleted first,
     so a run that stops early cannot leave them next to its own. ``wandb_mode`` is passed to
-    ``wandb.init``: ``"online"``, ``"offline"``, ``"disabled"`` (the default, so calls from
-    Python and the tests are untracked), or ``None`` to let ``WANDB_MODE`` decide.
+    ``wandb.init``: ``"online"``, ``"offline"``, ``"disabled"``, or ``None`` (the default) to let
+    ``WANDB_MODE`` decide, as the command line does, so a harness looping over ``run()`` is
+    tracked unless told otherwise. ``tags`` are added to the wandb run's variant, regime and seed.
+    Nothing is written to ``out_dir`` until wandb has started, so a run that cannot start (no
+    wandb login) can simply be run again.
     """
+    config = {key: value for key, value in config.items() if key != "tracking"}     # see TRACKING
     out_dir = Path(out_dir)
     if out_dir.exists() and any(out_dir.iterdir()):
         if not overwrite:
             raise FileExistsError(f"{out_dir} is not empty; pass --overwrite to replace the run in it")
         for name in RUN_FILES:      # only a run's own files: a mistaken --out must not wipe a folder
             (out_dir / name).unlink(missing_ok=True)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
-    (out_dir / "history.jsonl").write_text("")
 
     protocol, data, validation = config["protocol"], config["data"], config["validation"]
     masker = EvalMasker(protocol["eval_masker_seed"], protocol["eval_holdout_fraction"],
@@ -156,8 +157,9 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
     variant = variant_name(config)
     tracker = wandb.init(entity=TRACKING["wandb_entity"], project=TRACKING["wandb_project"],
                          mode=wandb_mode, name=run_name(config, seed), job_type="train",
-                         tags=[variant, REGIME, f"seed{seed}"],
-                         config={**config, "seed": seed, "variant": variant, "regime": REGIME, "device": device})
+                         tags=[variant, REGIME, f"seed{seed}", *tags],
+                         config={**config, "seed": seed, "variant": variant, "regime": REGIME, "device": device,
+                                 "out_dir": str(out_dir.resolve())})
 
     def on_step_end(record):
         history.append(record)
@@ -192,6 +194,9 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
         clock["start"] = time.time()
 
     with tracker:                                   # a run that raises is closed on wandb as failed
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
+        (out_dir / "history.jsonl").write_text("")
         model, _ = train(config, dataset, seed, device, on_epoch_end=on_epoch_end, on_step_end=on_step_end)
 
         final = curve[-1]                                       # the last epoch is always scored
@@ -204,6 +209,8 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
             "final_val_mae": final["val_mae"],
             "forward_fill_val_mae": bar,
             "below_forward_fill": None if bar is None else final["val_mae"] < bar,
+            # entity/project/id on wandb, so a later step (the gate's test scoring, M4-1) can find the run
+            "wandb_run": None if tracker.disabled else tracker.path,
         }
         (out_dir / "summary.json").write_text(json.dumps(summary, indent=1) + "\n")
         tracker.summary.update(summary)
@@ -218,11 +225,14 @@ def main(argv=None):
     parser.add_argument("--epochs", type=int, help="override train.epochs; recorded in the saved config")
     parser.add_argument("--validate-every", type=int,
                         help="override validation.every_n_epochs; recorded in the saved config")
-    parser.add_argument("--out", type=Path, help="output folder (default outputs/<variant>_seed<seed>)")
+    parser.add_argument("--out", type=Path,
+                        help="output folder (default outputs/<run name>, e.g. outputs/base_random_seed42)")
     parser.add_argument("--overwrite", action="store_true",
                         help="delete an earlier run's files in the output folder first")
     parser.add_argument("--wandb", choices=("online", "offline", "disabled"),
                         help="wandb mode (default: WANDB_MODE if set, else online)")
+    parser.add_argument("--tag", action="append", default=[],
+                        help="a wandb tag saying what the run is for, e.g. gate, sweep, dry-run, debug (repeatable)")
     args = parser.parse_args(argv)
 
     config = copy.deepcopy(yaml.safe_load(args.config.read_text()))
@@ -231,11 +241,11 @@ def main(argv=None):
     if args.validate_every is not None:
         config["validation"]["every_n_epochs"] = args.validate_every
     device = pick_device(args.device)
-    out_dir = args.out or OUTPUTS / f"{variant_name(config)}_seed{args.seed}"
+    out_dir = args.out or OUTPUTS / run_name(config, args.seed)             # the run's wandb name
     print(f"{variant_name(config)} seed {args.seed} on {device}, {config['train']['epochs']} epochs -> {out_dir}", flush=True)
     _, summary = run(config, load_dataset(args.dataset), args.seed, device, out_dir,
                      log=lambda line: print(line, flush=True), overwrite=args.overwrite,
-                     wandb_mode=args.wandb)
+                     wandb_mode=args.wandb, tags=args.tag)
     print(json.dumps(summary, indent=1))
 
 if __name__ == "__main__":

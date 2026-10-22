@@ -90,6 +90,15 @@ deliberately absent: the head count comes from `model.n_heads` alone, and `targe
 always `"external"`, set by `models.build_model`, because upstream's `"random"` draws its masks
 from the global RNGs.
 
+Departures from upstream so far:
+
+- **No learning-rate drop before epoch 1** (M3-2 review). A drop comes at
+  `max(1, int(fraction × train.epochs))` for each `train.lr_milestones` fraction; upstream's
+  `int(0.75 × epochs)` and `int(0.9 × epochs)` are both 0 for a 1-epoch run, so `MultiStepLR`
+  applies both drops before the first step and the run trains at 1% of the learning rate. Only
+  1-epoch runs change: from 2 epochs on the milestones are upstream's, and a 200-epoch run, the
+  gate and the sweep included, still drops at epochs 150 and 180.
+
 ---
 
 ## Denoiser input-hook contract
@@ -324,8 +333,10 @@ What one run does:
   upstream's forward noising and masked loss → backward → `clip_grad_norm_` → Adam step.
   Clipping is off by default (`train.clip_grad_norm: null`, as upstream), but the gradient norm
   is still computed and recorded.
-- Steps the learning-rate schedule once per epoch (×0.1 at 75% and 90% of `train.epochs`), then
-  calls `on_epoch_end(epoch, model)` if one is given. M3 attaches validation there. Nothing the
+- Steps the learning-rate schedule once per epoch (×0.1 at 75% and 90% of `train.epochs`,
+  rounded down but never before epoch 1: a [departure from upstream](#frozen-protocol-constants)
+  that changes 1-epoch runs only; below 5 epochs both drops land in the same epoch), then calls
+  `on_epoch_end(epoch, model)` if one is given. M3 attaches validation there. Nothing the
   hook does can shift training, because `start_epoch` re-seeds every stream at the top of the
   next epoch and `train` puts the model back in train mode.
 - `history` has one record per step, `{"epoch", "loss", "grad_norm", "lr"}`, as plain numbers.
@@ -341,7 +352,7 @@ runtime first. The switch is process-wide, so a run's validation passes are cove
 scoring script must call it before any CUDA work. With it, CUDA reruns match bit for bit too: two
 2-epoch runs on a Colab T4 did ([`Docs/M3_debug_log.md`](Docs/M3_debug_log.md)). `on_step_end(record)`, if
 given, is called with a copy of each history record as it is made (M3-1); the run log uses it,
-and wandb (M3-2) can too.
+and wandb (M3-2) does.
 
 ### Launching a run (M3-1)
 
@@ -350,20 +361,22 @@ uv run python -m diffusion.run --seed 42
 ```
 
 `diffusion/run.py` trains one model from `configs/config.yaml` and a run seed, scores the
-validation split as it goes, and writes to `outputs/<variant>_seed<seed>/` (git-ignored). Options:
-`--device` (`cuda`, `mps`, `cpu`, default the first available), `--epochs` to override
-`train.epochs`, `--validate-every` to override `validation.every_n_epochs`, `--config`,
-`--dataset`, `--out`, `--overwrite`. The output folder must be empty or new, so two runs' files
-never mix; `--overwrite` first deletes the files listed below from it, and nothing else.
+validation split as it goes, and writes to `outputs/<run name>/` (git-ignored), e.g.
+`outputs/base_random_seed42/`, the run's name on wandb
+([Experiment tracking](#experiment-tracking-m3-2)). Options: `--device` (`cuda`, `mps`, `cpu`,
+default the first available), `--epochs` to override `train.epochs`, `--validate-every` to
+override `validation.every_n_epochs`, `--config`, `--dataset`, `--out`, `--overwrite`, `--wandb`,
+`--tag`. The output folder must be empty or new, so two runs' files never mix; `--overwrite`
+first deletes the files listed below from it, and nothing else.
 Everything is written while the run is going, so a stopped run keeps what it has done:
 
 | File | Contents |
 | --- | --- |
-| `config.yaml` | the resolved config, `--epochs` and `--validate-every` included. `--config` on it reruns the run. |
+| `config.yaml` | the resolved config, `--epochs` and `--validate-every` included, `tracking` left out (where a run is logged isn't part of it). `--config` on it reruns the run. |
 | `history.jsonl` | one line per training step: `epoch`, `loss`, `grad_norm`, `lr` |
 | `curve.json` | one row per epoch: mean loss, largest gradient norm, training seconds, and `val_mae` / `val_rmse` / `val_seconds` when scored |
 | `model.pt` | weights after the latest scored epoch. The last epoch is always scored, so a finished run's are its final weights, the ones that are scored (no best-epoch checkpoint; PROJECT_PLAN §3.1). |
-| `summary.json` | the 500-step health report, the final val MAE, forward fill's val MAE, `below_forward_fill` |
+| `summary.json` | the 500-step health report, the final val MAE, forward fill's val MAE, `below_forward_fill`, and `wandb_run`, the run's path on wandb (`entity/project/id`; null when untracked) |
 
 **Validation while training is for tracking, not reporting.** Every `validation.every_n_epochs`
 epochs (and on the last), the run scores the val split's `EvalMasker` targets at 10%, exactly
@@ -403,29 +416,44 @@ import os; os.environ["WANDB_API_KEY"] = userdata.get("WANDB_API_KEY")
 `--wandb` picks the mode: `online`, `offline` (files only, under `wandb/`; upload later with
 `uv run wandb sync wandb/offline-run-*`) or `disabled`. Without it, wandb follows the
 `WANDB_MODE` environment variable if set, else goes online, so a real run is tracked unless
-told otherwise. `run()` called from Python is untracked unless given `wandb_mode`, and
-`tests/conftest.py` sets `WANDB_MODE=disabled`, so the tests never reach wandb's servers.
+told otherwise. `run()` called from Python follows the same rule unless given `wandb_mode`, so
+a harness looping over it (M6-2) is tracked too. `tests/conftest.py` sets
+`WANDB_MODE=disabled`, so the tests never reach wandb's servers.
 
 Runs are named `<variant>_<regime>_seed<seed>`, e.g. `base_random_seed42` or
-`ext1+2_random_seed46`, and tagged with the variant, regime and seed. The regime is `random`
-until M6-2 adds the block-aware one. What a run sends, all of it also in its `outputs/` files:
+`ext1+2_random_seed46`, the same as their output folder, and tagged with the variant, regime and
+seed. The regime is `random` until M6-2 adds the block-aware one. Every run of a variant, regime
+and seed gets the same name, so say what a run is for with `--tag` (repeatable; `tags=` on
+`run()`), e.g. `--tag gate`, `--tag sweep`, `--tag dry-run` or `--tag debug`, and filter on it
+in the workspace. What a run sends, all of it also in its `outputs/` files:
 
 | wandb key | Sent | From |
 | --- | --- | --- |
 | `train/loss`, `train/grad_norm`, `train/lr`, `epoch` | every step (step = steps since the start, 175 per epoch) | `history.jsonl` |
 | `epoch/loss_mean`, `epoch/grad_norm_max`, `epoch/seconds` | at the end of every epoch | `curve.json` |
 | `val/mae`, `val/rmse`, `val/seconds` | on every scored epoch | `curve.json` |
-| config, plus `seed`, `variant`, `regime`, `device` | once, at the start | `config.yaml` |
-| summary: `health.*`, `final_val_mae`, `forward_fill_val_mae`, `below_forward_fill` | at the end | `summary.json` |
+| config (without `tracking`), plus `seed`, `variant`, `regime`, `device`, `out_dir` | once, at the start | `config.yaml`, and the output folder's path |
+| summary: `health.*`, `final_val_mae`, `forward_fill_val_mae`, `below_forward_fill`, `wandb_run` | at the end | `summary.json` |
 
-A run that raises (out of memory, a lost Colab session) is closed on wandb as failed rather than
-left "running". Tracking doesn't change training: a tracked run's history and weights are
-bit-identical to an untracked one's.
+Run names aren't unique (a rerun gets the same one), so the two copies of a run point at each
+other instead: `wandb_run` in `summary.json` is the run's path on wandb, and `out_dir` in its
+wandb config is the folder its files are in. A later step, such as the gate's test-split scoring
+(M4-1), finds the run from `wandb_run`. Two tracked reruns differ only in `wandb_run`.
 
-For a quick check, use `--epochs 2` or more. With `--epochs 1` both learning-rate drops
-(`int(0.75 × epochs)` and `int(0.9 × epochs)`) land on epoch 0, so the whole run trains at
-lr 1e-5 and its val MAE means nothing. M3-2's check run (`m3-2_smoke_check`, tagged `smoke`)
-is such a run, kept as the record that logging works.
+A run that raises once wandb has started (out of memory, Ctrl-C) is closed on wandb as failed
+rather than left "running". A run whose machine goes away (a lost Colab session) can't close
+itself: wandb marks it crashed once it stops hearing from it. Nothing is written to the output
+folder until wandb has started, so a run that can't start it (not logged in, no Colab secret)
+leaves the folder empty, and the same command works again once you're logged in, without
+`--overwrite`.
+
+Tracking doesn't change training, as far as tested: on the CPU, a run tracked by wandb offline
+has history and weights bit-identical to an untracked one's (`tests/test_run.py`). Still to
+confirm on CUDA with wandb online, where the real runs are: M3-2's tracked check run on Colab.
+
+Any `--epochs` works for a quick check, 1 included (see [Training](#training)). M3-2's first
+check run (`m3-2_smoke_check`, tagged `smoke`) predates that fix: it trained its one epoch at
+lr 1e-5, so its val MAE means nothing. It is kept as the record that logging works.
 
 Tests:
 
@@ -436,7 +464,8 @@ Tests:
   `EvalSampler`.
 - `tests/test_train.py`: one step on a real batch, upstream's masking never runs, the loss
   scores exactly `TrainMasker`'s targets, every step replayed from scratch at `lr = 0`,
-  same-seed reproducibility, clipping, the learning-rate schedule, the epoch hook, deterministic
+  same-seed reproducibility, clipping, the learning-rate schedule (no drop before a 1-epoch run
+  has trained), the epoch hook, deterministic
   kernels switched on (an existing `CUBLAS_WORKSPACE_CONFIG` kept).
 - `tests/test_run.py` (M3-1): the health report on made-up histories (healthy, one spike,
   explosion, flat, collapsed, NaN, too short); validation scoring exactly `EvalMasker`'s targets
@@ -446,9 +475,15 @@ Tests:
   `--overwrite` deleting only a run's own files; the step hook, which gets a copy of each record.
   For wandb (M3-2), with a fake wandb that records what it's sent: run names from the toggles and
   seed; one log per step matching `history.jsonl`; epoch rows, with val scores only on scored
-  epochs; the config, seed and toggles; `summary.json` as the summary; a run that raises closed
-  as failed; Python calls untracked and the command line following `WANDB_MODE`. With real wandb
-  offline: a tracked run's history and weights bit-identical to an untracked one's.
+  epochs; the config, seed, toggles and output folder; `summary.json` as the summary, with the
+  run's wandb path; a run that raises closed as failed; a wandb start that fails (no login)
+  writing nothing, so the same command reruns without `--overwrite`; a run that fails before
+  training (no folder, no masker) never left open on wandb or started twice; Python calls and
+  the command line both following `WANDB_MODE`; `--tag` and `tags=` added to the run's tags; the
+  default output folder named like the wandb run; the `tracking` block left out of the saved
+  config and the wandb config. With real wandb offline: a tracked
+  run's history and weights bit-identical to an untracked one's, and its summary too except
+  `wandb_run`, which names the offline run (null untracked).
 - `tests/test_forward_noising.py`: the schedule check described under
   [Reused CSDI implementation](#reused-csdi-implementation).
 
