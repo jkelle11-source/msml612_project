@@ -152,8 +152,9 @@ train:
   batch_size: 16
   lr: 1.0e-3                    # Adam
   weight_decay: 1.0e-6          # hardcoded in upstream's utils.train
-  # MultiStepLR: lr is multiplied by lr_gamma at int(fraction * epochs) for each
-  # fraction, i.e. at epochs 150 and 180 of 200 (upstream's p1, p2).
+  # MultiStepLR: lr is multiplied by lr_gamma at max(1, int(fraction * epochs)) for each
+  # fraction, i.e. at epochs 150 and 180 of 200 (upstream's p1, p2). The max(1, ...) is ours:
+  # upstream's int() is 0 for a 1-epoch run, which drops the lr before its first step.
   lr_milestones: [0.75, 0.9]
   lr_gamma: 0.1
   # Max gradient norm for clip_grad_norm_; null = no clipping, as upstream.
@@ -175,3 +176,14 @@ validation:
   every_n_epochs: 10
   n_samples: 5
   batch_size: 64
+
+# -----------------------------------------------------------------------------
+# Experiment tracking (M3-2). Where runs are logged, not how they train: not
+# part of the protocol or of a run. diffusion.run reads it from this file and
+# leaves it out of a run's saved config and wandb config. The entity is
+# the shared wandb TEAM (not the organization, DATA612-org, which can't hold
+# runs); the project is created by the first run logged to it.
+# -----------------------------------------------------------------------------
+tracking:
+  wandb_entity: DATA612
+  wandb_project: msml612-csdi

@@ -35,9 +35,12 @@ def train(config, dataset, run_seed, device, on_epoch_end = None, on_step_end = 
                      lr = train_config["lr"],
                      weight_decay = train_config["weight_decay"])
     
+    # A drop is never before epoch 1 (ours, M3-2 review): upstream's int(0.75 * epochs) is 0 for a
+    # 1-epoch run, and a milestone of 0 drops the lr before the first step. From 2 epochs on, and
+    # at 150 and 180 of 200, the milestones are upstream's.
     scheduler = MultiStepLR(optimizer = optimizer, 
                             milestones = [
-                                int(f * train_config["epochs"]) 
+                                max(1, int(f * train_config["epochs"]))
                                 for f in train_config["lr_milestones"]
                                 ],gamma = train_config["lr_gamma"])
     

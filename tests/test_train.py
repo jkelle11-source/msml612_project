@@ -150,6 +150,15 @@ def test_learning_rate_drops_by_gamma_at_each_milestone_epoch(small_dataset):
     lr_by_epoch = {h["epoch"]: h["lr"] for h in history}
     assert [lr_by_epoch[e] for e in range(4)] == pytest.approx([1.0e-3, 1.0e-3, 1.0e-4, 1.0e-5])
 
+def test_no_drop_comes_before_the_first_epoch_has_trained(small_dataset):
+    # Upstream's int(0.75 * 1) = int(0.9 * 1) = 0 would train a 1-epoch run at 1e-5 throughout
+    # (M3-2 review); from 2 epochs on the milestones are upstream's, both at epoch 1 here.
+    _, one = run(small_dataset, epochs=1)
+    _, two = run(small_dataset, epochs=2)
+    assert [h["lr"] for h in one] == pytest.approx([1.0e-3] * 4)
+    lr_by_epoch = {h["epoch"]: h["lr"] for h in two}
+    assert [lr_by_epoch[e] for e in range(2)] == pytest.approx([1.0e-3, 1.0e-5])
+
 def test_history_has_one_plain_number_record_per_step(small_dataset):
     _, history = run(small_dataset)
     assert len(history) == 3 * 4

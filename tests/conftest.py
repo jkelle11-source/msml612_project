@@ -1,4 +1,10 @@
+import os
 from pathlib import Path
+
+# No test ever reaches wandb's servers (M3-2): run() and the command line follow WANDB_MODE
+# unless given a mode, so runs started without one are no-ops. A test that needs real wandb
+# passes mode="offline" itself, which wins over this.
+os.environ["WANDB_MODE"] = "disabled"
 
 import numpy as np
 import pytest

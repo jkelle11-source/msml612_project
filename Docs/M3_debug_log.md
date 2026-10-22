@@ -57,6 +57,21 @@ first includes warm-up), against 29 and 23.5 s without deterministic kernels (20
 session): the steady epoch is about 11% slower, about 26 s, so a 200-epoch run trains in about
 87 min instead of 78. That rests on one steady epoch per run, so treat it as an estimate.
 
+**2026-10-22, Jake (M3-2 review). wandb tracking leaves a CUDA run unchanged.** Two 3-epoch runs
+of seed 42 on a Colab T4 (`--epochs 3 --validate-every 3`, PR #44 with its review fixes), one with
+`--wandb disabled` and one tracked online (`--tag check`), matched bit for bit: `history.jsonl` and
+`model.pt`. So tracking can't break seed pairing on CUDA either; on the CPU with wandb offline it
+is tested (`tests/test_run.py`). Both runs: epoch losses 0.3985, 0.3355 and 0.3272 (max gradient
+norms 7.56, 1.91 and 1.20), healthy over the first 500 steps (one spike, 7.56 at step 16, in the
+initial descent), val MAE 0.4850 and RMSE 0.7643. That is above forward fill, as expected after
+3 epochs, the third at lr 1e-5 (below 5 epochs both drops land in the same epoch). The tracked
+run is [`DATA612/msml612-csdi/85b9o6ls`](https://wandb.ai/DATA612/msml612-csdi/runs/85b9o6ls)
+(`base_random_seed42`, tagged `check`), and its `summary.json` names it in `wandb_run`. Epochs
+took 29–32 s, then 26–27 s; the validation pass took 300 s (281 s on 2026-10-17). Setting up a
+fresh runtime: PhysioNet served Set A at about 12 KB/s that day, about 9 min for the 6.6 MB
+archive. Uploading `data/processed/physionet_set_a.npz` from a machine that has it, and checking
+its MD5, is quicker.
+
 ## Seam checks
 
 Covered by tests before the first real run, so a bad number is not one of these:
@@ -167,6 +182,10 @@ in the whole run**, so there is no stability reason to clean them before the gat
   about 2 h more on Colab.
 - No early stopping or checkpoint selection (M3-1 review, PROJECT_PLAN §3.1): every run trains
   the fixed 200 epochs, and its final weights are scored.
+- Runs stream to wandb ([DATA612/msml612-csdi](https://wandb.ai/DATA612/msml612-csdi), M3-2).
+  Tag the gate runs `--tag gate`, and on Colab point `--out` at Drive so a dropped session keeps
+  `model.pt`. Each run's `summary.json` names its wandb run in `wandb_run`, for attaching the
+  test-split scores to it.
 - The known bad values did not destabilize training over 200 epochs (seed 42), so cleaning them
   is not needed for stability. Whether they affect the *scores* is a separate question (README,
   Baselines: a visible bad value can be carried into a scored one).
