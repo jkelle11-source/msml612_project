@@ -5,6 +5,12 @@ The subtle heart of the frozen protocol (PROJECT_PLAN §3.1, §4.1):
 - ``EvalMasker`` — seeded **once** from the frozen project seed in ``configs/config.yaml``
   (``eval_masker_seed``); holds out a fixed 10% of observed values as evaluation targets,
   byte-identical across every model and every seed for the whole project.
+- ``BlockEvalMasker`` (M2-4) — the second frozen holdout, for block missingness, seeded once
+  from its own frozen seed (``block_eval_masker_seed``). Each patient loses exactly as many
+  values as under ``EvalMasker``, but as whole ``block_window_hours``-hour windows across all
+  features, apart from one trimmed window. ``EvalMasker``'s targets are untouched by it. The
+  slot walk is ``block_targets(mask, count, generator, window)``, which ``TrainMasker``'s
+  block-aware ``mix`` strategy reuses (M6-2).
 - ``TrainMasker`` — draws a *fresh* conditioning/target split each iteration, reproducible
   from the per-run seed but deliberately **not** pinned to one pattern.
 
@@ -19,14 +25,16 @@ with the same metrics. It is deliberately not imported here, the way ``data`` le
 importing it with the package first would make Python run it twice and warn.
 """
 
-from .masking import EvalMasker, TrainMasker
+from .masking import BlockEvalMasker, EvalMasker, TrainMasker, block_targets
 from .metrics import masked_errors, masked_mae, masked_rmse, median_imputation, per_variable_mae
 from .sampling import EvalSampler
 
 __all__ = [
+    "BlockEvalMasker",
     "EvalMasker",
     "EvalSampler",
     "TrainMasker",
+    "block_targets",
     "masked_errors",
     "masked_mae",
     "masked_rmse",

@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from .masking import CONFIG_PATH, EvalMasker
+from .masking import CONFIG_PATH, BlockEvalMasker, EvalMasker
 from .metrics import masked_mae, masked_rmse
 
 _CONFIG = yaml.safe_load(Path(CONFIG_PATH).read_text())
@@ -51,33 +51,46 @@ def forward_fill(values, cond_mask):
     filled = np.take_along_axis(values, np.maximum(source, 0), axis=1)
     return np.where(source >= 0, filled, 0).astype(np.float32)
 
-def baseline_results(dataset):
-    """Both baselines' MAE/RMSE on ``EvalMasker``'s val and test targets: the record in ``RESULTS_PATH``.
+def score_holdout(dataset, masker):
+    """Both baselines' val and test MAE/RMSE on ``masker``'s held-out targets, keyed by split."""
+    rows = {}
+    for split in ("val", "test"):
+        idx = dataset[f"{split}_idx"]
+        values, mask = dataset["values"][idx], dataset["mask"][idx]
+        cond, target = masker(mask, dataset["record_ids"][idx])
+        row = {"n_patients": len(idx), "n_targets": int(target.sum())}
+        for name, guess in (("mean_imputation", mean_imputation(values)), ("forward_fill", forward_fill(values, cond))):
+            row[name] = {"mae": round(masked_mae(guess, values, target), 6),
+                         "rmse": round(masked_rmse(guess, values, target), 6)}
+        rows[split] = row
+    return rows
 
-    Scored at the headline rate (``eval_holdout_fraction``, 10%) and at CSDI's robustness rates
-    (``robustness_fractions``, 50% and 90%), all with the frozen ``eval_masker_seed``, under
-    ``random["fractions"][str(fraction)]``. Keyed by holdout, so the block holdout (``M2-4``) is
-    recorded next to the random one.
+def baseline_results(dataset):
+    """Both baselines' MAE/RMSE on the frozen holdouts' val and test targets: the record in ``RESULTS_PATH``.
+
+    Keyed by holdout. The random holdout (``EvalMasker``) is scored at the headline rate
+    (``eval_holdout_fraction``, 10%) and at CSDI's robustness rates (``robustness_fractions``,
+    50% and 90%), all with the frozen ``eval_masker_seed``, under
+    ``random["fractions"][str(fraction)]``. The block holdout (``BlockEvalMasker``, M2-4) is
+    scored at the headline rate only, with its own frozen seed and window, under
+    ``block["fractions"][str(fraction)]``.
     """
     protocol = _CONFIG["protocol"]
     random = {"eval_masker_seed": protocol["eval_masker_seed"], "fractions": {}}
+    block = {"block_eval_masker_seed": protocol["block_eval_masker_seed"],
+             "block_window_hours": protocol["block_window_hours"],
+             "fractions": {}}
     for fraction in (protocol["eval_holdout_fraction"], *protocol["robustness_fractions"]):
         masker = EvalMasker(protocol["eval_masker_seed"], fraction, GRID)
-        rate = random["fractions"][str(fraction)] = {}
-        for split in ("val", "test"):
-            idx = dataset[f"{split}_idx"]
-            values, mask = dataset["values"][idx], dataset["mask"][idx]
-            cond, target = masker(mask, dataset["record_ids"][idx])
-            row = {"n_patients": len(idx), "n_targets": int(target.sum())}
-            for name, guess in (("mean_imputation", mean_imputation(values)), ("forward_fill", forward_fill(values, cond))):
-                row[name] = {"mae": round(masked_mae(guess, values, target), 6),
-                             "rmse": round(masked_rmse(guess, values, target), 6)}
-            rate[split] = row
+        random["fractions"][str(fraction)] = score_holdout(dataset, masker)
+    block_masker = BlockEvalMasker.from_config()
+    block["fractions"][str(block_masker.fraction)] = score_holdout(dataset, block_masker)
     return {
         "units": "standardized (train-split z-scores)",
         "split_seed": _CONFIG["data"]["split_seed"],
         "eval_holdout_fraction": protocol["eval_holdout_fraction"],
         "random": random,
+        "block": block,
     }
 
 if __name__ == "__main__":

@@ -84,5 +84,37 @@
         }
       }
     }
+  },
+  "block": {
+    "block_eval_masker_seed": 8080,
+    "block_window_hours": 3,
+    "fractions": {
+      "0.1": {
+        "val": {
+          "n_patients": 400,
+          "n_targets": 12886,
+          "mean_imputation": {
+            "mae": 0.689455,
+            "rmse": 0.952958
+          },
+          "forward_fill": {
+            "mae": 0.474857,
+            "rmse": 0.810472
+          }
+        },
+        "test": {
+          "n_patients": 800,
+          "n_targets": 26027,
+          "mean_imputation": {
+            "mae": 0.733813,
+            "rmse": 3.389167
+          },
+          "forward_fill": {
+            "mae": 0.47862,
+            "rmse": 3.319065
+          }
+        }
+      }
+    }
   }
 }
