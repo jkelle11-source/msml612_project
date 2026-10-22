@@ -49,7 +49,7 @@
 
 **Context.** The mechanistic story behind the aggregate numbers (§5, §7): per-variable MAE across all 35 variables, ranking the top-5/bottom-5 improvers, and testing the hypothesis that Ext-2 gains concentrate on **high-autocorrelation variables** (HR, SpO2) where recency matters most. Josh owns it, building on the Week-7 qualitative work.
 
-**Caution: pH and Temp** (README, Dataset; §8; found in `M2-3`). Their per-variable MAE can't be trusted, in raw or standardized units. The raw data's known bad values widen both features' scaling, so every model sees them compressed, and a single bad value that is scored, or carried into a scored value, can dominate a feature's MAE. Flag both wherever they appear in the per-variable table and the top-5/bottom-5 lists.
+**Caution: pH, Temp, PaCO2 and PaO2** (README, Dataset; §8; found in `M2-3` and `M3-3`). Their per-variable MAE can't be trusted, in raw or standardized units. The raw data's known bad values widen pH's and Temp's scaling, so every model sees them compressed, and a single bad value that is scored, or carried into a scored value, can dominate a feature's MAE. PaCO2 and PaO2 are exposed through pH: a model that predicts across features at the same hour can carry a visible bad pH into their guesses (BRITS misses a PaCO2 by 6,796 standardized units next to a pH of 735, `M3-3`), and `M4-1`'s gate check says whether CSDI does too. Flag all four wherever they appear in the per-variable table and the top-5/bottom-5 lists.
 
 **Deliverables**
 - Per-variable MAE (all 35) for base vs. best variant, with top-5/bottom-5 improvers identified.

@@ -54,6 +54,7 @@
 
 **Deliverables**
 - Headline table: base / +Ext1 / +Ext2 / +both, each mean ± SE @10%, plus baselines (mean, forward-fill, BRITS/fallback, and cited BRITS/V-RIN/CSDI numbers).
+- A note under the table that our ± covers training randomness only: the test split is fixed, so every run scores the same 800 patients. The cited standard errors (CSDI, Table 3) also cover which patients were tested, because each of CSDI's five trials tested a different fifth of them (its Appendix E.2.1).
 - **Paired Δ vs. base ± SE** for each extension and for the combined model.
 - Stratified view: every variant and baseline under both frozen holdouts, random (`EvalMasker`) and block (`BlockEvalMasker`, `M2-4`), at the same 10% rate, so Ext 1's and Ext 2's honest regimes read separately.
 - **Ext 1's block contrast:** paired Δ ± SE of Ext 1 vs. base in the block-aware training regime, scored on the block holdout (§3.1, §4.1), with the random regime's block-holdout Δ beside it as a carry-over check.

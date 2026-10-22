@@ -33,9 +33,11 @@
 - Base CSDI trained to **≤ ~0.24 MAE @10% (standardized)** averaged over **≥3 seeds**, tracked in wandb.
 - The gate result recorded in the results log with per-seed numbers and the mean.
 - Gate runs use upstream's published diffusion configuration (quad schedule, 50 steps, 8 heads). Any tuning on top of it (lr, epochs, EMA, etc.), and any departure from it, documented for reproducibility.
+- PaCO2 and PaO2 errors checked on the gate runs' test scores. In `M3-3` a visible bad pH (735, 187) dragged BRITS's same-hour PaCO2 and PaO2 guesses off by up to 6,796 standardized units through its feature regression (README, Learned baseline). Report whether CSDI's feature attention does the same, and if it does, say so next to the gate number.
 
 **Definition of Done**
 - [ ] Mean MAE @10% over ≥3 seeds is within the 0.22–0.24 band (or the closest achieved value is documented honestly).
+- [ ] PaCO2 and PaO2 errors on the gate's test scores checked, and the result stated.
 - [ ] Per-seed numbers + mean logged; runs reproducible from config.
 - [ ] Gate status (PASS/FAIL) stated explicitly for the interim.
 - [ ] If FAIL: a written debugging plan for Week 5 is committed (§3.4).

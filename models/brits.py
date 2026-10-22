@@ -3,7 +3,9 @@
 Cao et al. (2018), "BRITS: Bidirectional Recurrent Imputation for Time Series", NeurIPS, in plain
 PyTorch, matching the original code (github.com/caow13/BRITS, which CSDI's published BRITS numbers
 come from) where it differs from the paper: no sigmoid on the mixing weight β, the imputation loss
-summed over hours and weighted 0.3, and its initialization of the decay layers. Imputation only:
+summed over hours and weighted 0.3, and its initialization of the decay layers. The time gaps are
+the one exception: they follow the paper, because the original's are a known bug (``time_gaps``,
+github.com/caow13/BRITS/issues/12). Imputation only:
 the original also trains a mortality classifier alongside (``label_weight``), which needs outcome
 labels our pipeline doesn't load, so that loss is left out. Each direction (RITS)
 reads a patient's 48 hours with an LSTM and, at every hour, guesses every variable *before*
@@ -46,6 +48,7 @@ MODEL_NAME = "BRITS (Cao et al. 2018), our implementation"
 # impute_weight), consistency weight 0.1, and 1000 epochs as the cap. Batch 64 is its README's
 # example; its code defaults to 32. Our stopping rule is added on top: best val MAE, stop after
 # PATIENCE epochs without improvement, which stops every seed on Set A well before the cap.
+# The original's own rule, the last weights after 1000 epochs, overfits on our split (README).
 HIDDEN = 64
 LR = 1.0e-3
 BATCH_SIZE = 64
@@ -57,7 +60,12 @@ PATIENCE = 20
 def time_gaps(mask):
     """BRITS's δ on the hourly grid (Cao et al. 2018, eq. 2): hours since each variable was last
     visible, counted up to the hour before. ``δ_0 = 0``; ``δ_t = 1`` if it was visible at ``t-1``,
-    else ``1 + δ_{t-1}``. ``mask`` is ``(B, T, D)``; so is the result."""
+    else ``1 + δ_{t-1}``. ``mask`` is ``(B, T, D)``; so is the result.
+
+    This is the paper's δ, not the original code's. The original's ``parse_delta`` gives each hour
+    the paper's gap for the hour after it (it reads that hour's own mask and starts at 1), and
+    hands the backward direction the forward gaps, because the masks are reversed twice
+    (github.com/caow13/BRITS/issues/12). The README has what copying it would change."""
     gaps = [torch.zeros_like(mask[:, 0])]
     for t in range(1, mask.shape[1]):
         gaps.append(1 + gaps[-1] * (1 - mask[:, t - 1]))
@@ -236,8 +244,11 @@ def run_seeds(dataset, seeds, device, max_epochs=MAX_EPOCHS, wandb_mode=None, lo
                         config={**settings, "model": MODEL_NAME, "seed": seed, "device": device}) as run:
             # Per-epoch keys stay apart from the summary's val/mae: wandb keeps the last logged
             # value of a history key as its summary, but the scored weights are the best epoch's.
+            # They are under brits/, apart from CSDI's keys too: its epoch/loss_mean is a different
+            # loss on a different step axis, and a shared key would put both in one panel.
             def on_epoch_end(row):
-                run.log({"epoch/loss_mean": row["loss"], "epoch/val_mae": row["val_mae"]}, step=row["epoch"])
+                run.log({"brits/loss": row["loss"], "brits/val_mae": row["val_mae"], "epoch": row["epoch"]},
+                        step=row["epoch"])
                 log(f"brits seed {seed}  epoch {row['epoch'] + 1}  loss {row['loss']:.4f}  val MAE {row['val_mae']:.4f}")
 
             model, curve, best_epoch = train(dataset, seed, device, max_epochs, on_epoch_end=on_epoch_end)

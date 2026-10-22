@@ -91,6 +91,16 @@ def test_training_stops_after_patience_epochs_without_improvement(small_dataset,
     _, curve, best_epoch = train(small_dataset, 42, "cpu", max_epochs=5, patience=2)
     assert best_epoch == 1 and len(curve) == 4
 
+def test_training_returns_the_best_epochs_weights_not_the_last(small_dataset, monkeypatch):
+    improving = iter([1.0, 0.9])                            # so epoch 1's weights come back
+    monkeypatch.setattr("eval.masked_mae", lambda *args: next(improving))
+    after_epoch_1 = train(small_dataset, 42, "cpu", max_epochs=2)[0].state_dict()
+    scores = iter([0.5, 0.3, 0.4, 0.45])                    # best at epoch 1, then two worse
+    monkeypatch.setattr("eval.masked_mae", lambda *args: next(scores))
+    model, curve, best_epoch = train(small_dataset, 42, "cpu", max_epochs=4, patience=2)
+    assert best_epoch == 1 and len(curve) == 4
+    assert all(torch.equal(model.state_dict()[k], after_epoch_1[k]) for k in after_epoch_1)
+
 def test_same_seed_same_result_different_seed_different_result(small_dataset):
     runs = [train(small_dataset, seed, "cpu", max_epochs=2)[0].state_dict() for seed in (42, 42, 43)]
     assert all(torch.equal(runs[0][k], runs[1][k]) for k in runs[0])
@@ -148,8 +158,9 @@ def test_the_command_line_writes_the_record_and_logs_each_seed(small_dataset, tm
     assert {r.init["job_type"] for r in runs} == {"baseline"} and {r.init["mode"] for r in runs} == {"offline"}
     for run, seed in zip(runs, ("42", "43")):
         scores = record["per_seed"][seed]["scores"]
-        assert [step for step, _ in run.logs] == [0, 1] and set(run.logs[0][1]) == {"epoch/loss_mean", "epoch/val_mae"}
+        assert [step for step, _ in run.logs] == [0, 1] and set(run.logs[0][1]) == {"brits/loss", "brits/val_mae", "epoch"}
         assert not any(key in data for _, data in run.logs for key in run.summary)   # wandb would overwrite them
+        assert all(key.startswith("brits/") for _, data in run.logs for key in data if key != "epoch")   # none of CSDI's
         assert run.summary == wandb_summary(scores, "brits") | {
             "best_epoch": record["per_seed"][seed]["best_epoch"], "epochs_run": 2}
     assert record["mean_se"] == mean_se([record["per_seed"][s]["scores"] for s in ("42", "43")])
@@ -162,3 +173,25 @@ def test_recorded_learned_baseline_beats_forward_fill():
     for fraction in ("0.1", "0.5", "0.9"):
         ours = record["mean_se"]["random"]["fractions"][fraction]["val"]["brits"]["mae"]["mean"]
         assert ours < floor[fraction]["val"]["forward_fill"]["mae"]
+
+@pytest.mark.skipif(not LEARNED_PATH.exists(), reason="results/learned_baseline.json not written yet")
+def test_recorded_learned_baseline_is_scored_on_the_recorded_baselines_holdouts():
+    # baselines.json is rewritten in seconds and this record in an hour: a protocol change must
+    # not leave the two side by side (M7-2) scored on different holdouts.
+    record = json.loads(LEARNED_PATH.read_text())
+    floor = json.loads(RESULTS_PATH.read_text())
+    per_seed = [record["per_seed"][str(seed)]["scores"] for seed in record["seeds"]]
+    assert len(per_seed) == len(record["per_seed"]) and record["mean_se"] == mean_se(per_seed)
+    for scores in per_seed + [record["mean_se"]]:
+        assert {k: scores[k] for k in ("units", "split_seed", "eval_holdout_fraction")} == {
+            k: floor[k] for k in ("units", "split_seed", "eval_holdout_fraction")}
+        for holdout in ("random", "block"):
+            ours, theirs = scores[holdout], floor[holdout]
+            assert {k: v for k, v in ours.items() if k != "fractions"} == {
+                k: v for k, v in theirs.items() if k != "fractions"}             # frozen seeds, window
+            assert ours["fractions"].keys() == theirs["fractions"].keys()
+            for fraction, rows in ours["fractions"].items():
+                assert rows.keys() == theirs["fractions"][fraction].keys()
+                for split, row in rows.items():
+                    other = theirs["fractions"][fraction][split]
+                    assert (row["n_patients"], row["n_targets"]) == (other["n_patients"], other["n_targets"])

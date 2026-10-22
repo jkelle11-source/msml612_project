@@ -292,10 +292,11 @@ def test_block_holdout_on_set_a_test_split(set_a):
     assert masked_mae(mean_imputation(values), values, target) == pytest.approx(0.7338, abs=5e-5)
     assert masked_mae(forward_fill(values, cond), values, target) == pytest.approx(0.4786, abs=5e-5)
 
-KNOWN_BAD = {"pH": lambda x: (x < 6.5) | (x > 8.0), "Temp": lambda x: x < 25, "K": lambda x: x > 20}
+KNOWN_BAD = {"pH": lambda x: (x < 6.5) | (x > 8.0), "Temp": lambda x: x < 25, "K": lambda x: x > 20,
+             "PaO2": lambda x: x < 20}
 
 @needs_raw_data
-def test_block_test_targets_include_three_known_bad_values(set_a):
+def test_block_test_targets_include_four_known_bad_values(set_a):
     # The README's † footnote under Baselines; the bad values themselves are listed under Dataset.
     features = list(set_a["features"])
     raw = invert_scaler(set_a["values"], set_a["mean"], set_a["std"])
@@ -309,7 +310,7 @@ def test_block_test_targets_include_three_known_bad_values(set_a):
             held_out = raw[idx][..., k][target[..., k] == 1]
             scored[split] += [(name, round(float(x), 1)) for x in held_out[is_bad(held_out)]]
     assert sorted(scored["val"]) == []
-    assert sorted(scored["test"]) == [("Temp", 0.0), ("pH", 1.0), ("pH", 733.0)]
+    assert sorted(scored["test"]) == [("PaO2", 7.5), ("Temp", 0.0), ("pH", 1.0), ("pH", 733.0)]
 
 # --- M3-3: any guesser through the same scoring, and the baselines on wandb ---------------
 

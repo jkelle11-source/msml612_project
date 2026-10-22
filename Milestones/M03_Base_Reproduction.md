@@ -74,7 +74,7 @@
 
 **Deliverables**
 - BRITS (or bi-GRU fallback) trained and evaluated with `EvalMasker` in standardized units.
-- Its MAE @10% recorded to the results log (the README's baseline table and `results/baselines.json`) next to mean/forward-fill, under both holdouts (random `EvalMasker`, block `BlockEvalMasker`).
+- Its MAE @10% recorded to the results log (the README's baseline table and `results/learned_baseline.json`) next to mean/forward-fill, under both holdouts (random `EvalMasker`, block `BlockEvalMasker`). The record is kept apart from `results/baselines.json`, which its test regenerates in seconds while BRITS takes about an hour to train; a test checks that the two are scored on the same split and holdouts.
 - All the baselines logged to wandb, in `M3-2`'s workspace: mean and forward-fill from `results/baselines.json` (`M2-3`, `M2-4`) and this learned baseline.
 - A one-line note stating whether it's BRITS or the fallback, and why.
 
@@ -82,4 +82,4 @@
 - [ ] A learned baseline produces a logged MAE @10% in our harness, under both holdouts.
 - [ ] Mean, forward-fill and the learned baseline are logged to wandb.
 - [ ] Fallback (if used) is explicitly labeled in the results log and report notes.
-- [ ] Number stored where the Week-7 headline table can cite it.
+- [ ] Number stored where the Week-7 headline table can cite it (`results/learned_baseline.json`).
