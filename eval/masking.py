@@ -78,6 +78,8 @@ def block_targets(mask, count, generator, window):
     target = np.zeros(T * D, dtype=mask.dtype)
     left = count
     for s in shuffled_slots:
+        if left == 0:
+            break
         start, end = s * (window * D), (s + 1) * (window * D)
         observed = np.flatnonzero(flat_mask[start:end]) + start
         if len(observed) <= left:
