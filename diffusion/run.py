@@ -17,6 +17,13 @@ Trains with ``diffusion.train.train``, scores the validation split every
 
 The run refuses an output folder that is not empty, so two runs' files never mix; with
 ``--overwrite`` it first deletes the files a run writes (``RUN_FILES``), and nothing else.
+
+The same numbers stream to wandb as the run goes (M3-2), to the team and project in the
+config's ``tracking`` block, under the name ``run_name()`` gives: every step's loss, gradient
+norm and learning rate, every epoch's ``curve.json`` row, the config, and ``summary.json`` as
+the run's summary. ``--wandb`` picks the mode (online, offline, disabled); without it wandb
+follows ``WANDB_MODE`` if that is set, else goes online. ``run()`` called from Python is
+untracked unless given ``wandb_mode``.
 """
 
 import argparse
@@ -27,6 +34,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import wandb
 import yaml
 
 from data.physionet import load_dataset
@@ -39,6 +47,13 @@ DATASET_PATH = ROOT / "data" / "processed" / "physionet_set_a.npz"
 BASELINES_PATH = ROOT / "results" / "baselines.json"
 OUTPUTS = ROOT / "outputs"
 RUN_FILES = ("config.yaml", "history.jsonl", "curve.json", "model.pt", "summary.json")
+
+# Where runs are logged (M3-2), read from the repo's config rather than the run's, so a
+# config saved before M3-2 (no ``tracking`` block) still reruns.
+TRACKING = yaml.safe_load(CONFIG_PATH.read_text())["tracking"]
+# ponytail: every run trains in the random regime until M6-2 adds TrainMasker's block-aware
+# ``mix`` strategy; then read the regime from the config here.
+REGIME = "random"
 
 # Health-report thresholds (ours, M3-1). A spike is a step whose gradient norm is this many
 # times the median over the steps checked; an explosion is the last tenth of those steps
@@ -56,6 +71,10 @@ def variant_name(config):
     on = [name for name, toggle in (("ext1", "use_mask_embedding"), ("ext2", "use_time_encoding"))
           if config["model"][toggle]]
     return "+".join(on).replace("ext1+ext2", "ext1+2") or "base"
+
+def run_name(config, seed):
+    """``<variant>_<regime>_seed<seed>``, e.g. ``base_random_seed42``: the run's name on wandb (M3-2)."""
+    return f"{variant_name(config)}_{REGIME}_seed{seed}"
 
 def forward_fill_val_mae(path=BASELINES_PATH):
     """Forward fill's 10% validation MAE from the recorded baselines (M2-3): M3-1's bar."""
@@ -110,11 +129,13 @@ def health_report(history, n_steps=500):
                          and report["complete"])
     return report
 
-def run(config, dataset, seed, device, out_dir, log=print, overwrite=False):
+def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wandb_mode="disabled"):
     """Train one model and score it on the validation split as it goes; returns ``(model, summary)``.
 
     ``out_dir`` must be empty or new. With ``overwrite`` an earlier run's files are deleted first,
-    so a run that stops early cannot leave them next to its own.
+    so a run that stops early cannot leave them next to its own. ``wandb_mode`` is passed to
+    ``wandb.init``: ``"online"``, ``"offline"``, ``"disabled"`` (the default, so calls from
+    Python and the tests are untracked), or ``None`` to let ``WANDB_MODE`` decide.
     """
     out_dir = Path(out_dir)
     if out_dir.exists() and any(out_dir.iterdir()):
@@ -132,9 +153,16 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False):
     sampler = EvalSampler(protocol["eval_sampling_seed"], validation["n_samples"], validation["batch_size"])
     epochs, bar = config["train"]["epochs"], forward_fill_val_mae()
     history, curve, clock = [], [], {"start": time.time()}
+    variant = variant_name(config)
+    tracker = wandb.init(entity=TRACKING["wandb_entity"], project=TRACKING["wandb_project"],
+                         mode=wandb_mode, name=run_name(config, seed), job_type="train",
+                         tags=[variant, REGIME, f"seed{seed}"],
+                         config={**config, "seed": seed, "variant": variant, "regime": REGIME, "device": device})
 
     def on_step_end(record):
         history.append(record)
+        tracker.log({"train/loss": record["loss"], "train/grad_norm": record["grad_norm"],
+                     "train/lr": record["lr"], "epoch": record["epoch"]}, step=len(history) - 1)
 
     def on_epoch_end(epoch, model):
         rows = [r for r in history if r["epoch"] == epoch]
@@ -156,23 +184,29 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False):
                 line += f"  (forward fill {bar:.4f})"
         curve.append(row)
         (out_dir / "curve.json").write_text(json.dumps(curve, indent=1) + "\n")
+        tracker.log({"epoch/loss_mean": row["loss"], "epoch/grad_norm_max": row["grad_norm_max"],
+                     "epoch/seconds": row["seconds"],
+                     **{f"val/{k[4:]}": v for k, v in row.items() if k.startswith("val_")}},
+                    step=len(history) - 1)          # the epoch's last step
         log(f"{line}  [{row['seconds']:.0f}s]")
         clock["start"] = time.time()
 
-    model, _ = train(config, dataset, seed, device, on_epoch_end=on_epoch_end, on_step_end=on_step_end)
+    with tracker:                                   # a run that raises is closed on wandb as failed
+        model, _ = train(config, dataset, seed, device, on_epoch_end=on_epoch_end, on_step_end=on_step_end)
 
-    final = curve[-1]                                       # the last epoch is always scored
-    summary = {
-        "variant": variant_name(config),
-        "seed": seed,
-        "device": device,
-        "validation": {"split": "val", "n_samples": validation["n_samples"], "batch_size": validation["batch_size"]},
-        "health": health_report(history),
-        "final_val_mae": final["val_mae"],
-        "forward_fill_val_mae": bar,
-        "below_forward_fill": None if bar is None else final["val_mae"] < bar,
-    }
-    (out_dir / "summary.json").write_text(json.dumps(summary, indent=1) + "\n")
+        final = curve[-1]                                       # the last epoch is always scored
+        summary = {
+            "variant": variant,
+            "seed": seed,
+            "device": device,
+            "validation": {"split": "val", "n_samples": validation["n_samples"], "batch_size": validation["batch_size"]},
+            "health": health_report(history),
+            "final_val_mae": final["val_mae"],
+            "forward_fill_val_mae": bar,
+            "below_forward_fill": None if bar is None else final["val_mae"] < bar,
+        }
+        (out_dir / "summary.json").write_text(json.dumps(summary, indent=1) + "\n")
+        tracker.summary.update(summary)
     return model, summary
 
 def main(argv=None):
@@ -187,6 +221,8 @@ def main(argv=None):
     parser.add_argument("--out", type=Path, help="output folder (default outputs/<variant>_seed<seed>)")
     parser.add_argument("--overwrite", action="store_true",
                         help="delete an earlier run's files in the output folder first")
+    parser.add_argument("--wandb", choices=("online", "offline", "disabled"),
+                        help="wandb mode (default: WANDB_MODE if set, else online)")
     args = parser.parse_args(argv)
 
     config = copy.deepcopy(yaml.safe_load(args.config.read_text()))
@@ -198,7 +234,8 @@ def main(argv=None):
     out_dir = args.out or OUTPUTS / f"{variant_name(config)}_seed{args.seed}"
     print(f"{variant_name(config)} seed {args.seed} on {device}, {config['train']['epochs']} epochs -> {out_dir}", flush=True)
     _, summary = run(config, load_dataset(args.dataset), args.seed, device, out_dir,
-                     log=lambda line: print(line, flush=True), overwrite=args.overwrite)
+                     log=lambda line: print(line, flush=True), overwrite=args.overwrite,
+                     wandb_mode=args.wandb)
     print(json.dumps(summary, indent=1))
 
 if __name__ == "__main__":

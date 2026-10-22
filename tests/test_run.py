@@ -6,7 +6,9 @@ import pytest
 import yaml
 from conftest import CONFIG
 from data.physionet import save_dataset
-from diffusion.run import RUN_FILES, health_report, main, run, validate, variant_name
+import torch
+import wandb
+from diffusion.run import RUN_FILES, health_report, main, run, run_name, validate, variant_name
 from diffusion.train import train
 from eval import EvalMasker
 
@@ -193,3 +195,108 @@ def test_variant_names_follow_the_toggles():
         config["model"].update(use_mask_embedding=ext1, use_time_encoding=ext2)
         names.append(variant_name(config))
     assert names == ["base", "ext1", "ext2", "ext1+2"]
+
+# --- wandb tracking (M3-2) --------------------------------------------------------------
+
+class FakeRun:
+    """Stands in for a wandb run: records what it is started with and sent."""
+    def __init__(self, **kwargs):
+        self.init, self.logs, self.summary, self.exit = kwargs, [], {}, "open"
+
+    def log(self, data, step):
+        self.logs.append((step, dict(data)))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, error_type, *rest):
+        self.exit = error_type                              # None: closed cleanly
+
+@pytest.fixture
+def fake_wandb(monkeypatch):
+    runs = []
+
+    def init(**kwargs):
+        runs.append(FakeRun(**kwargs))
+        return runs[-1]
+
+    monkeypatch.setattr("diffusion.run.wandb.init", init)
+    return runs
+
+def logged(run, key):
+    """``(step, record)`` for every log call that carried ``key``."""
+    return [(step, data) for step, data in run.logs if key in data]
+
+def test_run_names_encode_variant_regime_and_seed():
+    config = copy.deepcopy(CONFIG)
+    names = []
+    for (ext1, ext2), seed in zip(((False, False), (True, False), (False, True), (True, True)), (42, 43, 44, 46)):
+        config["model"].update(use_mask_embedding=ext1, use_time_encoding=ext2)
+        names.append(run_name(config, seed))
+    assert names == ["base_random_seed42", "ext1_random_seed43", "ext2_random_seed44", "ext1+2_random_seed46"]
+
+def test_a_tracked_run_logs_every_step(small_dataset, tmp_path, fake_wandb):
+    run(tiny_config(), small_dataset, 42, "cpu", tmp_path, log=quiet, wandb_mode="online")
+    steps = [json.loads(line) for line in (tmp_path / "history.jsonl").read_text().splitlines()]
+    sent = logged(fake_wandb[0], "train/loss")
+    assert [step for step, _ in sent] == list(range(len(steps))) == list(range(8))
+    assert [{"epoch": d["epoch"], "loss": d["train/loss"], "grad_norm": d["train/grad_norm"], "lr": d["train/lr"]}
+            for _, d in sent] == steps
+
+def test_val_scores_are_logged_on_scored_epochs_only(small_dataset, tmp_path, fake_wandb):
+    config = tiny_config(epochs=3)
+    config["validation"]["every_n_epochs"] = 2
+    run(config, small_dataset, 42, "cpu", tmp_path, log=quiet, wandb_mode="online")
+    curve = json.loads((tmp_path / "curve.json").read_text())
+    sent = logged(fake_wandb[0], "epoch/loss_mean")
+    assert [step for step, _ in sent] == [3, 7, 11]                        # each epoch's last step
+    assert ["val/mae" in d for _, d in sent] == [False, True, True]
+    for (_, d), row in zip(sent, curve):
+        assert d["epoch/loss_mean"] == row["loss"] and d["epoch/grad_norm_max"] == row["grad_norm_max"]
+        assert d.get("val/mae") == row.get("val_mae") and d.get("val/rmse") == row.get("val_rmse")
+
+def test_the_config_seed_and_toggles_reach_wandb(small_dataset, tmp_path, fake_wandb):
+    run(tiny_config(), small_dataset, 43, "cpu", tmp_path, log=quiet, wandb_mode="online")
+    init = fake_wandb[0].init
+    assert (init["entity"], init["project"]) == (CONFIG["tracking"]["wandb_entity"], CONFIG["tracking"]["wandb_project"])
+    assert init["name"] == "base_random_seed43" and init["tags"] == ["base", "random", "seed43"]
+    assert init["config"] == {**tiny_config(), "seed": 43, "variant": "base", "regime": "random", "device": "cpu"}
+    assert {"use_mask_embedding", "use_time_encoding"} <= set(init["config"]["model"])
+
+def test_the_summary_carries_the_health_report_and_forward_fill_bar(small_dataset, tmp_path, fake_wandb):
+    _, summary = run(tiny_config(), small_dataset, 42, "cpu", tmp_path, log=quiet, wandb_mode="online")
+    tracked = fake_wandb[0]
+    assert tracked.summary == summary == json.loads((tmp_path / "summary.json").read_text())
+    assert {"health", "final_val_mae", "forward_fill_val_mae", "below_forward_fill"} <= set(tracked.summary)
+    assert tracked.exit is None
+
+def test_a_run_that_dies_is_closed_on_wandb_as_failed(small_dataset, tmp_path, fake_wandb, monkeypatch):
+    def session_lost(*args, **kwargs):
+        raise RuntimeError("session lost")
+
+    monkeypatch.setattr("diffusion.run.train", session_lost)
+    with pytest.raises(RuntimeError, match="session lost"):
+        run(tiny_config(), small_dataset, 42, "cpu", tmp_path, log=quiet, wandb_mode="online")
+    assert fake_wandb[0].exit is RuntimeError
+
+def test_python_calls_are_untracked_and_the_command_line_follows_wandb_mode(small_dataset, tmp_path, fake_wandb):
+    run(tiny_config(), small_dataset, 42, "cpu", tmp_path / "python", log=quiet)
+    launch(tmp_path, small_dataset, "--out", str(tmp_path / "cli"))
+    launch(tmp_path, small_dataset, "--out", str(tmp_path / "cli_offline"), "--wandb", "offline")
+    assert [r.init["mode"] for r in fake_wandb] == ["disabled", None, "offline"]   # None: WANDB_MODE decides
+
+def test_tracking_does_not_change_the_run(small_dataset, tmp_path, monkeypatch, request):
+    # Real wandb, offline (files only, no network): the paired seeds (PROJECT_PLAN §3.3) need a
+    # tracked run to train exactly as an untracked one does. wandb reads its settings once per
+    # process, so it is reset to pick up WANDB_DIR, and again afterwards to drop it.
+    monkeypatch.setenv("WANDB_DIR", str(tmp_path))
+    wandb.teardown()
+    request.addfinalizer(wandb.teardown)
+    run(tiny_config(), small_dataset, 42, "cpu", tmp_path / "untracked", log=quiet)
+    run(tiny_config(), small_dataset, 42, "cpu", tmp_path / "tracked", log=quiet, wandb_mode="offline")
+    assert list((tmp_path / "wandb").glob("offline-run-*"))                # wandb really ran
+    for name in ("history.jsonl", "summary.json"):
+        assert (tmp_path / "untracked" / name).read_text() == (tmp_path / "tracked" / name).read_text()
+    weights = [torch.load(tmp_path / d / "model.pt") for d in ("untracked", "tracked")]
+    assert weights[0].keys() == weights[1].keys()
+    assert all(torch.equal(weights[0][k], weights[1][k]) for k in weights[0])

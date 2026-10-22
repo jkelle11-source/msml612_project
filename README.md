@@ -382,6 +382,51 @@ values in Set A cause some (see [Dataset](#dataset)). The thresholds are ours.
 
 Run results and seam issues are recorded in [`Docs/M3_debug_log.md`](Docs/M3_debug_log.md).
 
+### Experiment tracking (M3-2)
+
+Every run also streams to wandb while it trains, so all three of us can watch any run from any
+machine: team **`DATA612`**, project **`msml612-csdi`**
+([wandb.ai/DATA612/msml612-csdi](https://wandb.ai/DATA612/msml612-csdi)), set under `tracking:`
+in [`configs/config.yaml`](configs/config.yaml). `DATA612` is the wandb *team*; the organization
+around it, `DATA612-org`, can't hold runs. Ask Sankha for an invite to the team.
+
+Log in once per machine with `uv run wandb login` (the key is at
+[wandb.ai/authorize](https://wandb.ai/authorize)). On Colab, add the key as a Colab secret named
+`WANDB_API_KEY` instead and pass it to the shell cell that launches the run:
+
+```text
+from google.colab import userdata
+import os; os.environ["WANDB_API_KEY"] = userdata.get("WANDB_API_KEY")
+!uv run python -m diffusion.run --seed 42
+```
+
+`--wandb` picks the mode: `online`, `offline` (files only, under `wandb/`; upload later with
+`uv run wandb sync wandb/offline-run-*`) or `disabled`. Without it, wandb follows the
+`WANDB_MODE` environment variable if set, else goes online, so a real run is tracked unless
+told otherwise. `run()` called from Python is untracked unless given `wandb_mode`, and
+`tests/conftest.py` sets `WANDB_MODE=disabled`, so the tests never reach wandb's servers.
+
+Runs are named `<variant>_<regime>_seed<seed>`, e.g. `base_random_seed42` or
+`ext1+2_random_seed46`, and tagged with the variant, regime and seed. The regime is `random`
+until M6-2 adds the block-aware one. What a run sends, all of it also in its `outputs/` files:
+
+| wandb key | Sent | From |
+| --- | --- | --- |
+| `train/loss`, `train/grad_norm`, `train/lr`, `epoch` | every step (step = steps since the start, 175 per epoch) | `history.jsonl` |
+| `epoch/loss_mean`, `epoch/grad_norm_max`, `epoch/seconds` | at the end of every epoch | `curve.json` |
+| `val/mae`, `val/rmse`, `val/seconds` | on every scored epoch | `curve.json` |
+| config, plus `seed`, `variant`, `regime`, `device` | once, at the start | `config.yaml` |
+| summary: `health.*`, `final_val_mae`, `forward_fill_val_mae`, `below_forward_fill` | at the end | `summary.json` |
+
+A run that raises (out of memory, a lost Colab session) is closed on wandb as failed rather than
+left "running". Tracking doesn't change training: a tracked run's history and weights are
+bit-identical to an untracked one's.
+
+For a quick check, use `--epochs 2` or more. With `--epochs 1` both learning-rate drops
+(`int(0.75 × epochs)` and `int(0.9 × epochs)`) land on epoch 0, so the whole run trains at
+lr 1e-5 and its val MAE means nothing. M3-2's check run (`m3-2_smoke_check`, tagged `smoke`)
+is such a run, kept as the record that logging works.
+
 Tests:
 
 - `tests/test_build_model.py`: config → upstream's dict, defaults equal upstream's published
@@ -399,6 +444,11 @@ Tests:
   last; the command line rerunning a run from its saved config with identical results;
   `--validate-every` recorded in the saved config; a folder that is not empty refused, and
   `--overwrite` deleting only a run's own files; the step hook, which gets a copy of each record.
+  For wandb (M3-2), with a fake wandb that records what it's sent: run names from the toggles and
+  seed; one log per step matching `history.jsonl`; epoch rows, with val scores only on scored
+  epochs; the config, seed and toggles; `summary.json` as the summary; a run that raises closed
+  as failed; Python calls untracked and the command line following `WANDB_MODE`. With real wandb
+  offline: a tracked run's history and weights bit-identical to an untracked one's.
 - `tests/test_forward_noising.py`: the schedule check described under
   [Reused CSDI implementation](#reused-csdi-implementation).
 
