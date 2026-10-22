@@ -603,11 +603,24 @@ scored through them gets exactly this layout and these holdouts; the learned bas
 ### Learned baseline: BRITS (M3-3)
 
 **This is BRITS, not the bi-GRU fallback.** [`models/brits.py`](models/brits.py) implements
-Cao et al. (2018) from the paper in plain PyTorch, imputation only. Each direction reads a
-patient's 48 hours with an LSTM and, at every hour, guesses every variable *before* reading it:
-from its memory, decayed by how long ago each variable was last seen, and from the other
-variables at that hour (a feature regression that never sees the variable itself), mixed by
-learned weights. The two directions' guesses are averaged, with a consistency loss between them.
+Cao et al. (2018) in plain PyTorch, matching the original code
+([caow13/BRITS](https://github.com/caow13/BRITS)) wherever it differs from the paper, because
+CSDI's published BRITS numbers come from that code. There are three differences:
+
+- the original code has **no sigmoid** on the mixing weight β, where the paper's eq. 8 has one;
+- the imputation loss is **summed over the 48 hours and weighted 0.3**, its README's recommended
+  `impute_weight`;
+- the decay layers are initialized in ±1/√outputs.
+
+**One difference we can't match:** the original also trains a mortality classifier alongside
+(`label_weight` 1.0), and that needs PhysioNet's outcome labels, which our pipeline doesn't load.
+Ours is imputation only.
+
+**How it works.** Each direction reads a patient's 48 hours with an LSTM and, at every hour,
+guesses every variable *before* reading it: from its memory, decayed by how long ago each
+variable was last seen, and from the other variables at that hour (a feature regression that
+never sees the variable itself), mixed by learned weights. The two directions' guesses are
+averaged, with a consistency loss between them.
 
 **What it sees.** Training patients: their full mask. The loss is on visible values only, and
 each is guessed before it's read, so copying is impossible. Val and test patients: only
@@ -616,18 +629,24 @@ The time gaps it decays by are computed from that same mask. The dataset's `delt
 used, because it comes from the full mask and would tell the model when the held-out values
 were measured.
 
-**Training.** Hidden size 64, Adam at 1e-3, batch 64, consistency weight 0.1 (the original
-BRITS settings), on CPU, which is about twice as fast as MPS for its small sequential steps.
-After every epoch the val split's random 10% targets are scored, the weights with the lowest
-val MAE are kept, and training stops after 20 epochs without improvement (1000 at most, the
-original's epoch count; no seed comes near it). The test split never chooses anything. Seeds
-42–46, one model each, reproducible bit for bit:
+**Training.**
+
+- **Settings:** hidden size 64, Adam at 1e-3 and consistency weight 0.1, as in the original
+  code. Batch 64 is from its README's example; its code's default is 32.
+- **Device:** CPU, which is about twice as fast as MPS for its small sequential steps.
+- **Which weights are kept:** after every epoch the val split's random 10% targets are scored,
+  and the weights with the lowest val MAE are kept. This is ours: the original trains a fixed
+  1000 epochs and keeps the last weights. Training stops after 20 epochs without improvement,
+  with the original's 1000 epochs as the cap. The test split never chooses anything.
+- **Seeds:** 42–46, one model each, reproducible bit for bit.
+
+To train, score and record all five, run from the repo root:
 
 ```text
 uv run python -m models.brits --seeds 42 43 44 45 46
 ```
 
-On an Apple M-series CPU a seed takes 7–17 minutes (best epochs 198–463). Each seed is a wandb
+On an Apple M-series CPU a seed takes 5–10 minutes (best epochs 147–321). Each seed is a wandb
 run, `brits_seed<seed>` (job type `baseline`), with `epoch/loss_mean` and `epoch/val_mae` per
 epoch and its scores as the summary, in the keys above. The record is
 [`results/learned_baseline.json`](results/learned_baseline.json): the model's name, `fallback`,
@@ -641,14 +660,19 @@ from the table above and BRITS as published (cited, CSDI's paper, PROJECT_PLAN �
 
 | Holdout | Split | BRITS MAE | BRITS RMSE | Forward fill MAE | Published BRITS MAE |
 | --- | --- | --- | --- | --- | --- |
-| Random 10% (headline) | val | 0.2658 ± 0.0011 | 0.5449 ± 0.0034 | 0.4366 | |
-| Random 10% (headline) | test | **0.2631 ± 0.0010** | 0.6756 ± 0.0204 | 0.4487 | 0.284 |
-| Random 50% | val | 0.3811 ± 0.0012 | 0.6767 ± 0.0033 | 0.4844 | |
-| Random 50% | test | 0.4162 ± 0.0027 ‡ | 12.7879 ± 1.1498 ‡ | 0.4881 | 0.368 |
-| Random 90% | val | 0.5477 ± 0.0008 | 0.8256 ± 0.0013 | 0.5923 | |
-| Random 90% | test | 0.5481 ± 0.0011 | 2.0523 ± 0.0004 * | 0.5908 | 0.517 |
-| Block 10% | val | 0.3953 ± 0.0005 | 0.6680 ± 0.0017 | 0.4749 | |
-| Block 10% | test | 0.4602 ± 0.0038 † ‡ | 7.7715 ± 0.5826 † ‡ | 0.4786 | — |
+| Random 10% (headline) | val | 0.2705 ± 0.0008 | 0.5465 ± 0.0013 | 0.4366 | |
+| Random 10% (headline) | test | **0.2667 ± 0.0010** | 0.6855 ± 0.0419 | 0.4487 | 0.284 |
+| Random 50% | val | 0.3790 ± 0.0006 | 0.6669 ± 0.0017 | 0.4844 | |
+| Random 50% | test | 0.4206 ± 0.0037 ‡ | 15.2511 ± 1.1929 * ‡ | 0.4881 | 0.368 |
+| Random 90% | val | 0.5386 ± 0.0018 | 0.8149 ± 0.0016 | 0.5923 | |
+| Random 90% | test | 0.5382 ± 0.0020 | 2.0481 ± 0.0007 * | 0.5908 | 0.517 |
+| Block 10% | val | 0.3942 ± 0.0009 | 0.6635 ± 0.0015 | 0.4749 | |
+| Block 10% | test | 0.4692 ± 0.0023 † ‡ | 9.3472 ± 0.4342 † ‡ | 0.4786 | — |
+
+Our ± is smaller than the published one for a reason that has nothing to do with the model:
+CSDI's five runs each used a different fifth of the patients as test data, so their SE includes
+which patients were tested. Ours uses one fixed test split, so it only reflects training
+randomness.
 
 \* and † as under the table above: bad values scored themselves.
 
@@ -658,15 +682,23 @@ same hour, and it has learned to lean on pH for PaCO2, which are closely linked.
 hundreds of standard deviations out drags a scored PaCO2 value at that hour with it:
 
 - Random 50% test: record 140525 shows a pH of 735 (521 standardized units) at hour 22, where its
-  PaCO2 of 45 is held out. Seed 42 misses that PaCO2 by 3,936 standardized units. That one value
-  is almost all of the RMSE: leaving out the test patients who show a bad value, seed 42's RMSE
-  would be 0.6855 instead of 11.0671, and its MAE 0.3715 instead of 0.4121.
+  PaCO2 of 45 is held out. Seed 42 misses that PaCO2 by 6,796 standardized units. That one value
+  is almost all of the RMSE. Leaving out the test patients who show a bad value, seed 42's MAE
+  would be 0.3768 instead of 0.4326 (close to the published 0.368), and its RMSE 1.63 instead
+  of 18.85. What's left of the RMSE is the bad pH values scored themselves (\*).
 - Block test: record 141680 shows a pH of 187 (129 standardized units) at hour 8, where its PaCO2
-  of 29 is in a held-out window. Seed 42 misses it by 975. Without the patients who show a bad
-  value, seed 42's block test RMSE would be 0.7306 instead of 6.8910, and its MAE 0.3948 instead
-  of 0.4540.
+  of 29 is in a held-out window. Seed 42 misses it by 1,595. Without the patients who show a bad
+  value, seed 42's block test MAE would be 0.4124 instead of 0.4744, and its RMSE 3.32 instead of
+  10.42, the rest being the pH of 733 scored itself (†).
 
-At 10% no bad value sits next to a scored value this way, so the headline row is barely touched.
+**The original code's missing sigmoid makes this worse.** With the paper's sigmoid on β, the mixing
+weight stays between 0 and 1. Without it, an extreme input can be amplified. An earlier version
+of ours with the sigmoid missed the same two PaCO2 values by 3,936 and 975 (seed 42), and scored
+0.4162 ± 0.0027 at random 50% and 0.4602 ± 0.0038 on the block holdout. We report the code's
+version because CSDI's published numbers come from it.
+
+At 10% no bad value sits next to a scored value this way, so the headline row is barely touched:
+seed 42's test MAE would be 0.2635 instead of 0.2670 without the patients who show a bad value.
 Any model that predicts across features at the same hour can be exposed the same way, CSDI's
 feature attention included, so PaCO2 joins pH and Temp in M9-2's list of per-variable MAEs to
 flag.

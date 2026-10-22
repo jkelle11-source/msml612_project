@@ -1,7 +1,11 @@
 """BRITS, the learned baseline (M3-3, owner: Sankha).
 
-Cao et al. (2018), "BRITS: Bidirectional Recurrent Imputation for Time Series", NeurIPS, written
-from the paper in plain PyTorch, imputation only (no classification head). Each direction (RITS)
+Cao et al. (2018), "BRITS: Bidirectional Recurrent Imputation for Time Series", NeurIPS, in plain
+PyTorch, matching the original code (github.com/caow13/BRITS, which CSDI's published BRITS numbers
+come from) where it differs from the paper: no sigmoid on the mixing weight β, the imputation loss
+summed over hours and weighted 0.3, and its initialization of the decay layers. Imputation only:
+the original also trains a mortality classifier alongside (``label_weight``), which needs outcome
+labels our pipeline doesn't load, so that loss is left out. Each direction (RITS)
 reads a patient's 48 hours with an LSTM and, at every hour, guesses every variable *before*
 reading it, from the decayed memory (history regression) and from the other variables at the
 same hour (feature regression, which never sees the variable itself), mixed by learned weights.
@@ -37,12 +41,15 @@ DATASET_PATH = ROOT / "data" / "processed" / "physionet_set_a.npz"
 LEARNED_PATH = ROOT / "results" / "learned_baseline.json"
 MODEL_NAME = "BRITS (Cao et al. 2018), our implementation"
 
-# The original BRITS settings (hidden size, learning rate, batch size, consistency weight, and
-# 1000 epochs as the cap), plus our stopping rule: best val MAE, stop after PATIENCE epochs
-# without improvement. On Set A the patience rule stops every seed well before the cap.
+# Settings from the original BRITS code (github.com/caow13/BRITS): hidden size 64, Adam at 1e-3,
+# the imputation loss summed over the 48 hours and weighted 0.3 (its README's recommended
+# impute_weight), consistency weight 0.1, and 1000 epochs as the cap. Batch 64 is its README's
+# example; its code defaults to 32. Our stopping rule is added on top: best val MAE, stop after
+# PATIENCE epochs without improvement, which stops every seed on Set A well before the cap.
 HIDDEN = 64
 LR = 1.0e-3
 BATCH_SIZE = 64
+IMPUTE_WEIGHT = 0.3
 CONSISTENCY = 0.1
 MAX_EPOCHS = 1000
 PATIENCE = 20
@@ -61,11 +68,15 @@ def masked_l1(pred, truth, mask):
 
 class TemporalDecay(nn.Module):
     """``γ = exp(-relu(W δ + b))``: 1 for a fresh value, toward 0 for a stale one (eq. 3).
-    ``diagonal`` lets each variable's decay depend only on its own gap (the input decay γ_x)."""
+    ``diagonal`` lets each variable's decay depend only on its own gap (the input decay γ_x).
+    Initialized as the original code does: uniform in ±1/√n_out, weights and bias."""
 
     def __init__(self, n_in, n_out, diagonal):
         super().__init__()
         self.linear = nn.Linear(n_in, n_out)
+        bound = 1 / n_out ** 0.5
+        nn.init.uniform_(self.linear.weight, -bound, bound)
+        nn.init.uniform_(self.linear.bias, -bound, bound)
         self.register_buffer("keep", torch.eye(n_in) if diagonal else torch.ones(n_out, n_in))
 
     def forward(self, gaps):
@@ -83,7 +94,8 @@ class FeatureRegression(nn.Module):
         return F.linear(x, self.linear.weight * self.off_diagonal, self.linear.bias)
 
 class RITS(nn.Module):
-    """One direction of BRITS. Returns the imputed grid (visible values kept) and the loss."""
+    """One direction of BRITS. Returns the imputed grid (visible values kept) and its imputation
+    loss: the three guesses' masked L1, summed over the hours, as in the original code."""
 
     def __init__(self, n_features, hidden):
         super().__init__()
@@ -104,29 +116,32 @@ class RITS(nn.Module):
             h = h * self.decay_h(d)
             x_hist = self.history(h)                                 # from memory (eq. 4)
             z = self.feature(m * x + (1 - m) * x_hist)               # from the other variables
-            beta = torch.sigmoid(self.combine(torch.cat([self.decay_x(d), m], dim=1)))
-            x_comb = beta * z + (1 - beta) * x_hist                  # the mix (eq. 8)
+            # The mix (eq. 8). The paper puts a sigmoid on β; the original code doesn't, and CSDI's
+            # published BRITS numbers come from that code, so neither do we.
+            beta = self.combine(torch.cat([self.decay_x(d), m], dim=1))
+            x_comb = beta * z + (1 - beta) * x_hist
             loss = loss + masked_l1(x_hist, x, m) + masked_l1(z, x, m) + masked_l1(x_comb, x, m)
             x_filled = m * x + (1 - m) * x_comb
             filled.append(x_filled)
             h, c = self.cell(torch.cat([x_filled, m], dim=1), (h, c))
-        return torch.stack(filled, dim=1), loss / values.shape[1]
+        return torch.stack(filled, dim=1), loss
 
 class BRITS(nn.Module):
     """Both directions. ``forward(values, mask)`` returns ``(imputation, loss)``; boxes where
     ``mask == 0`` are zeroed first, so whatever they hold (a held-out value, NaN) is never read."""
 
-    def __init__(self, n_features=35, hidden=HIDDEN, consistency=CONSISTENCY):
+    def __init__(self, n_features=35, hidden=HIDDEN, impute_weight=IMPUTE_WEIGHT, consistency=CONSISTENCY):
         super().__init__()
         self.forwards, self.backwards = RITS(n_features, hidden), RITS(n_features, hidden)
-        self.consistency = consistency
+        self.impute_weight, self.consistency = impute_weight, consistency
 
     def forward(self, values, mask):
         values = torch.where(mask == 1, values, torch.zeros_like(values))
         ahead, loss_ahead = self.forwards(values, mask)
         behind, loss_behind = self.backwards(values.flip(1), mask.flip(1))
         behind = behind.flip(1)
-        loss = loss_ahead + loss_behind + self.consistency * (ahead - behind).abs().mean()
+        loss = (self.impute_weight * (loss_ahead + loss_behind)
+                + self.consistency * (ahead - behind).abs().mean())
         return (ahead + behind) / 2, loss
 
 def impute(model, values, cond_mask, device, batch_size=256):
@@ -210,7 +225,8 @@ def run_seeds(dataset, seeds, device, max_epochs=MAX_EPOCHS, wandb_mode=None, lo
     from diffusion.run import TRACKING as tracking
     from eval.baselines import baseline_results, wandb_summary
 
-    settings = {"hidden": HIDDEN, "lr": LR, "batch_size": BATCH_SIZE, "consistency": CONSISTENCY,
+    settings = {"hidden": HIDDEN, "lr": LR, "batch_size": BATCH_SIZE, "impute_weight": IMPUTE_WEIGHT,
+                "consistency": CONSISTENCY,
                 "max_epochs": max_epochs, "patience": PATIENCE,
                 "selection": "best val MAE on EvalMasker's random 10% val targets; test never used"}
     per_seed = {}
