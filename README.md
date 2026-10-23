@@ -28,6 +28,7 @@ data/          # PhysioNet Set A pipeline: loader -> (N,48,D) + mask, TSLO delta
 models/        # reused CSDI model (denoiser + diffusion process), build_model
                #   (config -> model), and our extensions (MissingnessEncoder,
                #   ContinuousTimeEncoding).                                 [M1-2]
+               #   BRITS, the learned baseline (brits.py).                  [M3-3]
 diffusion/     # training data feed, loop and random streams around the
                #   reused diffusion process; no schedule or q_sample of our
                #   own.                                                     [M2-1]
@@ -35,6 +36,7 @@ eval/          # EvalMasker / TrainMasker + masked, standardized metrics;
                #   EvalSampler (frozen-noise evaluation pass).              [M1-3]
                #   Mean and forward-fill baselines.                         [M2-3]
 results/       # recorded results (baselines.json).                         [M2-3]
+               #   BRITS's record (learned_baseline.json).                  [M3-3]
 configs/       # frozen protocol config (config.yaml).
 Docs/          # project plan + shared notes (e.g. CSDI_Objective.md).
 Milestones/    # per-milestone GitHub issue breakdown (M00-M10).
@@ -543,9 +545,12 @@ recomputes it for any other mask.
 data as the published 0.217 (decided at the M2-3 review):
 
 - pH: 10 of 23,437 values lie outside 6.5–8.0. They are 733, 734 and 735 (a dropped decimal
-  point); 94, 95, 96 and 100 (apparently SaO2 logged under pH); and 187, 1 and 3.
+  point); 94, 95, 96 and 100 (apparently SaO2 logged under pH); 187, which is record 141680's
+  PaO2 (at hour 8 its pH and PaO2 are recorded in each other's place); and 1 and 3.
 - Temp: 73 of 71,213 values lie below 25 °C, most of them −17.8.
 - K: one value of 22.9; the next highest is 15.6.
+- PaO2: 2 of 22,397 values lie below 20 mmHg: a 0, and the 7.47 that is record 141680's pH. The
+  next lowest is 20. Both are in test patients.
 
 What this does to our numbers:
 
@@ -560,6 +565,11 @@ What this does to our numbers:
   standardized units, almost all of it one carried-forward pH of 735.
 - **RMSE is inflated wherever a bad value is scored or carried forward** (see the footnote under
   [Baselines](#baselines)). MAE is the headline metric.
+- **A visible bad pH can spread into other variables' guesses** in a model that predicts across
+  features at the same hour. BRITS misses PaCO2 and PaO2 values next to a pH of 735 or 187 by up
+  to 6,796 standardized units (the ‡ footnote under
+  [Learned baseline: BRITS](#learned-baseline-brits-m3-3)). CSDI's feature attention may do the
+  same; M4-1 checks it on the gate runs.
 
 ---
 
@@ -597,15 +607,16 @@ MAE and RMSE in standardized units; val has 400 patients and test 800:
 scored, but a pH of 735 is visible in one test patient and forward fill carries it into a scored
 pH value. That one error is 521.5 standardized units; without it, forward fill's test RMSE would
 be 0.7798 instead of 3.3251 and its MAE 0.4287 instead of 0.4487. At 50% and 90% some bad values
-are scored themselves (9 and 12 on test, 3 and 4 on val), which inflates both baselines' test
+are scored themselves (11 and 14 on test, 3 and 4 on val), which inflates both baselines' test
 RMSE.
 
-† Inflated by the known bad values, MAE as well as RMSE. On the block holdout three of them are
-test targets themselves: a pH of 733, a pH of 1 and a Temp of 0. The pH of 733 dominates: it is
-about 520 standardized units from any plausible pH, so every model misses it by about that much,
-which adds about 0.02 to every model's block test MAE. Differences between models barely change, but
-block test RMSE is mostly that one value. Without it, mean imputation's test MAE and RMSE would be
-0.7139 and 1.0477, and forward fill's 0.4587 and 0.7910. No bad value is a block val target.
+† Inflated by the known bad values, MAE as well as RMSE. On the block holdout four of them are
+test targets themselves: a pH of 733, a pH of 1, a Temp of 0 and a PaO2 of 7.47. The pH of 733
+dominates: it is about 520 standardized units from any plausible pH, so every model misses it by
+about that much, which adds about 0.02 to every model's block test MAE. Differences between
+models barely change, but block test RMSE is mostly that one value. Without it, mean
+imputation's test MAE and RMSE would be 0.7139 and 1.0477, and forward fill's 0.4587 and 0.7910.
+No bad value is a block val target.
 
 Forward fill's 10% validation MAE, **0.437**, is M3-1's "below forward fill" bar, because M3-1
 tracks validation MAE. Its block validation MAE, **0.475**, is the matching bar for runs validated
@@ -618,8 +629,8 @@ the block rows hide the same number of values per patient as the random 10% rows
 The same numbers are recorded, unrounded, in [`results/baselines.json`](results/baselines.json),
 keyed `random` → `fractions` → `"0.1"` / `"0.5"` / `"0.9"` → `val` / `test`, and
 `block` → `fractions` → `"0.1"` → `val` / `test`. Each holdout's frozen seed is stored next to its
-fractions (`eval_masker_seed`; `block_eval_masker_seed` and `block_window_hours`). M3-3 logs the
-baselines to wandb. To regenerate the file, run from the repo root:
+fractions (`eval_masker_seed`; `block_eval_masker_seed` and `block_window_hours`). To regenerate
+the file, run from the repo root:
 
 ```text
 uv run python -m eval.baselines
@@ -627,6 +638,152 @@ uv run python -m eval.baselines
 
 `tests/test_baselines.py` fails when the recorded file no longer matches a fresh run, so rerun
 it, and update this table, whenever the baselines, the data pipeline or the protocol change.
+Add `--wandb online` to also log each baseline as a wandb run (`mean_imputation`,
+`forward_fill`; job type `baseline`; M3-3), with its scores as the run summary under
+`<holdout>/<fraction>/<split>/<metric>` (e.g. `random/0.1/test/mae`), plus `val/mae` and
+`val/rmse` for the random 10% val split, the key CSDI runs track. Logging is opt-in, so
+regenerating the file doesn't post duplicate runs.
+
+`score_holdout` and `baseline_results` take an optional `guessers` dict,
+`name → guess(values, cond_mask)`, defaulting to the two baselines (`BASELINES`). Any model
+scored through them gets exactly this layout and these holdouts; the learned baseline below is.
+
+### Learned baseline: BRITS (M3-3)
+
+**This is BRITS, not the bi-GRU fallback.** The fallback was only for the case where BRITS
+couldn't be brought into our harness within the week (M3-3), and it could.
+[`models/brits.py`](models/brits.py) implements Cao et al. (2018) in plain PyTorch, matching the
+original code ([caow13/BRITS](https://github.com/caow13/BRITS)) where it differs from the
+paper, because CSDI's published BRITS numbers come from that code. There are three differences:
+
+- the original code has **no sigmoid** on the mixing weight β, where the paper's eq. 8 has one;
+- the imputation loss is **summed over the 48 hours and weighted 0.3**, its README's recommended
+  `impute_weight`;
+- the decay layers are initialized in ±1/√outputs.
+
+**The one place we follow the paper instead: the time gaps.** The original's `input_process.py`
+gives each hour the paper's gap for the hour after it (it reads that hour's own mask and starts at
+1, not 0), and gives the backward direction the forward direction's gaps, because it reverses the
+masks twice. That second part is a known bug,
+[caow13/BRITS#12](https://github.com/caow13/BRITS/issues/12), open since 2021. We use the paper's
+eq. 2 in both directions rather than copy it. It changes little: retrained with the original's
+gaps, bug included, seed 42 scores 0.2708 instead of 0.2670 on the random 10% test targets, 0.4182
+instead of 0.4326 at 50%, and 0.4676 instead of 0.4744 on the block holdout.
+
+**One difference we can't match:** the original also trains a mortality classifier alongside
+(`label_weight` 1.0), and that needs PhysioNet's outcome labels, which our pipeline doesn't load.
+Ours is imputation only.
+
+**How it works.** Each direction reads a patient's 48 hours with an LSTM and, at every hour,
+guesses every variable *before* reading it: from its memory, decayed by how long ago each
+variable was last seen, and from the other variables at that hour (a feature regression that
+never sees the variable itself), mixed by learned weights. The two directions' guesses are
+averaged, with a consistency loss between them.
+
+**What it sees.** Training patients: their full mask. The loss is on visible values only, and
+each is guessed before it's read, so copying is impossible. Val and test patients: only
+`values` where the holdout's `cond_mask` is 1; held-out boxes are zeroed before the model runs.
+The time gaps it decays by are computed from that same mask. The dataset's `delta_obs` is never
+used, because it comes from the full mask and would tell the model when the held-out values
+were measured.
+
+**Training.**
+
+- **Settings:** hidden size 64, Adam at 1e-3 and consistency weight 0.1, as in the original
+  code. Batch 64 is from its README's example; its code's default is 32.
+- **Device:** CPU, which is about twice as fast as MPS for its small sequential steps.
+- **Which weights are kept:** after every epoch the val split's random 10% targets are scored,
+  and the weights with the lowest val MAE are kept. This is ours: the original trains a fixed
+  1000 epochs and keeps the last weights. Training stops after 20 epochs without improvement,
+  with the original's 1000 epochs as the cap. The test split never chooses anything. BRITS is
+  the one model picked this way; CSDI runs keep their final weights (PROJECT_PLAN §3.1).
+- **Why not the original's rule:** kept to 1000 epochs, BRITS overfits on our split. On seed
+  42, val MAE is lowest at epoch 321 (0.2715) and climbs to 0.2905 by epoch 999. Test MAE at
+  random 10% rises from 0.2670 to 0.2984, above the published 0.284, and block test MAE from
+  0.4744 to 0.5013, worse than forward fill's 0.4786. The original trains on every patient,
+  with the held-out values removed, and scores those same patients; we train on the training
+  split and score unseen test patients, as CSDI does.
+- **What that means for the table below:** the val rows are the numbers the weights were
+  picked on, so they flatter BRITS a little; the test rows don't. The block rows use weights
+  picked on the random holdout, the same carry-over check as CSDI's random-regime block scores.
+- **The 50% and 90% rows:** the original code removes the held-out values from its training
+  inputs too, so run at 50% or 90% it trains at that rate. Ours trains once, on all of each
+  training patient's values, and that one model is scored at all three rates.
+- **Seeds:** 42–46, one model each, reproducible bit for bit.
+
+To train, score and record all five, run from the repo root:
+
+```text
+uv run python -m models.brits --seeds 42 43 44 45 46
+```
+
+On an Apple M-series CPU a seed takes 5–10 minutes (best epochs 147–321). Each seed is a wandb
+run, `brits_seed<seed>` (job type `baseline`), with `brits/loss` and `brits/val_mae` per epoch,
+against `epoch`, and its scores as the summary, in the keys above. The per-epoch keys are kept
+under `brits/` so they never share a panel with CSDI's `epoch/loss_mean`, a different loss
+logged against training steps. The record is
+[`results/learned_baseline.json`](results/learned_baseline.json): the model's name, `fallback`,
+the settings, each seed's best epoch and scores (`per_seed`, in `baselines.json`'s layout under
+`brits`), and their mean ± SE (`mean_se`; SE is the sample standard deviation over the 5 seeds
+over √5). It is kept apart from `baselines.json` because that file is regenerated from scratch
+by its test in seconds, and BRITS takes about an hour to train.
+
+BRITS's MAE and RMSE, mean ± SE over seeds 42–46, standardized units, with forward fill's MAE
+from the table above and BRITS as published (cited, CSDI's paper, PROJECT_PLAN §6):
+
+| Holdout | Split | BRITS MAE | BRITS RMSE | Forward fill MAE | Published BRITS MAE |
+| --- | --- | --- | --- | --- | --- |
+| Random 10% (headline) | val | 0.2705 ± 0.0008 | 0.5465 ± 0.0013 | 0.4366 | |
+| Random 10% (headline) | test | **0.2667 ± 0.0010** | 0.6855 ± 0.0419 | 0.4487 | 0.284 |
+| Random 50% | val | 0.3790 ± 0.0006 | 0.6669 ± 0.0017 | 0.4844 | |
+| Random 50% | test | 0.4206 ± 0.0037 ‡ | 15.2511 ± 1.1929 * ‡ | 0.4881 | 0.368 |
+| Random 90% | val | 0.5386 ± 0.0018 | 0.8149 ± 0.0016 | 0.5923 | |
+| Random 90% | test | 0.5382 ± 0.0020 | 2.0481 ± 0.0007 * | 0.5908 | 0.517 |
+| Block 10% | val | 0.3942 ± 0.0009 | 0.6635 ± 0.0015 | 0.4749 | |
+| Block 10% | test | 0.4692 ± 0.0023 † ‡ | 9.3472 ± 0.4342 † ‡ | 0.4786 | — |
+
+Our ± is smaller than the published one for a reason that has nothing to do with the model:
+CSDI's five runs each used a different fifth of the patients as test data, so their SE includes
+which patients were tested. Ours uses one fixed test split, so it only reflects training
+randomness.
+
+\* and † as under the table above: bad values scored themselves.
+
+‡ **A visible bad pH spreads into other variables' guesses.** Forward fill only carries a value
+along its own variable. BRITS's feature regression predicts each variable from the others at the
+same hour, and it has learned the Henderson–Hasselbalch link between pH, PaCO2 and HCO3: in seed
+42's model the PaCO2 row weights pH by −8.5 forwards and −9.4 backwards, and the next largest
+weight is HCO3's, +0.8. The pH weight is that large because the bad values widen pH's scaling
+(Dataset, above): a normal swing of 0.1 in pH is only 0.07 standardized units. So a visible pH
+hundreds of standardized units out drags a scored PaCO2 value at that hour with it, and PaO2 too:
+
+- Random 50% test: record 140525 shows a pH of 735 (521 standardized units) at hour 22, where its
+  PaCO2 of 45 is held out. Seed 42 misses that PaCO2 by 6,796 standardized units. That one value
+  is almost all of the RMSE. Leaving out the test patients who show a bad value, seed 42's MAE
+  would be 0.3767 instead of 0.4326 (close to the published 0.368), and its RMSE 1.63 instead
+  of 18.85. What's left of the RMSE is the bad pH values scored themselves (\*).
+- Block test: record 141680 shows a pH of 187 (129 standardized units; really its PaO2, see
+  Dataset) at hour 8, where its PaCO2
+  of 29 is in a held-out window. Seed 42 misses it by 1,595. Without the patients who show a bad
+  value, seed 42's block test MAE would be 0.4125 instead of 0.4744, and its RMSE 3.32 instead of
+  10.42, the rest being the pH of 733 scored itself (†).
+- Random 10% test: the same pH of 735 sits next to record 140525's held-out PaO2 of 54 at hour
+  22. Seed 42 guesses 5,204 mmHg, a miss of 60 standardized units and 27% of its squared error
+  on these targets. MAE hardly moves: without the patients who show a bad value, seed 42's test
+  MAE would be 0.2635 instead of 0.2670, so the headline row is barely touched.
+
+**The paper's sigmoid on β wouldn't prevent this.** β only mixes the feature regression's guess
+with the history guess, so a sigmoid that keeps it between 0 and 1 still lets a huge
+feature-regression guess through. Retrained with only the sigmoid added, seed 42 misses the two
+PaCO2 values above by 5,080 and 1,254 instead of 6,796 and 1,595, and the PaO2 at 10% by 109
+instead of 60. The first version of this model (commit `eaf18d3`) had the sigmoid, averaged the
+loss over the hours and didn't weight it by 0.3. It missed the two PaCO2 values by 3,936 and 975,
+and scored 0.4162 ± 0.0027 at random 50% and 0.4602 ± 0.0038 on the block holdout. We report the
+original code's version because CSDI's published numbers come from it.
+
+Any model that predicts across features at the same hour can be exposed the same way, CSDI's
+feature attention included, so PaCO2 and PaO2 join pH and Temp in M9-2's list of per-variable
+MAEs to flag.
 
 Tests:
 
@@ -636,7 +793,21 @@ Tests:
   the recorded file matching a fresh run; importing `eval` leaving `eval.baselines` unimported.
   For the block holdout (M2-4): its entry sitting next to `random` with its seed and window, at
   10% only; the same target count as the random 10% holdout; scores taken on exactly
-  `BlockEvalMasker`'s targets; pinned Set A test MAEs; the three bad values it scores on test.
+  `BlockEvalMasker`'s targets; pinned Set A test MAEs; the four bad values it scores on test.
+  For M3-3: `guessers` defaulting to the two baselines; a guesser shown only the conditioning
+  mask and scored into the same layout; each baseline logged to wandb (fake wandb) with its
+  flattened scores as the summary.
+- `tests/test_brits.py` (M3-3): the time gaps worked by hand, forwards and backwards, and taken
+  from the mask BRITS is given; output shape, visible values returned unchanged; hidden values
+  never read (×100, +5, NaN); a variable never guessed from itself; patients independent;
+  training lowering the loss and keeping the best val weights; stopping after `patience`
+  epochs and returning the best epoch's weights, not the last; same seed same weights,
+  different seed different; scores in `baselines.json`'s
+  layout; mean ± SE by hand; the command line writing the record and logging each seed with no
+  per-epoch key that would overwrite a summary key or share a key with CSDI's; the recorded
+  BRITS beating forward fill on val at 10%, 50% and 90%; the recorded BRITS scored on the same
+  split and frozen holdouts as `baselines.json` (seeds, window, fractions, patient and target
+  counts), with its mean ± SE matching its per-seed scores.
 - `tests/test_sampler_real_batch.py`: the reused reverse sampler on real Set A patients (M2-3).
   An untrained model runs upstream's full 50-step schedule, with `EvalMasker`'s conditioning
   mask passed as `gt_mask`. The samples come back as `(K, B, 48, D)` with no NaNs, the K draws

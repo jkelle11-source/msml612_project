@@ -1,0 +1,619 @@
+{
+  "model": "BRITS (Cao et al. 2018), our implementation",
+  "fallback": false,
+  "settings": {
+    "hidden": 64,
+    "lr": 0.001,
+    "batch_size": 64,
+    "impute_weight": 0.3,
+    "consistency": 0.1,
+    "max_epochs": 1000,
+    "patience": 20,
+    "selection": "best val MAE on EvalMasker's random 10% val targets; test never used"
+  },
+  "seeds": [
+    42,
+    43,
+    44,
+    45,
+    46
+  ],
+  "per_seed": {
+    "42": {
+      "best_epoch": 321,
+      "epochs_run": 342,
+      "scores": {
+        "units": "standardized (train-split z-scores)",
+        "split_seed": 612,
+        "eval_holdout_fraction": 0.1,
+        "random": {
+          "eval_masker_seed": 2012,
+          "fractions": {
+            "0.1": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 12886,
+                "brits": {
+                  "mae": 0.271548,
+                  "rmse": 0.546666
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 26027,
+                "brits": {
+                  "mae": 0.267017,
+                  "rmse": 0.71313
+                }
+              }
+            },
+            "0.5": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 65213,
+                "brits": {
+                  "mae": 0.38051,
+                  "rmse": 0.671088
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 131739,
+                "brits": {
+                  "mae": 0.432557,
+                  "rmse": 18.85117
+                }
+              }
+            },
+            "0.9": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 117387,
+                "brits": {
+                  "mae": 0.536173,
+                  "rmse": 0.815846
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 237119,
+                "brits": {
+                  "mae": 0.536012,
+                  "rmse": 2.048271
+                }
+              }
+            }
+          }
+        },
+        "block": {
+          "block_eval_masker_seed": 8080,
+          "block_window_hours": 3,
+          "fractions": {
+            "0.1": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 12886,
+                "brits": {
+                  "mae": 0.391137,
+                  "rmse": 0.659733
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 26027,
+                "brits": {
+                  "mae": 0.47444,
+                  "rmse": 10.4237
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "43": {
+      "best_epoch": 278,
+      "epochs_run": 299,
+      "scores": {
+        "units": "standardized (train-split z-scores)",
+        "split_seed": 612,
+        "eval_holdout_fraction": 0.1,
+        "random": {
+          "eval_masker_seed": 2012,
+          "fractions": {
+            "0.1": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 12886,
+                "brits": {
+                  "mae": 0.268465,
+                  "rmse": 0.545038
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 26027,
+                "brits": {
+                  "mae": 0.267634,
+                  "rmse": 0.836763
+                }
+              }
+            },
+            "0.5": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 65213,
+                "brits": {
+                  "mae": 0.377179,
+                  "rmse": 0.660611
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 131739,
+                "brits": {
+                  "mae": 0.418135,
+                  "rmse": 14.934292
+                }
+              }
+            },
+            "0.9": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 117387,
+                "brits": {
+                  "mae": 0.543587,
+                  "rmse": 0.815679
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 237119,
+                "brits": {
+                  "mae": 0.543617,
+                  "rmse": 2.048804
+                }
+              }
+            }
+          }
+        },
+        "block": {
+          "block_eval_masker_seed": 8080,
+          "block_window_hours": 3,
+          "fractions": {
+            "0.1": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 12886,
+                "brits": {
+                  "mae": 0.395441,
+                  "rmse": 0.661272
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 26027,
+                "brits": {
+                  "mae": 0.469436,
+                  "rmse": 9.303289
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "44": {
+      "best_epoch": 212,
+      "epochs_run": 233,
+      "scores": {
+        "units": "standardized (train-split z-scores)",
+        "split_seed": 612,
+        "eval_holdout_fraction": 0.1,
+        "random": {
+          "eval_masker_seed": 2012,
+          "fractions": {
+            "0.1": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 12886,
+                "brits": {
+                  "mae": 0.269977,
+                  "rmse": 0.546783
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 26027,
+                "brits": {
+                  "mae": 0.26424,
+                  "rmse": 0.616486
+                }
+              }
+            },
+            "0.5": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 65213,
+                "brits": {
+                  "mae": 0.379832,
+                  "rmse": 0.668273
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 131739,
+                "brits": {
+                  "mae": 0.424135,
+                  "rmse": 16.345568
+                }
+              }
+            },
+            "0.9": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 117387,
+                "brits": {
+                  "mae": 0.542554,
+                  "rmse": 0.820021
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 237119,
+                "brits": {
+                  "mae": 0.542144,
+                  "rmse": 2.04996
+                }
+              }
+            }
+          }
+        },
+        "block": {
+          "block_eval_masker_seed": 8080,
+          "block_window_hours": 3,
+          "fractions": {
+            "0.1": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 12886,
+                "brits": {
+                  "mae": 0.394181,
+                  "rmse": 0.663442
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 26027,
+                "brits": {
+                  "mae": 0.473564,
+                  "rmse": 9.957737
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "45": {
+      "best_epoch": 228,
+      "epochs_run": 249,
+      "scores": {
+        "units": "standardized (train-split z-scores)",
+        "split_seed": 612,
+        "eval_holdout_fraction": 0.1,
+        "random": {
+          "eval_masker_seed": 2012,
+          "fractions": {
+            "0.1": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 12886,
+                "brits": {
+                  "mae": 0.269891,
+                  "rmse": 0.543155
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 26027,
+                "brits": {
+                  "mae": 0.265136,
+                  "rmse": 0.611847
+                }
+              }
+            },
+            "0.5": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 65213,
+                "brits": {
+                  "mae": 0.377871,
+                  "rmse": 0.667161
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 131739,
+                "brits": {
+                  "mae": 0.417678,
+                  "rmse": 14.582094
+                }
+              }
+            },
+            "0.9": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 117387,
+                "brits": {
+                  "mae": 0.535574,
+                  "rmse": 0.810699
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 237119,
+                "brits": {
+                  "mae": 0.533786,
+                  "rmse": 2.045712
+                }
+              }
+            }
+          }
+        },
+        "block": {
+          "block_eval_masker_seed": 8080,
+          "block_window_hours": 3,
+          "fractions": {
+            "0.1": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 12886,
+                "brits": {
+                  "mae": 0.394283,
+                  "rmse": 0.66514
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 26027,
+                "brits": {
+                  "mae": 0.466529,
+                  "rmse": 9.191624
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "46": {
+      "best_epoch": 147,
+      "epochs_run": 168,
+      "scores": {
+        "units": "standardized (train-split z-scores)",
+        "split_seed": 612,
+        "eval_holdout_fraction": 0.1,
+        "random": {
+          "eval_masker_seed": 2012,
+          "fractions": {
+            "0.1": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 12886,
+                "brits": {
+                  "mae": 0.272818,
+                  "rmse": 0.551055
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 26027,
+                "brits": {
+                  "mae": 0.269656,
+                  "rmse": 0.649333
+                }
+              }
+            },
+            "0.5": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 65213,
+                "brits": {
+                  "mae": 0.379573,
+                  "rmse": 0.667488
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 131739,
+                "brits": {
+                  "mae": 0.410424,
+                  "rmse": 11.542216
+                }
+              }
+            },
+            "0.9": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 117387,
+                "brits": {
+                  "mae": 0.535175,
+                  "rmse": 0.812214
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 237119,
+                "brits": {
+                  "mae": 0.535316,
+                  "rmse": 2.047753
+                }
+              }
+            }
+          }
+        },
+        "block": {
+          "block_eval_masker_seed": 8080,
+          "block_window_hours": 3,
+          "fractions": {
+            "0.1": {
+              "val": {
+                "n_patients": 400,
+                "n_targets": 12886,
+                "brits": {
+                  "mae": 0.396173,
+                  "rmse": 0.668054
+                }
+              },
+              "test": {
+                "n_patients": 800,
+                "n_targets": 26027,
+                "brits": {
+                  "mae": 0.462164,
+                  "rmse": 7.859481
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "mean_se": {
+    "units": "standardized (train-split z-scores)",
+    "split_seed": 612,
+    "eval_holdout_fraction": 0.1,
+    "random": {
+      "eval_masker_seed": 2012,
+      "fractions": {
+        "0.1": {
+          "val": {
+            "n_patients": 400,
+            "n_targets": 12886,
+            "brits": {
+              "mae": {
+                "mean": 0.27054,
+                "se": 0.00075
+              },
+              "rmse": {
+                "mean": 0.546539,
+                "se": 0.001307
+              }
+            }
+          },
+          "test": {
+            "n_patients": 800,
+            "n_targets": 26027,
+            "brits": {
+              "mae": {
+                "mean": 0.266737,
+                "se": 0.000954
+              },
+              "rmse": {
+                "mean": 0.685512,
+                "se": 0.041916
+              }
+            }
+          }
+        },
+        "0.5": {
+          "val": {
+            "n_patients": 400,
+            "n_targets": 65213,
+            "brits": {
+              "mae": {
+                "mean": 0.378993,
+                "se": 0.000628
+              },
+              "rmse": {
+                "mean": 0.666924,
+                "se": 0.001723
+              }
+            }
+          },
+          "test": {
+            "n_patients": 800,
+            "n_targets": 131739,
+            "brits": {
+              "mae": {
+                "mean": 0.420586,
+                "se": 0.003699
+              },
+              "rmse": {
+                "mean": 15.251068,
+                "se": 1.19294
+              }
+            }
+          }
+        },
+        "0.9": {
+          "val": {
+            "n_patients": 400,
+            "n_targets": 117387,
+            "brits": {
+              "mae": {
+                "mean": 0.538613,
+                "se": 0.001834
+              },
+              "rmse": {
+                "mean": 0.814892,
+                "se": 0.001622
+              }
+            }
+          },
+          "test": {
+            "n_patients": 800,
+            "n_targets": 237119,
+            "brits": {
+              "mae": {
+                "mean": 0.538175,
+                "se": 0.001968
+              },
+              "rmse": {
+                "mean": 2.0481,
+                "se": 0.0007
+              }
+            }
+          }
+        }
+      }
+    },
+    "block": {
+      "block_eval_masker_seed": 8080,
+      "block_window_hours": 3,
+      "fractions": {
+        "0.1": {
+          "val": {
+            "n_patients": 400,
+            "n_targets": 12886,
+            "brits": {
+              "mae": {
+                "mean": 0.394243,
+                "se": 0.000861
+              },
+              "rmse": {
+                "mean": 0.663528,
+                "se": 0.001459
+              }
+            }
+          },
+          "test": {
+            "n_patients": 800,
+            "n_targets": 26027,
+            "brits": {
+              "mae": {
+                "mean": 0.469227,
+                "se": 0.002271
+              },
+              "rmse": {
+                "mean": 9.347166,
+                "se": 0.434226
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -292,10 +292,11 @@ def test_block_holdout_on_set_a_test_split(set_a):
     assert masked_mae(mean_imputation(values), values, target) == pytest.approx(0.7338, abs=5e-5)
     assert masked_mae(forward_fill(values, cond), values, target) == pytest.approx(0.4786, abs=5e-5)
 
-KNOWN_BAD = {"pH": lambda x: (x < 6.5) | (x > 8.0), "Temp": lambda x: x < 25, "K": lambda x: x > 20}
+KNOWN_BAD = {"pH": lambda x: (x < 6.5) | (x > 8.0), "Temp": lambda x: x < 25, "K": lambda x: x > 20,
+             "PaO2": lambda x: x < 20}
 
 @needs_raw_data
-def test_block_test_targets_include_three_known_bad_values(set_a):
+def test_block_test_targets_include_four_known_bad_values(set_a):
     # The README's † footnote under Baselines; the bad values themselves are listed under Dataset.
     features = list(set_a["features"])
     raw = invert_scaler(set_a["values"], set_a["mean"], set_a["std"])
@@ -309,4 +310,60 @@ def test_block_test_targets_include_three_known_bad_values(set_a):
             held_out = raw[idx][..., k][target[..., k] == 1]
             scored[split] += [(name, round(float(x), 1)) for x in held_out[is_bad(held_out)]]
     assert sorted(scored["val"]) == []
-    assert sorted(scored["test"]) == [("Temp", 0.0), ("pH", 1.0), ("pH", 733.0)]
+    assert sorted(scored["test"]) == [("PaO2", 7.5), ("Temp", 0.0), ("pH", 1.0), ("pH", 733.0)]
+
+# --- M3-3: any guesser through the same scoring, and the baselines on wandb ---------------
+
+def test_guessers_default_to_mean_and_forward_fill(small_dataset):
+    from eval.baselines import BASELINES
+    assert baseline_results(small_dataset) == baseline_results(small_dataset, BASELINES)
+    assert list(BASELINES) == ["mean_imputation", "forward_fill"]
+
+def test_a_guesser_is_shown_only_the_conditioning_mask_and_gets_the_same_layout(small_dataset):
+    seen = []
+
+    def spy(values, cond_mask):                             # forward fill, recording what it is given
+        seen.append(cond_mask)
+        return forward_fill(values, cond_mask)
+
+    ours, theirs = baseline_results(small_dataset, {"spy": spy}), baseline_results(small_dataset)
+    for holdout in ("random", "block"):
+        for fraction, rows in theirs[holdout]["fractions"].items():
+            for split, row in rows.items():
+                assert ours[holdout]["fractions"][fraction][split] == {
+                    "n_patients": row["n_patients"], "n_targets": row["n_targets"], "spy": row["forward_fill"]}
+    assert len(seen) == 8                                   # 3 random rates + 1 block, val and test
+    for cond in seen:                                       # a strict subset of the split's observed values
+        split = "val" if len(cond) == len(small_dataset["val_idx"]) else "test"
+        full = small_dataset["mask"][small_dataset[f"{split}_idx"]]
+        assert ((cond == 1) <= (full == 1)).all() and cond.sum() < full.sum()
+
+def test_baselines_are_logged_to_wandb(small_dataset, monkeypatch):
+    import wandb
+    from eval.baselines import log_to_wandb, wandb_summary
+
+    runs = []
+
+    class FakeRun:
+        def __init__(self, **kwargs):
+            self.init, self.summary = kwargs, {}
+            runs.append(self)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+    monkeypatch.setattr(wandb, "init", FakeRun)
+    results = baseline_results(small_dataset)
+    log_to_wandb(results, "offline")
+    assert [r.init["name"] for r in runs] == ["mean_imputation", "forward_fill"]
+    assert {r.init["job_type"] for r in runs} == {"baseline"} and {r.init["mode"] for r in runs} == {"offline"}
+    for r in runs:
+        name = r.init["name"]
+        assert r.summary == wandb_summary(results, name)
+        assert r.summary["random/0.1/test/mae"] == results["random"]["fractions"]["0.1"]["test"][name]["mae"]
+        assert r.summary["val/mae"] == results["random"]["fractions"]["0.1"]["val"][name]["mae"]
+        assert r.summary["block/0.1/val/rmse"] == results["block"]["fractions"]["0.1"]["val"][name]["rmse"]
+        assert len(r.summary) == 4 * 2 * 2 + 2              # 4 holdouts x 2 splits x 2 metrics, + val/*
