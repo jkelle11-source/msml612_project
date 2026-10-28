@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import torch
 import yaml
 
@@ -33,11 +34,20 @@ class EvalSampler:
         ``cond_mask`` is all the model may see (``EvalMasker``'s) and goes in as upstream's
         ``gt_mask``. The model is put in eval mode for the pass and handed back as it was.
         """
+        return np.concatenate([samples for _, samples in self.batches(model, values, mask, cond_mask)], axis=1)
+
+    def batches(self, model, values, mask, cond_mask):
+        """The same pass as ``__call__``, one batch at a time: yields ``(rows, samples)`` (M4-1).
+
+        ``rows`` is the batch's slice of the patients and ``samples`` their ``(K, B, T, D)`` draws,
+        with exactly the noise ``__call__`` gives them, so a long pass (the test split's 100 draws)
+        can report as it goes. The model is in eval mode until the pass ends or is abandoned, and
+        is then handed back as it was.
+        """
         generator = torch.Generator().manual_seed(self.seed)
         was_training = model.training
         model.eval()
         try:
-            batches = []
             for start in range(0, len(values), self.batch_size):
                 rows = slice(start, start + self.batch_size)
                 observed_data = torch.as_tensor(values[rows])
@@ -48,7 +58,6 @@ class EvalSampler:
                     "timepoints": torch.arange(observed_data.shape[1]).float().expand(len(observed_data), -1),
                 }
                 samples = model.evaluate(batch, self.n_samples, generator=generator)[0]     # (B, K, D, T)
-                batches.append(samples.permute(1, 0, 3, 2).cpu())                           # (K, B, T, D)
+                yield rows, samples.permute(1, 0, 3, 2).cpu().numpy()                       # (K, B, T, D)
         finally:
             model.train(was_training)
-        return torch.cat(batches, dim=1).numpy()

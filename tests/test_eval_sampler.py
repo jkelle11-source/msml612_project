@@ -69,6 +69,24 @@ def test_samples_come_back_as_k_n_t_d(data):
         assert samples[k, n, t, d] == upstream[n, k, d, t]
     assert np.array_equal(samples, upstream.permute(1, 0, 3, 2).numpy())
 
+def test_batches_are_the_same_pass_in_pieces(data):
+    values, mask, cond, _ = data
+    model = build_model()
+    whole = sampler()(model, values, mask, cond)
+    batches = list(sampler().batches(model, values, mask, cond))
+    assert [rows for rows, _ in batches] == [slice(0, 4), slice(4, 8)]
+    assert [samples.shape for _, samples in batches] == [(2, 4, T, D), (2, 2, T, D)]
+    assert np.concatenate([samples for _, samples in batches], axis=1).tobytes() == whole.tobytes()
+
+def test_a_pass_abandoned_part_way_hands_the_model_back(data):
+    values, mask, cond, _ = data
+    model = build_model().train()
+    batches = sampler().batches(model, values, mask, cond)
+    next(batches)
+    assert not model.training                                   # eval mode while the pass runs
+    batches.close()
+    assert model.training
+
 def test_torch_tensors_are_accepted_too(data):
     values, mask, cond, _ = data
     model = build_model()
