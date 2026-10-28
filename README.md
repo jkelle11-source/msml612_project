@@ -32,11 +32,14 @@ models/        # reused CSDI model (denoiser + diffusion process), build_model
 diffusion/     # training data feed, loop and random streams around the
                #   reused diffusion process; no schedule or q_sample of our
                #   own.                                                     [M2-1]
+               #   Run entry point (run.py).                                [M3-1]
+               #   Frozen scoring of a run (score.py), the gate (gate.py).  [M4-1]
 eval/          # EvalMasker / TrainMasker + masked, standardized metrics;
                #   EvalSampler (frozen-noise evaluation pass).              [M1-3]
                #   Mean and forward-fill baselines.                         [M2-3]
 results/       # recorded results (baselines.json).                         [M2-3]
                #   BRITS's record (learned_baseline.json).                  [M3-3]
+               #   The reproduction gate's record (gate.json).              [M4-1]
 configs/       # frozen protocol config (config.yaml).
 Docs/          # project plan + shared notes (e.g. CSDI_Objective.md).
 Milestones/    # per-milestone GitHub issue breakdown (M00-M10).
@@ -491,6 +494,124 @@ Tests:
 - `tests/test_forward_noising.py`: the schedule check described under
   [Reused CSDI implementation](#reused-csdi-implementation).
 
+### Scoring a run (M4-1)
+
+```text
+uv run python -m diffusion.score outputs/base_random_seed42
+```
+
+`diffusion/score.py` gives a finished run the protocol's number; the validation it tracks while
+training (5 draws) is only for watching it. It rebuilds the model from the run's saved
+`config.yaml`, loads its `model.pt` (the final weights, PROJECT_PLAN §3.1) and scores the test
+split's held-out values with `eval.EvalSampler.from_config()`: 100 draws per patient with the
+frozen `eval_sampling_seed`, 16 patients at a time, the median of the draws scored in standardized
+units exactly as the baselines are. A run without `summary.json` has not finished, so its
+`model.pt` is an earlier epoch's, and it is refused.
+
+The holdout is the frozen random one at 10% unless told otherwise: `--fraction 0.5` or `0.9` for
+CSDI's robustness rates, `--holdout block` for `BlockEvalMasker`'s (10% only), `--split val` for
+the validation split. Other options: `--device`, `--config` (where the frozen protocol is read
+from), `--dataset`, `--wandb`. After every batch it prints the running MAE and the time left.
+Two files go into the run folder, named for what was scored:
+
+| File | Contents |
+| --- | --- |
+| `scores_test_random_0.1.json` | MAE, RMSE and per-variable MAE (standardized), target count, the holdout's and sampler's settings, device, seconds, and `model_sha256`, the hash of the weights scored |
+| `median_test_random_0.1.npy` | the median imputation, `(N, 48, 35)` float32, in `dataset["test_idx"]` order, for checks that need more than the pooled scores (the gate's PaCO2/PaO2 check, M9-2) |
+
+The MAE and RMSE are also added to the run's wandb summary (its `wandb_run`) under the baselines'
+keys, e.g. `random/0.1/test/mae`, so CSDI runs line up with the baselines in the runs table.
+That needs wandb online: `--wandb disabled`, or `WANDB_MODE` set to anything but `online`, skips
+it. Retraining a run with `--overwrite` leaves its score files behind; their `model_sha256` no
+longer matches `model.pt`, and the gate refuses them until the run is scored again.
+
+A scoring pass draws all its noise from `EvalSampler`'s frozen generator, through
+`EvalSampler.batches`, the same pass one batch at a time, so rescoring the same weights gives
+the same numbers bit for bit.
+
+### The reproduction gate (M4-1)
+
+```text
+uv run python -m diffusion.gate outputs/base_random_seed42 outputs/base_random_seed43 outputs/base_random_seed44
+```
+
+`diffusion/gate.py` reads the runs' random 10% test scores and writes
+[`results/gate.json`](results/gate.json): each seed's MAE and RMSE, their mean ± SE (sample
+standard deviation over √n, as in BRITS's record) and the status, **PASS** when at least
+`protocol.gate_min_seeds` (3) seeds average at most `protocol.gate_mae_at_10pct` (0.24), FAIL
+when they average more, INCOMPLETE with fewer seeds. It refuses runs that would make the number
+mean something else: a variant other than base, a seed given twice, configs that differ between
+the runs (the tracking-only `validation` block aside), scores not taken with the frozen holdout
+and sampler, scores of other weights than the run's `model.pt`, or a median that does not give
+the recorded MAE. Every departure of the runs' config from the repo's (upstream's published
+setup) is listed in the record under `config_departures`.
+
+The record also carries the PaCO2/PaO2 check (`bad_values` per seed; see
+[Learned baseline](#learned-baseline-brits-m3-3) for why): PaCO2's and PaO2's MAE and largest
+miss, every PaCO2 or PaO2 target at an hour where the patient's pH is visible and bad, the
+pooled MAE and RMSE with and without the patients who show a bad value, and the five largest
+misses with their share of the squared error and any visible bad value of their own feature.
+A patient *shows* a bad value when one of
+`data.physionet.known_bad_values` (the [Dataset](#dataset) section's list, as raw-unit ranges in
+`KNOWN_BAD_RANGES`) is visible to the model.
+
+**Result: PASS.** Base CSDI on upstream's configuration with nothing changed
+(`config_departures` is empty), seeds 42–44, 200 epochs each on an Apple M4 Pro (MPS), final
+weights scored on the random 10% test holdout (800 patients, 26,027 targets). The runs, their
+training curves and their cost are in [`Docs/M3_debug_log.md`](Docs/M3_debug_log.md):
+
+| Seed | Test MAE | Test RMSE | wandb run |
+| --- | --- | --- | --- |
+| 42 | 0.2288 | 1.1842 ‡ | [`bqoimtqw`](https://wandb.ai/DATA612/msml612-csdi/runs/bqoimtqw) |
+| 43 | 0.2178 | 0.4933 | [`xki8hsx9`](https://wandb.ai/DATA612/msml612-csdi/runs/xki8hsx9) |
+| 44 | 0.2185 | 0.4880 | [`c754hh0k`](https://wandb.ai/DATA612/msml612-csdi/runs/c754hh0k) |
+| **mean ± SE** | **0.2217 ± 0.0036** | 0.7218 ± 0.2312 | |
+
+That is inside the 0.22–0.24 band (PROJECT_PLAN §3.4), 2% above the paper's 0.217 and just below
+the independent reimplementation's 0.228 (CFMI 2025). On the same split and holdout BRITS scores
+0.2667 ± 0.0010 and forward fill 0.4487. As with BRITS, the SE reflects training randomness only,
+since the test split is fixed.
+
+‡ **A visible bad pH is carried along pH, not across features.** M4-1 asked whether CSDI's
+feature attention drags same-hour PaCO2 and PaO2 guesses off a visible bad pH, as BRITS's feature
+regression does. It does not. On this holdout the one such target, record 140525's PaO2 of 54 at
+hour 22 next to its pH of 735, is guessed at 106, 111 and 107 mmHg by the three seeds, misses of
+0.60–0.66 standardized units (BRITS guesses 5,204 mmHg, a miss of 60). PaCO2's and PaO2's largest
+misses (1.9–2.3 and 3.0–3.1) are in patients who show no bad value. What CSDI does instead,
+through its temporal attention, is carry a bad pH along pH, as forward fill does, by an amount
+that depends on the seed:
+
+| Held-out pH | Visible bad pH | Seed 42 | Seed 43 | Seed 44 |
+| --- | --- | --- | --- | --- |
+| record 140525, hour 25: 7.33 | 734 and 735 at hours 19 and 22 | 220.5 (miss 152.8) | 8.78 (1.0) | 7.46 (0.1) |
+| record 141680, hour 38: 7.46 | 187 at hour 8 | 125.9 (84.8) | 12.87 (3.9) | 9.35 (1.4) |
+
+Misses are in standardized units. In seed 42 those two values are 84% of the squared error.
+Without the 12 test patients who show a bad value, seed 42's RMSE would be 0.4795 and its MAE
+0.2198, and the three-seed mean MAE would be 0.2187 instead of 0.2217. So MAE, the headline
+metric, hardly moves, and seed 42's RMSE is mostly two values. pH stays on M9-2's list of
+per-variable MAEs not to trust (see [Dataset](#dataset)).
+
+Tests:
+
+- `tests/test_score.py`: a stand-in sampler whose draws miss each held-out value by known amounts
+  gives exactly MAE 0.5 (the lower middle of four draws, not their mean) on exactly the targets;
+  the test split by default, in its order; the frozen holdouts' conditioning masks, the
+  robustness rates and the block holdout, and nothing outside the protocol; the frozen sampler
+  (2021, 100 draws, 16); the run's own weights; a run without `summary.json` refused; held-out
+  values never reaching the guess; rescoring identical; the files and their names; the running
+  MAE; the wandb keys, and nothing sent unless online.
+- `tests/test_gate.py`: mean ± SE and PASS/FAIL/INCOMPLETE worked by hand, the threshold itself
+  passing; every refusal above; departures listed, the tracking-only blocks skipped; the
+  PaCO2/PaO2 check on a hand-built pair of patients, its largest misses including a bad pH
+  carried along pH and never an unscored box; the recorded `results/gate.json` on the frozen
+  sampler and holdout, with `baselines.json`'s patient and target counts, adding up.
+- `tests/test_known_bad_values.py`: values outside each range flagged and the bounds not, raw
+  units judged rather than standardized, unmeasured boxes never flagged, Set A's 10 pH, 73 Temp,
+  1 K and 2 PaO2.
+- `tests/test_eval_sampler.py`: `batches` byte-identical to `__call__`, and an abandoned pass
+  handing the model back.
+
 ---
 
 ## Environment
@@ -568,8 +689,10 @@ What this does to our numbers:
 - **A visible bad pH can spread into other variables' guesses** in a model that predicts across
   features at the same hour. BRITS misses PaCO2 and PaO2 values next to a pH of 735 or 187 by up
   to 6,796 standardized units (the ‡ footnote under
-  [Learned baseline: BRITS](#learned-baseline-brits-m3-3)). CSDI's feature attention may do the
-  same; M4-1 checks it on the gate runs.
+  [Learned baseline: BRITS](#learned-baseline-brits-m3-3)). CSDI's feature attention does not
+  (M4-1), but its temporal attention can carry a visible bad pH into the same patient's held-out
+  pH values: seed 42 misses a pH of 7.33 by 153 standardized units three hours after a visible
+  735 (see [The reproduction gate](#the-reproduction-gate-m4-1)).
 
 ---
 
@@ -781,9 +904,10 @@ loss over the hours and didn't weight it by 0.3. It missed the two PaCO2 values 
 and scored 0.4162 ± 0.0027 at random 50% and 0.4602 ± 0.0038 on the block holdout. We report the
 original code's version because CSDI's published numbers come from it.
 
-Any model that predicts across features at the same hour can be exposed the same way, CSDI's
-feature attention included, so PaCO2 and PaO2 join pH and Temp in M9-2's list of per-variable
-MAEs to flag.
+Any model that predicts across features at the same hour can be exposed the same way, so PaCO2
+and PaO2 join pH and Temp in M9-2's list of per-variable MAEs to flag. CSDI's feature attention
+turned out not to be (M4-1, [The reproduction gate](#the-reproduction-gate-m4-1)); it carries a
+bad pH along pH instead.
 
 Tests:
 

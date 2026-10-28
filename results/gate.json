@@ -1,0 +1,376 @@
+{
+ "status": "PASS",
+ "gate": {
+  "mae_at_most": 0.24,
+  "min_seeds": 3,
+  "split": "test",
+  "holdout": "random",
+  "fraction": 0.1
+ },
+ "units": "standardized (train-split z-scores)",
+ "split_seed": 612,
+ "eval_masker_seed": 2012,
+ "sampler": {
+  "eval_sampling_seed": 2021,
+  "eval_n_samples": 100,
+  "eval_batch_size": 16
+ },
+ "n_patients": 800,
+ "n_targets": 26027,
+ "seeds": [
+  42,
+  43,
+  44
+ ],
+ "mean_se": {
+  "mae": {
+   "mean": 0.22171,
+   "se": 0.003566
+  },
+  "rmse": {
+   "mean": 0.721812,
+   "se": 0.231202
+  }
+ },
+ "per_seed": {
+  "42": {
+   "run": "base_random_seed42",
+   "wandb_run": "DATA612/msml612-csdi/bqoimtqw",
+   "device": "mps",
+   "mae": 0.228832,
+   "rmse": 1.184206,
+   "n_targets": 26027,
+   "tracked_val_mae": 0.24639598871572946,
+   "healthy_first_500_steps": true,
+   "train_seconds": 6048.0,
+   "val_seconds": 2693.6,
+   "score_seconds": 21537.8,
+   "bad_values": {
+    "n_patients_showing_a_bad_value": 12,
+    "mae": 0.228832,
+    "mae_without_patients_showing_a_bad_value": 0.219814,
+    "rmse": 1.184206,
+    "rmse_without_patients_showing_a_bad_value": 0.479516,
+    "largest_misses": [
+     {
+      "record_id": 140525,
+      "hour": 25,
+      "feature": "pH",
+      "truth_raw": 7.33,
+      "guess_raw": 220.4828,
+      "miss": 152.7522,
+      "share_of_squared_error": 0.6393,
+      "visible_bad_values_of_this_feature": [
+       734.0,
+       734.9999
+      ]
+     },
+     {
+      "record_id": 141680,
+      "hour": 38,
+      "feature": "pH",
+      "truth_raw": 7.46,
+      "guess_raw": 125.8505,
+      "miss": 84.8425,
+      "share_of_squared_error": 0.1972,
+      "visible_bad_values_of_this_feature": [
+       187.0
+      ]
+     },
+     {
+      "record_id": 137716,
+      "hour": 41,
+      "feature": "MAP",
+      "truth_raw": 290.0,
+      "guess_raw": 36.0814,
+      "miss": 15.4416,
+      "share_of_squared_error": 0.0065,
+      "visible_bad_values_of_this_feature": []
+     },
+     {
+      "record_id": 138969,
+      "hour": 32,
+      "feature": "Urine",
+      "truth_raw": 4500.0,
+      "guess_raw": 2070.4976,
+      "miss": 14.6516,
+      "share_of_squared_error": 0.0059,
+      "visible_bad_values_of_this_feature": []
+     },
+     {
+      "record_id": 138969,
+      "hour": 39,
+      "feature": "Urine",
+      "truth_raw": 4500.0,
+      "guess_raw": 2315.4509,
+      "miss": 13.1743,
+      "share_of_squared_error": 0.0048,
+      "visible_bad_values_of_this_feature": []
+     }
+    ],
+    "PaCO2": {
+     "n_targets": 455,
+     "mae": 0.428777,
+     "mae_raw": 3.8871,
+     "largest_miss": {
+      "record_id": 139572,
+      "hour": 23,
+      "feature": "PaCO2",
+      "truth_raw": 66.0,
+      "guess_raw": 44.8008,
+      "miss": 2.3384,
+      "patient_shows_a_bad_value": false
+     }
+    },
+    "PaO2": {
+     "n_targets": 440,
+     "mae": 0.467121,
+     "mae_raw": 39.9182,
+     "largest_miss": {
+      "record_id": 137342,
+      "hour": 2,
+      "feature": "PaO2",
+      "truth_raw": 62.0,
+      "guess_raw": 330.3614,
+      "miss": 3.1404,
+      "patient_shows_a_bad_value": false
+     }
+    },
+    "next_to_a_visible_bad_ph": [
+     {
+      "record_id": 140525,
+      "hour": 22,
+      "feature": "PaO2",
+      "truth_raw": 54.0,
+      "guess_raw": 105.6853,
+      "miss": 0.6048,
+      "visible_ph_raw": 734.9999
+     }
+    ]
+   }
+  },
+  "43": {
+   "run": "base_random_seed43",
+   "wandb_run": "DATA612/msml612-csdi/xki8hsx9",
+   "device": "mps",
+   "mae": 0.217816,
+   "rmse": 0.493262,
+   "n_targets": 26027,
+   "tracked_val_mae": 0.24359963484564232,
+   "healthy_first_500_steps": true,
+   "train_seconds": 10373.3,
+   "val_seconds": 4732.4,
+   "score_seconds": 15892.9,
+   "bad_values": {
+    "n_patients_showing_a_bad_value": 12,
+    "mae": 0.217816,
+    "mae_without_patients_showing_a_bad_value": 0.217809,
+    "rmse": 0.493262,
+    "rmse_without_patients_showing_a_bad_value": 0.493597,
+    "largest_misses": [
+     {
+      "record_id": 138969,
+      "hour": 32,
+      "feature": "Urine",
+      "truth_raw": 4500.0,
+      "guess_raw": 1172.1,
+      "miss": 20.0695,
+      "share_of_squared_error": 0.0636,
+      "visible_bad_values_of_this_feature": []
+     },
+     {
+      "record_id": 138969,
+      "hour": 39,
+      "feature": "Urine",
+      "truth_raw": 4500.0,
+      "guess_raw": 1262.6814,
+      "miss": 19.5233,
+      "share_of_squared_error": 0.0602,
+      "visible_bad_values_of_this_feature": []
+     },
+     {
+      "record_id": 137716,
+      "hour": 41,
+      "feature": "MAP",
+      "truth_raw": 290.0,
+      "guess_raw": 72.716,
+      "miss": 13.2138,
+      "share_of_squared_error": 0.0276,
+      "visible_bad_values_of_this_feature": []
+     },
+     {
+      "record_id": 141825,
+      "hour": 17,
+      "feature": "ALT",
+      "truth_raw": 9820.0,
+      "guess_raw": 20814.1895,
+      "miss": 10.6927,
+      "share_of_squared_error": 0.0181,
+      "visible_bad_values_of_this_feature": []
+     },
+     {
+      "record_id": 138969,
+      "hour": 25,
+      "feature": "Urine",
+      "truth_raw": 3500.0,
+      "guess_raw": 1760.6998,
+      "miss": 10.4892,
+      "share_of_squared_error": 0.0174,
+      "visible_bad_values_of_this_feature": []
+     }
+    ],
+    "PaCO2": {
+     "n_targets": 455,
+     "mae": 0.419389,
+     "mae_raw": 3.802,
+     "largest_miss": {
+      "record_id": 136587,
+      "hour": 1,
+      "feature": "PaCO2",
+      "truth_raw": 50.0,
+      "guess_raw": 29.1287,
+      "miss": 2.3022,
+      "patient_shows_a_bad_value": false
+     }
+    },
+    "PaO2": {
+     "n_targets": 440,
+     "mae": 0.449714,
+     "mae_raw": 38.4306,
+     "largest_miss": {
+      "record_id": 137342,
+      "hour": 2,
+      "feature": "PaO2",
+      "truth_raw": 62.0,
+      "guess_raw": 322.9633,
+      "miss": 3.0538,
+      "patient_shows_a_bad_value": false
+     }
+    },
+    "next_to_a_visible_bad_ph": [
+     {
+      "record_id": 140525,
+      "hour": 22,
+      "feature": "PaO2",
+      "truth_raw": 54.0,
+      "guess_raw": 110.783,
+      "miss": 0.6645,
+      "visible_ph_raw": 734.9999
+     }
+    ]
+   }
+  },
+  "44": {
+   "run": "base_random_seed44",
+   "wandb_run": "DATA612/msml612-csdi/c754hh0k",
+   "device": "mps",
+   "mae": 0.218481,
+   "rmse": 0.487968,
+   "n_targets": 26027,
+   "tracked_val_mae": 0.24708681057918938,
+   "healthy_first_500_steps": true,
+   "train_seconds": 10282.9,
+   "val_seconds": 4692.8,
+   "score_seconds": 12142.7,
+   "bad_values": {
+    "n_patients_showing_a_bad_value": 12,
+    "mae": 0.218481,
+    "mae_without_patients_showing_a_bad_value": 0.218578,
+    "rmse": 0.487968,
+    "rmse_without_patients_showing_a_bad_value": 0.488662,
+    "largest_misses": [
+     {
+      "record_id": 138969,
+      "hour": 32,
+      "feature": "Urine",
+      "truth_raw": 4500.0,
+      "guess_raw": 1163.7126,
+      "miss": 20.1201,
+      "share_of_squared_error": 0.0653,
+      "visible_bad_values_of_this_feature": []
+     },
+     {
+      "record_id": 138969,
+      "hour": 39,
+      "feature": "Urine",
+      "truth_raw": 4500.0,
+      "guess_raw": 1608.2505,
+      "miss": 17.4392,
+      "share_of_squared_error": 0.0491,
+      "visible_bad_values_of_this_feature": []
+     },
+     {
+      "record_id": 137716,
+      "hour": 41,
+      "feature": "MAP",
+      "truth_raw": 290.0,
+      "guess_raw": 72.9689,
+      "miss": 13.1984,
+      "share_of_squared_error": 0.0281,
+      "visible_bad_values_of_this_feature": []
+     },
+     {
+      "record_id": 138969,
+      "hour": 25,
+      "feature": "Urine",
+      "truth_raw": 3500.0,
+      "guess_raw": 1537.0743,
+      "miss": 11.8378,
+      "share_of_squared_error": 0.0226,
+      "visible_bad_values_of_this_feature": []
+     },
+     {
+      "record_id": 135157,
+      "hour": 2,
+      "feature": "Urine",
+      "truth_raw": 2000.0,
+      "guess_raw": 275.5616,
+      "miss": 10.3996,
+      "share_of_squared_error": 0.0175,
+      "visible_bad_values_of_this_feature": []
+     }
+    ],
+    "PaCO2": {
+     "n_targets": 455,
+     "mae": 0.413734,
+     "mae_raw": 3.7508,
+     "largest_miss": {
+      "record_id": 136587,
+      "hour": 1,
+      "feature": "PaCO2",
+      "truth_raw": 50.0,
+      "guess_raw": 32.4716,
+      "miss": 1.9335,
+      "patient_shows_a_bad_value": false
+     }
+    },
+    "PaO2": {
+     "n_targets": 440,
+     "mae": 0.478508,
+     "mae_raw": 40.8912,
+     "largest_miss": {
+      "record_id": 137342,
+      "hour": 2,
+      "feature": "PaO2",
+      "truth_raw": 62.0,
+      "guess_raw": 316.7887,
+      "miss": 2.9815,
+      "patient_shows_a_bad_value": false
+     }
+    },
+    "next_to_a_visible_bad_ph": [
+     {
+      "record_id": 140525,
+      "hour": 22,
+      "feature": "PaO2",
+      "truth_raw": 54.0,
+      "guess_raw": 107.3234,
+      "miss": 0.624,
+      "visible_ph_raw": 734.9999
+     }
+    ]
+   }
+  }
+ },
+ "config_departures": {}
+}
