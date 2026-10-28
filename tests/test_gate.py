@@ -153,7 +153,8 @@ def two_patients():
                "features": np.array(FEATURES), "record_ids": np.array([7, 8])}
     median = values.copy()
     for n, t, name, miss in [(0, 3, "PaCO2", 60.0), (0, 3, "PaO2", -2.0), (0, 5, "HR", 1.0),
-                             (1, 2, "pH", 6.0), (1, 3, "PaCO2", 0.5)]:
+                             (1, 2, "pH", 6.0), (1, 3, "PaCO2", 0.5),
+                             (1, 40, "HR", 500.0)]:                     # not a target, so never scored
         median[n, t, j[name]] += miss
     return dataset, median, mask - target, target
 
@@ -163,6 +164,12 @@ def test_the_bad_value_check_by_hand():
     assert check["n_patients_showing_a_bad_value"] == 1                 # patient 1's bad pH is hidden, not shown
     assert check["mae"] == pytest.approx((60 + 2 + 1 + 6 + 0.5) / 5)
     assert check["mae_without_patients_showing_a_bad_value"] == pytest.approx((6 + 0.5) / 2)
+    assert check["rmse"] == pytest.approx(np.sqrt((60**2 + 2**2 + 1 + 6**2 + 0.5**2) / 5), abs=1e-6)
+    assert check["rmse_without_patients_showing_a_bad_value"] == pytest.approx(np.sqrt((36 + 0.25) / 2), abs=1e-6)
+    assert [(row["record_id"], row["feature"], row["miss"]) for row in check["largest_misses"]] == [
+        (7, "PaCO2", 60.0), (8, "pH", 6.0), (7, "PaO2", 2.0), (7, "HR", 1.0), (8, "PaCO2", 0.5)]
+    assert check["largest_misses"][0]["share_of_squared_error"] == round(3600 / 3641.25, 4)
+    assert check["largest_misses"][1]["visible_bad_values_of_this_feature"] == []     # its pH of 1 is hidden
     assert check["PaCO2"] == {"n_targets": 2, "mae": 30.25, "mae_raw": 30.25,
                               "largest_miss": {"record_id": 7, "hour": 3, "feature": "PaCO2", "truth_raw": 40.0,
                                                "guess_raw": 100.0, "miss": 60.0, "patient_shows_a_bad_value": True}}
@@ -173,6 +180,17 @@ def test_the_bad_value_check_by_hand():
         {"record_id": 7, "hour": 3, "feature": "PaO2", "truth_raw": 80.0, "guess_raw": 78.0, "miss": 2.0,
          "visible_ph_raw": 735.0},
     ]
+
+def test_a_bad_value_carried_along_its_own_variable_shows_in_the_largest_misses():
+    dataset, median, cond, target = two_patients()
+    ph = FEATURES.index("pH")
+    dataset["values"][0, 6, ph], dataset["mask"][0, 6, ph], target[0, 6, ph] = 7.3, 1, 1     # held out, 3 h after the 735
+    median[0, 6, ph] = 107.3                                                                  # carried toward it
+    check = bad_value_check(dataset, np.arange(2), median, cond, target)
+    assert check["largest_misses"][0] == {"record_id": 7, "hour": 6, "feature": "pH", "truth_raw": 7.3,
+                                          "guess_raw": 107.3, "miss": 100.0,
+                                          "share_of_squared_error": round(10000 / 13641.25, 4),
+                                          "visible_bad_values_of_this_feature": [735.0]}
 
 def test_raw_units_undo_the_scaling():
     dataset, median, cond, target = two_patients()

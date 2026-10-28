@@ -33,7 +33,7 @@ import yaml
 from data.physionet import invert_scaler, known_bad_values, load_dataset
 from diffusion.run import CONFIG_PATH, DATASET_PATH, ROOT
 from diffusion.score import scores_name
-from eval import EvalMasker, masked_mae
+from eval import EvalMasker, masked_mae, masked_rmse
 
 GATE_PATH = ROOT / "results" / "gate.json"
 TRACKING_ONLY = ("tracking", "validation")      # where a run is logged and how it is watched, not what it trains
@@ -83,15 +83,18 @@ def load_run(run_dir, protocol, name):
         raise ValueError(f"{run_dir}: " + "; ".join(problems))
     return scores, config
 
-def bad_value_check(dataset, idx, median, cond, target, features=("PaCO2", "PaO2")):
-    """Does a visible bad value drag other variables' guesses with it? (M4-1; README, Learned baseline)
+def bad_value_check(dataset, idx, median, cond, target, features=("PaCO2", "PaO2"), n_largest=5):
+    """Does a visible bad value drag the guesses around it? (M4-1; README, Learned baseline)
 
     ``median`` is a run's ``(N, T, D)`` guess for the patients ``idx``, scored on ``target`` with
     ``cond`` visible. A patient *shows* a bad value when one of ``data.physionet.known_bad_values``
     is visible to the model. Errors are in standardized units unless named raw. Returns:
 
-    - ``mae`` and ``mae_without_patients_showing_a_bad_value``: the pooled MAE, and the same with
-      every such patient left out, as the README reports for BRITS;
+    - ``mae`` and ``rmse``, and each without every patient who shows a bad value, as the README
+      reports for BRITS;
+    - ``largest_misses``: the ``n_largest`` targets missed by most, each with its share of the
+      squared error and the visible bad values of its own feature in that patient, since a bad
+      value can also be carried along its own variable, as forward fill carries it;
     - for each of ``features``: its MAE (standardized and raw), target count, and its largest miss
       (record, hour, raw truth and guess, and whether that patient shows a bad value);
     - ``next_to_a_visible_bad_ph``: every target of ``features`` at an hour where the patient's pH
@@ -115,7 +118,19 @@ def bad_value_check(dataset, idx, median, cond, target, features=("PaCO2", "PaO2
         "mae": round(masked_mae(median, values, target), 6),
         "mae_without_patients_showing_a_bad_value":         # None: every patient shows one
             round(masked_mae(median, values, clean_target), 6) if clean_target.any() else None,
+        "rmse": round(masked_rmse(median, values, target), 6),
+        "rmse_without_patients_showing_a_bad_value":
+            round(masked_rmse(median, values, clean_target), 6) if clean_target.any() else None,
     }
+    scored_miss = np.where(target == 1, miss, 0.0)
+    squared_total = float((scored_miss ** 2).sum())
+    result["largest_misses"] = [
+        target_row(n, t, j) | {
+            "share_of_squared_error": round(float(scored_miss[n, t, j] ** 2 / squared_total), 4),
+            "visible_bad_values_of_this_feature": [round(float(raw_truth[n, h, j]), 4) for h in np.flatnonzero(bad[n, :, j])],
+        }
+        for n, t, j in zip(*np.unravel_index(np.argsort(scored_miss, axis=None)[::-1][:n_largest], miss.shape))
+    ]
     for name in features:
         j = names.index(name)
         hidden = target[..., j] == 1
