@@ -7,7 +7,7 @@ import pytest
 import yaml
 from conftest import CONFIG
 from data.physionet import FEATURES, save_dataset
-from diffusion.gate import bad_value_check, departures, gate, main, mean_se
+from diffusion.gate import GATE_PATH, bad_value_check, departures, gate, main, mean_se
 from eval import EvalMasker, masked_mae, masked_rmse
 
 SAMPLER = {"eval_sampling_seed": 2021, "eval_n_samples": 100, "eval_batch_size": 16}
@@ -204,6 +204,23 @@ def test_a_feature_with_nothing_held_out_is_reported_empty():
     dataset, median, cond, target = two_patients()
     target[..., FEATURES.index("PaO2")] = 0
     assert bad_value_check(dataset, np.arange(2), median, cond, target)["PaO2"] == {"n_targets": 0}
+
+# --- the recorded gate ------------------------------------------------------------------
+
+@pytest.mark.skipif(not GATE_PATH.exists(), reason="results/gate.json not written yet")
+def test_the_recorded_gate_is_scored_on_the_frozen_protocol_and_adds_up():
+    record = json.loads(GATE_PATH.read_text())
+    protocol = CONFIG["protocol"]
+    assert record["sampler"] == SAMPLER and record["eval_masker_seed"] == protocol["eval_masker_seed"]
+    assert record["split_seed"] == CONFIG["data"]["split_seed"]
+    baselines = json.loads((GATE_PATH.parent / "baselines.json").read_text())["random"]["fractions"]["0.1"]["test"]
+    assert (record["n_patients"], record["n_targets"]) == (baselines["n_patients"], baselines["n_targets"])
+    assert all(row["n_targets"] == record["n_targets"] for row in record["per_seed"].values())
+    assert len(record["seeds"]) >= protocol["gate_min_seeds"] and set(record["seeds"]) <= set(protocol["run_seeds"])
+    maes = [row["mae"] for row in record["per_seed"].values()]
+    assert record["mean_se"]["mae"] == mean_se(maes)
+    assert record["status"] == ("PASS" if np.mean(maes) <= protocol["gate_mae_at_10pct"] else "FAIL")
+    assert record["config_departures"] == {}
 
 # --- the command line -------------------------------------------------------------------
 

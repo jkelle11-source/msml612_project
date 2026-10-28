@@ -191,3 +191,80 @@ in the whole run**, so there is no stability reason to clean them before the gat
   Baselines: a visible bad value can be carried into a scored one).
 - The tracked curve plateaued near 0.25, so if the frozen evaluation lands above 0.24, the gap is
   more likely closed by looking at differences from upstream's setup than by training longer.
+
+## Week 4: reproduction gate (M4-1)
+
+### 2026-10-27 to 28, Jake. Base, seeds 42–44, 200 epochs, MPS, frozen test scoring
+
+```text
+uv run python -m diffusion.run --seed 42 --device mps --validate-every 25 --tag gate     # then 43, 44
+uv run python -m diffusion.score outputs/base_random_seed42 --device mps                 # then 43, 44
+uv run python -m diffusion.gate outputs/base_random_seed42 outputs/base_random_seed43 outputs/base_random_seed44
+```
+
+Upstream's configuration with nothing changed: `results/gate.json` lists no departures from
+`configs/config.yaml`. Validating every 25 epochs, as Josh's seed-42 run did, is tracking only.
+Seed 42 was retrained rather than reusing Josh's Oct 17 run, which predates deterministic kernels,
+so all three reproduce from their saved config. Device: Jake's Apple M4 Pro laptop (MPS). Outputs
+are in its `outputs/`; the wandb runs are tagged `gate`:
+[`bqoimtqw`](https://wandb.ai/DATA612/msml612-csdi/runs/bqoimtqw) (42),
+[`xki8hsx9`](https://wandb.ai/DATA612/msml612-csdi/runs/xki8hsx9) (43) and
+[`c754hh0k`](https://wandb.ai/DATA612/msml612-csdi/runs/c754hh0k) (44), each with its test MAE and
+RMSE in its summary (`random/0.1/test/mae`).
+
+**Training: healthy on all three seeds.** Every 500-step health report passed with no spike
+above 10× the median; the largest gradient norms, 7.36, 7.13 and 7.85, came at steps 16, 6 and 6,
+in the initial descent. Tracked val MAE (5 draws):
+
+| Epoch | 25 | 50 | 75 | 100 | 125 | 150 | 175 | 200 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| seed 42 | 0.3049 | 0.2698 | 0.2626 | 0.2537 | 0.2660 | 0.2594 | 0.2469 | 0.2464 |
+| seed 43 | 0.2924 | 0.2651 | 0.2568 | 0.2695 | 0.2611 | 0.2563 | 0.2471 | 0.2436 |
+| seed 44 | 0.2884 | 0.2764 | 0.2685 | 0.2632 | 0.2528 | 0.2545 | 0.2462 | 0.2471 |
+
+The same shape as Josh's CUDA run of seed 42 (0.2483 at epoch 200): a plateau up to epoch 150,
+then a step down after each learning-rate drop.
+
+**Reruns reproduce exactly.** Seed 42 relaunched from its saved `config.yaml` on MPS and stopped
+after 2 epochs gave 350 history records identical to the run's.
+
+**Frozen test scores** (random 10% holdout, 800 patients, 26,027 targets; 100 draws, batch 16,
+`eval_sampling_seed` 2021):
+
+| Seed | Test MAE | Test RMSE | Tracked val MAE |
+| --- | --- | --- | --- |
+| 42 | 0.2288 | 1.1842 | 0.2464 |
+| 43 | 0.2178 | 0.4933 | 0.2436 |
+| 44 | 0.2185 | 0.4880 | 0.2471 |
+| mean ± SE | **0.2217 ± 0.0036** | 0.7218 ± 0.2312 | |
+
+**Gate: PASS** (≤ 0.24 over ≥ 3 seeds), inside the 0.22–0.24 band, 2% above the paper's 0.217
+and just below the independent reimplementation's 0.228. The frozen scores come in 0.02–0.03 below the tracked validation. More draws
+make the median less noisy, which lowers MAE, but the split differs too (test, not val), and the
+two effects are not separated here.
+
+**A visible bad pH is carried along pH, not across features.** The PaCO2/PaO2 check (M4-1):
+CSDI's feature attention does not do what BRITS's feature regression does. The one PaCO2 or PaO2
+target at an hour with a visible bad pH, record 140525's PaO2 of 54 next to its pH of 735 at
+hour 22, is guessed at 106, 111 and 107 mmHg by seeds 42, 43 and 44 (misses of 0.60, 0.66 and
+0.62 standardized units), where BRITS guessed 5,204. PaCO2's largest misses (2.34, 2.30, 1.93) and
+PaO2's (3.14, 3.05, 2.98) are in patients who show no bad value. Temporal attention does carry a
+bad pH along pH itself, the way forward fill does, by a seed-dependent amount:
+
+| Held-out pH | Visible bad pH | Seed 42 | Seed 43 | Seed 44 |
+| --- | --- | --- | --- | --- |
+| record 140525, hour 25: 7.33 | 734 and 735 at hours 19 and 22 | 220.5 (miss 152.8) | 8.78 (1.0) | 7.46 (0.1) |
+| record 141680, hour 38: 7.46 | 187 at hour 8 | 125.9 (84.8) | 12.87 (3.9) | 9.35 (1.4) |
+
+Misses in standardized units. In seed 42 those two values are 84% of the squared error: without
+the 12 test patients who show a bad value, its RMSE would be 0.4795 instead of 1.1842 and its
+MAE 0.2198 instead of 0.2288. Seeds 43's and 44's barely move without them (MAE 0.2178 and
+0.2186, RMSE 0.4936 and 0.4887), so the mean MAE without those patients would be 0.2187.
+
+**Cost.** Seed 42 trained alone on the GPU: 30.2 s per epoch, 101 min for 200 epochs, plus about
+337 s per tracked validation pass (45 min for 8). Seed 44 was scored alone: 243 s per batch of 16,
+3.37 h for the test split's 50 batches, against about 3.1 h estimated for a T4 at batch 64 (M3-1);
+batch 16 on a T4 is still untimed. Everything else ran two at a time on the one GPU, with a
+training epoch at about 52 s and a scoring batch at about 418 s: about 15% more work done per hour
+than one job at a time. The three seeds took 16.2 h of wall-clock time, 19:27 on Oct 27 to 11:39
+on Oct 28.
