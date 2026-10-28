@@ -57,6 +57,21 @@ def apply_scaler(values, mean, std):
 def invert_scaler(scaled, mean, std):
     return scaled * std + mean
 
+# Raw Set A's known data-entry errors, kept as recorded (README, Dataset): a recorded value outside
+# its variable's (low, high) raw-unit range is one of them; None is no bound. On Set A that is
+# 10 pH, 73 Temp, 1 K and 2 PaO2 values. M4-1's PaCO2/PaO2 check uses it.
+KNOWN_BAD_RANGES = {"pH": (6.5, 8.0), "Temp": (25.0, None), "K": (None, 20.0), "PaO2": (20.0, None)}
+
+def known_bad_values(dataset):
+    raw = invert_scaler(dataset["values"], dataset["mean"], dataset["std"])
+    bad = np.zeros(raw.shape, dtype = bool)
+    for name, (low, high) in KNOWN_BAD_RANGES.items():
+        j = list(dataset["features"]).index(name)
+        too_low = raw[..., j] < low if low is not None else False
+        too_high = raw[..., j] > high if high is not None else False
+        bad[..., j] = too_low | too_high
+    return bad & (dataset["mask"] == 1)
+
 def build_dataset(raw_dir, split_seed):
     values, record_ids = parse_raw_data_folder(raw_dir)
     mask = ~np.isnan(values)
