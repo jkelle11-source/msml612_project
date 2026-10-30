@@ -23,9 +23,16 @@ def model_with(ext1=True, seed=0, **diffusion):
     torch.manual_seed(seed)
     return build_model(config_with(ext1, **diffusion), "cpu")
 
+def open_gate(enc):
+    """The gate starts at 0 (Ext 1 starts as base), which makes every mask_emb zero. Tests of
+    what the layers compute open it; the gate itself is tested on its own."""
+    with torch.no_grad():
+        enc.gate.fill_(1.0)
+    return enc
+
 def encoder(n_layers=2):
     torch.manual_seed(0)
-    return MissingnessEncoder(D, T, C, n_layers=n_layers).eval()       # eval: no dropout
+    return open_gate(MissingnessEncoder(D, T, C, n_layers=n_layers)).eval()     # eval: no dropout
 
 def generator():
     return torch.Generator().manual_seed(7)
@@ -42,14 +49,22 @@ def batch_of(inputs, **replace):
     inputs = {**inputs, **replace}
     return to_batch(inputs["values"], inputs["mask"], inputs["cond_mask"])
 
-def first_update(model, inputs):
-    """One training step. Upstream zero-initialises the denoiser's last layer, so before it the
-    loss ignores everything upstream of that layer, the encoder included."""
+def warm_up(model, inputs, steps=2):
+    """Training steps until gradients reach the whole encoder. Upstream zero-initialises the
+    denoiser's last layer, so step 1 trains only that layer; the encoder's gate starts at 0, so
+    step 2 moves only the gate among the encoder's weights; from step 3 all of them train."""
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    model(batch_of(inputs), generator=generator()).backward()
-    optimizer.step()
-    optimizer.zero_grad()
+    for _ in range(steps):
+        model(batch_of(inputs), generator=generator()).backward()
+        optimizer.step()
+        optimizer.zero_grad()
     return model
+
+def run_path(model, batch, path):
+    """One call on the model's training-loss path, or on its sampler path (what EvalSampler scores)."""
+    if path == "training":
+        return model(batch, generator=generator())
+    return model.evaluate(batch, 2, generator=generator())[0]
 
 class Recorder:
     """Keeps every mask the model's encoder is given and every mask_emb it returns."""
@@ -95,23 +110,29 @@ def test_hour_and_feature_embeddings_tell_tokens_apart():
 
 # --- mask_emb comes from the conditioning mask alone ---------------------------------------
 
-def test_the_encoder_is_given_the_conditioning_mask_in_our_axis_order(inputs):
-    model = model_with()
+# Both paths: forward and evaluate each call get_mask_emb themselves, and evaluate's is the one
+# every reported score comes from (M4-2 review: a leak there passed every test).
+@pytest.mark.parametrize("path", ["training", "sampler"])
+def test_the_encoder_is_given_the_conditioning_mask_in_our_axis_order(inputs, path):
+    model = model_with(num_steps=3).eval()
     seen = Recorder(model)
-    model(batch_of(inputs), generator=generator())
+    run_path(model, batch_of(inputs), path)
     assert len(seen.masks) == 1 and torch.equal(seen.masks[0], inputs["cond_mask"])
 
-def test_changing_observed_mask_leaves_mask_emb_unchanged(inputs):
-    model = model_with().eval()
+@pytest.mark.parametrize("path", ["training", "sampler"])
+def test_changing_observed_mask_leaves_mask_emb_unchanged(inputs, path):
+    model = model_with(num_steps=3).eval()
+    open_gate(model.mask_encoder)
     seen = Recorder(model)
     more_observed = torch.ones_like(inputs["mask"])                 # every value "observed": targets everywhere
-    for mask in (inputs["mask"], more_observed):
-        model(batch_of(inputs, mask=mask), generator=generator())
+    out = [run_path(model, batch_of(inputs, mask=mask), path) for mask in (inputs["mask"], more_observed)]
     assert torch.equal(seen.outputs[0], seen.outputs[1])
+    if path == "sampler":                                           # nothing else on the scored path reads it
+        assert torch.equal(out[0], out[1])                          # either (the loss does, to pick its targets)
 
     flipped = inputs["cond_mask"].clone()
     flipped[0, 0, 0] = 1 - flipped[0, 0, 0]                         # ...while the conditioning mask matters
-    model(batch_of(inputs, cond_mask=flipped), generator=generator())
+    run_path(model, batch_of(inputs, cond_mask=flipped), path)
     assert not torch.equal(seen.outputs[0], seen.outputs[2])
 
 def test_mask_emb_reaches_the_denoiser_on_every_path(inputs):
@@ -158,16 +179,35 @@ def test_with_the_encoder_removed_the_loss_and_samples_are_the_base_models(input
     assert torch.equal(ext1.evaluate(batch_of(inputs), 2, generator=generator())[0],
                        base.evaluate(batch_of(inputs), 2, generator=generator())[0])
 
+def test_the_gate_starts_closed_so_ext1_starts_as_the_base_model(inputs):
+    # eval: in training the encoder's dropout draws from the global RNG and shifts the
+    # denoiser's dropout masks, the one stream that is not paired (README, Random streams).
+    base, ext1 = model_with(ext1=False, num_steps=5).eval(), model_with(num_steps=5).eval()
+    assert ext1.mask_encoder.gate.item() == 0
+    assert not ext1.get_mask_emb(inputs["cond_mask"].permute(0, 2, 1)).any()
+    assert torch.equal(ext1(batch_of(inputs), generator=generator()), base(batch_of(inputs), generator=generator()))
+    assert torch.equal(ext1.evaluate(batch_of(inputs), 2, generator=generator())[0],
+                       base.evaluate(batch_of(inputs), 2, generator=generator())[0])
+
 def test_once_trained_the_encoder_changes_the_loss(inputs):
-    model = first_update(model_with().eval(), inputs)
+    model = warm_up(model_with().eval(), inputs)
     with_encoder = model(batch_of(inputs), generator=generator())
     model.mask_encoder = None
     assert with_encoder != model(batch_of(inputs), generator=generator())
 
 # --- trained end-to-end -----------------------------------------------------------------
 
+def test_the_gate_trains_first_then_the_layers_behind_it(inputs):
+    # Step 2's gradients: the gate's is (upstream gradient) x (encoder output), nonzero at gate 0;
+    # every other encoder weight's is multiplied by the gate, so zero until the gate moves.
+    model = warm_up(model_with().eval(), inputs, steps=1)
+    model(batch_of(inputs), generator=generator()).backward()
+    grads = dict(model.mask_encoder.named_parameters())
+    assert grads.pop("gate").grad.abs() > 0
+    assert all(p.grad is None or not p.grad.any() for p in grads.values())
+
 def test_nonzero_gradients_reach_every_encoder_weight(inputs):
-    model = first_update(model_with(), inputs)
+    model = warm_up(model_with(), inputs)
     model(batch_of(inputs), generator=generator()).backward()
     grads = {name: p.grad for name, p in model.mask_encoder.named_parameters()}
     assert grads and all(g is not None and torch.isfinite(g).all() and g.abs().sum() > 0 for g in grads.values())

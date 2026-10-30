@@ -52,11 +52,13 @@
 **Deliverables**
 - `ContinuousTimeEncoding(d_k, d_model)`: `w0` linear (k=0) + `w` sinusoidal (k≥1), concatenated, projected `d_k → d_model` at each (hour, feature), output `(B, T, D, d_model)`.
 - `--use_time_encoding` CLI toggle; default off reproduces base exactly; added to input, attention logits untouched.
+- Built in `models.build_model` after the shared parts, from the same init-RNG state as the mask encoder (§3.3, settled at the M4-2 review): save `torch.get_rng_state()` right after the shared parts and restore it before building each extension. The init RNG deals each module its starting weights in build order, so without the restore the time encoder would start from different weights in Ext 2 and Ext 1+2, and built before the mask encoder it would shift Ext 1+2's mask encoder instead.
 - Mechanical-health validation run on high-autocorrelation variables (gradients flow, loss drops, no NaNs).
 
 **Definition of Done**
 - [ ] Time2Vec is the concatenated form (1 linear + `d_k−1` sinusoidal), not summed linears.
 - [ ] `--use_time_encoding` on/off toggles cleanly; off == base; attention code unchanged.
+- [ ] At a seed, every variant's shared starting weights equal base's, the mask encoder's are equal in Ext 1 and Ext 1+2, and the time encoder's are equal in Ext 2 and Ext 1+2.
 - [ ] Nonzero gradients reach the encoder; loss drops without NaNs on a short run.
 
 ---

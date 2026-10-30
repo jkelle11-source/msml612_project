@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 
 class MissingnessEncoder(nn.Module):
@@ -9,6 +10,12 @@ class MissingnessEncoder(nn.Module):
     attends over time within every feature, then over features within every hour, so a
     cross-feature structure like block missingness is visible to it, which a temporal-only
     encoder could not see.
+
+    The output is scaled by a learned ``gate`` that starts at 0 (M4-2 review), so Ext 1 starts
+    out as the base model and the encoder's output enters only as far as training finds it
+    useful. Without it, the untrained encoder's output (RMS 1.0 per value) would outweigh the
+    denoiser input it is added to (RMS 0.62) from the first step. Because the gate starts at 0,
+    the gate itself trains first and the layers before it follow once it has moved.
 
     Takes the conditioning mask ``(B, T, D)`` and returns ``mask_emb`` ``(B, T, D, d_model)``,
     which the model adds to the denoiser input (README, input-hook contract). It must only
@@ -27,6 +34,7 @@ class MissingnessEncoder(nn.Module):
         self.feature = nn.ModuleList([
             nn.TransformerEncoderLayer(d_model, n_heads, dim_feedforward=64, batch_first=True)
             for _ in range(n_layers)])
+        self.gate = nn.Parameter(torch.zeros(()))   # starts closed: Ext 1 starts as base
 
     def forward(self, mask):                    # mask: (B, T, D) float
         B, T, D = mask.shape
@@ -37,4 +45,4 @@ class MissingnessEncoder(nn.Module):
             x = t_layer(x.transpose(1, 2).reshape(B * D, T, -1))           # attend over time
             x = x.reshape(B, D, T, -1).transpose(1, 2)
             x = f_layer(x.reshape(B * T, D, -1)).reshape(B, T, D, -1)      # attend over features
-        return x                                # (B, T, D, d_model), added to the denoiser input
+        return self.gate * x                    # (B, T, D, d_model), added to the denoiser input
