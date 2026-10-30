@@ -5,10 +5,10 @@
 > **Timeframe:** Week 6 · Nov 5 – Nov 11
 > **Depends on:** `M5`
 > **Description:**
-> Assemble the four-variant matrix and the machinery that will train it. Josh composes the **combined Ext 1 + 2 model** and confirms all four toggle combinations (base / +Ext1 / +Ext2 / +both) run. Jake + Sankha stand up the **paired-seed harness** (§3.3) — one driver that runs all four variants at each of seeds 42–46 sharing data order, train-mask stream, and init RNG, so every variant-vs-base comparison is a *paired* difference. The same driver also runs base and Ext 1 in the **block-aware training regime** (§3.1), using a `mix` strategy Jake adds to `TrainMasker`. A 20-epoch dry-run confirms the pairing and logging are correct before the expensive full sweep in Week 7. This is the last setup week; nothing here chases accuracy, it chases *correct experimental plumbing*.
+> Assemble the four-variant matrix and the machinery that will train it. Josh composes the **combined Ext 1 + 2 model** and confirms all four toggle combinations (base / +Ext1 / +Ext2 / +both) run. Jake + Sankha stand up the **paired-seed harness** (§3.3) — one driver that runs all four variants at each of seeds 42–46 sharing data order, train-mask stream, and init RNG, so every variant-vs-base comparison is a *paired* difference. The same driver also runs base and Ext 1 in the **block-aware training regime** (§3.1), using a `mix` strategy Jake adds to `TrainMasker`. A 20-epoch dry-run confirms the pairing and logging are correct before the expensive full sweep in Week 7. Josh also builds the two checks §4.1 fixed for Ext 1's claim (an Ext 1-blind toggle and an off-grid block holdout), so that if Week 7's block contrast triggers them, Week 8 spends only compute. This is the last setup week; nothing here chases accuracy, it chases *correct experimental plumbing*.
 
 ## Assignment summary
-- **Josh** — Combined Ext 1 + 2 model; confirm both hooks compose and the model runs with all four toggle combinations
+- **Josh** — Combined Ext 1 + 2 model; confirm both hooks compose and the model runs with all four toggle combinations. Build §4.1's Ext 1 attribution checks ahead of need: the Ext 1-blind toggle and the off-grid block holdout (`M6-3`)
 - **Jake + Sankha** — Stand up the **paired-seed harness** (§3.3): one driver runs all four variants at each of seeds 42–46 sharing data order and RNG, plus base and Ext 1 in the block-aware regime; dry-run at 20 epochs to confirm pairing and logging. Jake also adds `TrainMasker`'s `mix` strategy, which the block-aware regime trains with (§3.1)
 
 ## Coordination notes
@@ -16,6 +16,7 @@
 - **Two training regimes, each paired only within itself** (§3.1). The random regime (all four variants, `TrainMasker`'s `random` strategy) is the headline sweep and the gate setup. The block-aware regime (base and Ext 1, `TrainMasker`'s `mix` strategy) exists because random training never shows a model a whole 3-hour all-feature gap inside otherwise dense data, which is exactly what `BlockEvalMasker` scores. Base and Ext 1 in the block-aware regime share seeds with each other; no contrast crosses regimes.
 - **The combined model is a composition test, not a tuning task.** The two hooks (`mask_emb`, `time_enc`) were built additive and independent precisely so `+both` is just both toggles on. Confirm it, don't re-engineer it.
 - **Dry-run before the real sweep.** 20 epochs × 4 variants × a couple of seeds is enough to prove pairing + logging are correct. Discovering a pairing bug during the 30-run Week-7 sweep is the expensive failure this dry-run prevents.
+- **Ext 1's checks are built now and run only if needed** (§4.1, fixed at the `M4-2` review before any result). They run in Week 8 (`M8-4`) only if Ext 1's block-aware contrast separates from zero; a null needs no control. Building them in a light week keeps a triggered check from crowding Week 8.
 
 ---
 
@@ -63,3 +64,23 @@
 - [ ] Dry-run completes for all four variants and the block-aware pair at ≥2 seeds; results under both holdouts land in the structured log.
 - [ ] Resuming/rerunning a `(variant, regime, seed)` cell reproduces its numbers.
 - [ ] Harness is config-driven and ready to scale to the full 30-run sweep (20 random-regime + 10 block-aware).
+
+---
+
+### `M6-3` — Ext 1 attribution checks, built ahead of need: blind toggle + off-grid block holdout
+- **Assignee:** @JoshOlu
+- **Labels:** `architecture`, `ext1-mask-embedding`, `eval`, `protocol`
+- **Blocked by:** `M2-4`, `M4-2`
+- **Blocks:** `M8-4`
+
+**Context.** §4.1 fixes two checks, before any result, that run only if Ext 1's block-aware contrast vs. base separates from zero (`M7-2`). Going from base to Ext 1 changes more than the mask information: it adds 106,305 weights (+26%) and a learned per-(hour, feature) vector in the denoiser input, and the block holdout and the `mix` strategy put every block on the same 16 fixed 3-hour slots, which the encoder's learned hour embedding can learn. **Ext 1-blind** keeps every weight and loses only the mask information; the **off-grid block holdout** moves the hidden windows off the training grid. Both are built now, while the Ext 1 track is light, so a triggered check in Week 8 (`M8-4`) costs only compute. Nothing here runs at scale.
+
+**Deliverables**
+- **Ext 1-blind:** a `model.mask_embedding_blind` toggle (default off; valid only with `model.use_mask_embedding`), read once by `models.build_model`. The model gives the encoder an all-ones mask in place of the conditioning mask on its training, validation and sampler paths. `diffusion.run.variant_name` gives it a name of its own (e.g. `ext1blind`), so its runs, wandb names and output folders never collide with Ext 1's.
+- **Off-grid block holdout:** a frozen holdout with `BlockEvalMasker`'s per-patient count and 3-hour window length whose windows do not sit on the 16-slot grid (for example, the slots shifted by a fixed offset), seeded and frozen like `BlockEvalMasker`, and exposed to `diffusion.score` as a holdout name of its own. `BlockEvalMasker` itself is unchanged.
+- Tests for both, and a README note.
+
+**Definition of Done**
+- [ ] Ext 1-blind's `mask_emb` is identical for any two conditioning masks; its starting weights at a seed equal Ext 1's; with the toggle off, Ext 1 is unchanged.
+- [ ] The off-grid holdout's per-patient counts equal `BlockEvalMasker`'s; its targets are identical across seeds and runs; no hidden window starts on a multiple of 3 hours; `BlockEvalMasker`'s targets are unchanged.
+- [ ] Both run end to end on a short run through `diffusion.run` and `diffusion.score`.
