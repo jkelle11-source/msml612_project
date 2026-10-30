@@ -1,0 +1,51 @@
+{
+ "check": "M4-2 overfit sanity check, Extension 1 (MissingnessEncoder)",
+ "variant": "ext1",
+ "n_parameters": 520370,
+ "status": "PASS",
+ "mae": 0.073282,
+ "rmse": 0.111391,
+ "mae_below": 0.1,
+ "zero_guess_mae": 0.689536,
+ "patients": [
+  133946,
+  134453,
+  133109,
+  134750,
+  137188,
+  138686,
+  133227,
+  139770,
+  141431,
+  134580
+ ],
+ "n_targets": 353,
+ "holdout": "the config's BlockEvalMasker, trained and scored on the same split",
+ "sampler": {
+  "seed": 2021,
+  "n_samples": 100,
+  "batch_size": 16
+ },
+ "seed": 42,
+ "epochs": 50,
+ "steps_per_epoch": 20,
+ "departure": "steps_per_epoch steps on the one batch per epoch; the training loop takes 1",
+ "loss_first_epoch": 0.639474,
+ "loss_last_epoch": 0.105037,
+ "encoder_grad_norm_last_step": 0.09762954711914062,
+ "encoder_gate_last_step": -0.14878545701503754,
+ "device": "cpu",
+ "machine": "macOS-27.2-arm64-arm-64bit-Mach-O",
+ "torch": "2.14.1",
+ "seconds": 844.1,
+ "base_reference": {
+  "note": "the same protocol without the encoder, for scale; not an effect of Ext 1",
+  "n_parameters": 414065,
+  "status": "FAIL",
+  "mae": 0.110888,
+  "rmse": 0.155283,
+  "loss_first_epoch": 0.63434,
+  "loss_last_epoch": 0.13667,
+  "seconds": 730.2
+ }
+}

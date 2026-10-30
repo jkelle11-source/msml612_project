@@ -29,17 +29,20 @@ models/        # reused CSDI model (denoiser + diffusion process), build_model
                #   (config -> model), and our extensions (MissingnessEncoder,
                #   ContinuousTimeEncoding).                                 [M1-2]
                #   BRITS, the learned baseline (brits.py).                  [M3-3]
+               #   Ext 1's MissingnessEncoder (missingness.py).             [M4-2]
 diffusion/     # training data feed, loop and random streams around the
                #   reused diffusion process; no schedule or q_sample of our
                #   own.                                                     [M2-1]
                #   Run entry point (run.py).                                [M3-1]
                #   Frozen scoring of a run (score.py), the gate (gate.py).  [M4-1]
+               #   Ext 1's overfit sanity check (overfit.py).               [M4-2]
 eval/          # EvalMasker / TrainMasker + masked, standardized metrics;
                #   EvalSampler (frozen-noise evaluation pass).              [M1-3]
                #   Mean and forward-fill baselines.                         [M2-3]
 results/       # recorded results (baselines.json).                         [M2-3]
                #   BRITS's record (learned_baseline.json).                  [M3-3]
                #   The reproduction gate's record (gate.json).              [M4-1]
+               #   Ext 1's overfit check (ext1_overfit.json).               [M4-2]
 configs/       # frozen protocol config (config.yaml).
 Docs/          # project plan + shared notes (e.g. CSDI_Objective.md).
 Milestones/    # per-milestone GitHub issue breakdown (M00-M10).
@@ -142,7 +145,8 @@ training loop:
   extension toggles (`model.use_mask_embedding`, `model.use_time_encoding`) once and builds
   each enabled extension's module into the model, after the parts every variant shares (see
   [Random streams](#random-streams-seed-pairing)). Until an extension exists, turning its
-  toggle on raises `NotImplementedError` instead of silently training the base model.
+  toggle on raises `NotImplementedError` instead of silently training the base model; since
+  M4-2 that is only `use_time_encoding`.
 - The model computes `mask_emb` and `time_enc` itself, on both its training-loss path and its
   sampler path, and hands them to the denoiser.
 - Every variant is therefore trained and scored through the same calls, and neither passes a
@@ -170,11 +174,11 @@ evaluation  model.evaluate(batch, n_samples, generator=...)   # frozen, via Eval
               -> diffmodel(x, side_info, t, mask_emb=..., time_enc=...)
 ```
 
-Nothing computes a hook yet, so `forward` and `evaluate` pass none and the model is the base.
-An extension (M4-2, M5-2) adds its module in `build_model`, computes its hook from
-`cond_mask` inside `forward` and `evaluate`, and hands it to `calc_loss` or `impute`; their
-signatures already accept it. The same hook is used at every reverse step, since it depends
-on the conditioning mask and not on the diffusion step.
+An extension adds its module in `build_model`, computes its hook from `cond_mask` inside
+`forward` and `evaluate`, and hands it to `calc_loss` or `impute`. Extension 1 does this
+since M4-2 (see [Extension 1](#extension-1-missingnessencoder-m4-2)); `time_enc` is still
+always `None` until M5-2. Each hook is computed once per call and the same tensor is used at
+every reverse step, since it depends on the conditioning mask and not on the diffusion step.
 
 Shapes, since the axes swap on the way in:
 
@@ -241,6 +245,16 @@ calls pass) the model computes exactly what it did before:
   input stream after the first projection, each vector at its own hour and feature.
 - `calc_loss`, `calc_loss_valid` and `impute` take the same two arguments and pass them to
   every denoiser call they make. `forward` and `evaluate` are unchanged.
+
+M4-2, Extension 1's slot in `main_model.py`. With `mask_encoder` left `None` (the default,
+and what `build_model` leaves when `model.use_mask_embedding` is off) the model computes
+exactly what it did before:
+
+- `CSDI_base.__init__` sets `self.mask_encoder = None`, after everything upstream builds.
+- `CSDI_base.get_mask_emb(cond_mask)` returns `None` without an encoder, and otherwise the
+  encoder's `mask_emb` from the conditioning mask, reordered to our `(B, T, D)`.
+- `forward` and `evaluate` call it once and pass `mask_emb` to `calc_loss`/`calc_loss_valid`
+  and `impute`.
 
 **Replaced** (M2-1): upstream's internal train masking. `get_randmask` draws from the global
 NumPy/torch RNGs, which would break seed pairing, so `models.build_model` sets
@@ -611,6 +625,92 @@ Tests:
   1 K and 2 PaO2.
 - `tests/test_eval_sampler.py`: `batches` byte-identical to `__call__`, and an abandoned pass
   handing the model back.
+
+---
+
+## Extension 1: MissingnessEncoder (M4-2)
+
+```text
+uv run python -m diffusion.run --seed 42 --use_mask_embedding   # or model.use_mask_embedding: true
+uv run python -m diffusion.overfit --device cpu             # the overfit sanity check
+```
+
+[`models/missingness.py`](models/missingness.py) is PROJECT_PLAN §4.1's dual-axis encoder,
+`MissingnessEncoder(n_features, n_timesteps, d_model, n_heads=2, n_layers=2)`. Every (hour,
+feature) is one token: its conditioning-mask bit projected to `d_model`, plus a learned feature
+embedding and a learned hour embedding. Each of the two layer pairs attends over the 48 hours
+within every feature, then over the 35 features within every hour, so the cross-feature
+structure of block missingness is visible to it. Its output, `(B, T, D, d_model)`, scaled by a
+learned gate that starts at 0, is the `mask_emb` hook, added to the denoiser input (see
+[Denoiser input-hook contract](#denoiser-input-hook-contract)).
+
+- **Toggle:** `model.use_mask_embedding`. `models.build_model` builds the encoder into the
+  model at the denoiser's width (`d_model = diffusion.channels`), after the shared parts, so a
+  run seed's shared weights start identical in base and Ext 1. The training loop and
+  `EvalSampler` are unchanged; the model computes `mask_emb` itself, once per call, on its
+  training, validation and sampler paths. Off, there is no encoder and the model is the base.
+- **Conditioning mask only.** The encoder reads `gt_mask` (`cond_mask`), never
+  `observed_mask`, which still marks the held-out targets (PROJECT_PLAN §3.1).
+- **Starts as base, trained end-to-end** with the rest of the model (M4-2 review). The output is
+  multiplied by a learned scalar `gate` that starts at 0, so at the start Ext 1 computes exactly
+  what base does, and the encoder's output enters only as far as training finds it useful.
+  Without it, the untrained encoder's output (RMS 1.0 per value on a real batch) outweighs the
+  denoiser input it is added to (RMS 0.62) from the first step; on the overfit check below,
+  that version started worse than base (first-epoch loss 0.672 against 0.634; gated, 0.639). Upstream
+  zero-initialises the denoiser's last layer, so step 1 trains only that layer; step 2 moves the
+  gate, whose gradient does not depend on its own value; from step 3, every encoder weight trains.
+- **Size and cost.** 106,305 more weights than base's 414,065 (+26%, at `channels: 64`). A
+  training step at batch 16 takes about 24% longer (244 against 197 ms, Apple M4 Pro, MPS);
+  scoring does not, since `mask_emb` is computed once per sampler call, not per reverse step.
+- Its dropout layers (PyTorch's default 0.1) draw from the global RNG, so as with any extra
+  dropout, dropout is not paired between base and Ext 1 (see
+  [Random streams](#random-streams-seed-pairing)).
+
+**Overfit sanity check: PASS.** `diffusion/overfit.py` trains Ext 1 on the first 10 train
+patients with `BlockEvalMasker`'s split as the conditioning mask, so the loss is taken on the
+very targets it then scores with the frozen sampler (2021, 100 draws, median). Recorded in
+[`results/ext1_overfit.json`](results/ext1_overfit.json): seed 42, CPU (Apple M4 Pro, torch
+2.14.1), 50 epochs, **block MAE 0.0733** (RMSE 0.1114) on 353 targets, against a bar of 0.1 and
+0.6895 for guessing zero; loss 0.639 in the first epoch, 0.105 in the last; encoder gradient
+norm 0.098 on the last step, and the gate at −0.149 from its start at 0 (its sign means
+nothing: the layers behind it can flip theirs). It shows the model with the encoder can fit,
+nothing about how Ext 1 imputes values it has not seen; whether Ext 1 helps waits for the
+paired 5-seed sweep (PROJECT_PLAN §4.1).
+
+Base, put through the same protocol and recorded beside it as `base_reference`, reaches 0.1109
+(FAIL), though it passed the reproduction gate on unseen patients (M4-1). The gap is not
+evidence for Ext 1. With each patient's conditioning mask fixed, the encoder's output acts as a
+fingerprint of patient and cell that a model can memorise answers against, and Ext 1 has 26%
+more weights to memorise with; neither carries over to unseen patients. What it does show is
+that the bar sits where the protocol, not only the model, decides PASS or FAIL.
+
+One departure from the issue's "50 epochs": 10 patients are one batch, so an epoch of the
+training loop is one optimizer step, and 50 steps leave a diffusion model far from fitting.
+Each epoch here is 20 steps on that batch (1,000 in all), with the config's lr, weight decay
+and learning-rate drops at 0.75 and 0.9 of the epochs. The protocol was settled on the encoder
+before it had a gate (exploratory runs, not recorded: about 0.55 after 50 steps, 0.10–0.19
+after 1,000 without the drops); that encoder reached 0.0751 on Josh's machine and 0.0738 on
+this one, and the gated encoder was run on the same protocol unchanged. Results reproduce bit
+for bit on one machine; another CPU's float rounding drifts over 1,000 steps, which is why the
+record names the machine and torch version.
+
+Tests:
+
+- `tests/test_missingness_encoder.py`: the output's shape; the layers matching the same layers
+  run one feature's hours and one hour's features at a time (the transposes); one mask value
+  reaching other hours of its feature and other features at its hour; on both the training and
+  the sampler path, the encoder given the conditioning mask in our axis order, and `mask_emb`
+  (and on the sampler path, the samples) unchanged when `observed_mask` changes and changed
+  when the conditioning mask does; the same `mask_emb` reaching every denoiser call on the
+  training, validation and sampler paths, computed once per call; off building no encoder; on
+  building it at the denoiser's width; shared weights identical to base; with the encoder
+  removed, base's loss and samples exactly; the gate starting at 0, so Ext 1's loss and samples
+  are base's exactly; the gate training first and the weights behind it after; nonzero
+  gradients on every encoder weight; the unchanged training loop training it.
+- `tests/test_overfit.py`: the check on the fake patients: the right patients and targets, the
+  record, gradients reaching the encoder and its gate opening, the base reference run the same
+  way without an encoder, the holdout following the config it is given, and the same seed
+  giving the same record.
 
 ---
 

@@ -25,13 +25,13 @@
 ### `M9-1` — Final best-config results table
 - **Assignee:** @SankhaS
 - **Labels:** `eval`, `stats`, `analysis`, `mvp`
-- **Blocked by:** `M7-2`, `M8-1`, `M8-2`
+- **Blocked by:** `M7-2`, `M8-1`, `M8-2`, `M8-4`
 - **Blocks:** `M10-2`
 
 **Context.** Consolidate the headline sweep, the ablation, and the runtime study into the single final results table the report and slides cite. Sankha owns it on the eval/stats track. This is where the confirmatory main effects and the exploratory interaction get their final, frozen numbers.
 
 **Deliverables**
-- Final table: all four variants (mean ± SE @10%, paired Δ ± SE), best-config selection justified, baselines included, block/random stratification retained, and Ext 1's block-aware-regime contrast (§3.1) reported beside it.
+- Final table: all four variants (mean ± SE @10%, paired Δ ± SE), best-config selection justified, baselines included, block/random stratification retained, and Ext 1's block-aware-regime contrast (§3.1) reported beside it, with its attribution checks from `M8-4` (Ext 1 vs. Ext 1-blind, and the off-grid Δ) beside that when they ran, or the note that they were not triggered.
 - A one-paragraph results summary stating which effects are SE-separated and which are null.
 
 **Definition of Done**

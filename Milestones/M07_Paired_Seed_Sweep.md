@@ -27,7 +27,7 @@
 - **Assignee:** @jkelle11-source
 - **Labels:** `diffusion`, `training`, `protocol`, `mvp`, `critical-path`
 - **Blocked by:** `M6-1`, `M6-2`
-- **Blocks:** `M7-2`, `M8-1`, `M8-2`, `M9-1`
+- **Blocks:** `M7-2`, `M8-1`, `M8-2`, `M8-4`, `M9-1`
 
 **Context.** Execute the experiment the whole project has been building toward: four variants × seeds 42–46 under common random numbers, upstream's fixed 200 epochs with the final weights scored (§3.1), plus base and Ext 1 × seeds 42–46 in the block-aware training regime (§3.1), which gives Ext 1 a fair test in its block-missingness regime. Base's final weights in the random regime are also scored at CSDI's two robustness rates, 50% and 90%: the 50% and 90% columns of §6's reproduced-CSDI row, which no other issue measures (gap found at `M4-1`). Jake owns it as the training-engine/harness-execution owner. The output is the raw per-(variant, regime, seed) results that feed the headline table, the ablation, and the runtime analysis.
 
@@ -50,7 +50,7 @@
 - **Assignee:** @SankhaS
 - **Labels:** `eval`, `stats`, `analysis`, `mvp`
 - **Blocked by:** `M7-1`, `M3-3`
-- **Blocks:** `M8-1`, `M9-1`
+- **Blocks:** `M8-1`, `M8-4`, `M9-1`
 
 **Context.** Turn the 30 runs into the defensible headline result (§3.3, §6). Compute each variant's mean ± SE and — the number that actually decides whether an extension "counts" — the **paired Δ vs. base with its SE**, stratified by block vs. random missingness. Sankha owns it on the eval/stats track. Main effects are confirmatory; the interaction is exploratory and will not be over-asserted at 5 seeds (§3.5).
 
@@ -59,7 +59,7 @@
 - A note under the table that our ± covers training randomness only: the test split is fixed, so every run scores the same 800 patients. The cited standard errors (CSDI, Table 3) also cover which patients were tested, because each of CSDI's five trials tested a different fifth of them (its Appendix E.2.1).
 - **Paired Δ vs. base ± SE** for each extension and for the combined model.
 - Stratified view: every variant and baseline under both frozen holdouts, random (`EvalMasker`) and block (`BlockEvalMasker`, `M2-4`), at the same 10% rate, so Ext 1's and Ext 2's honest regimes read separately.
-- **Ext 1's block contrast:** paired Δ ± SE of Ext 1 vs. base in the block-aware training regime, scored on the block holdout (§3.1, §4.1), with the random regime's block-holdout Δ beside it as a carry-over check.
+- **Ext 1's block contrast:** paired Δ ± SE of Ext 1 vs. base in the block-aware training regime, scored on the block holdout (§3.1, §4.1), with the random regime's block-holdout Δ beside it as a carry-over check. Whether it separates from zero is the trigger for Ext 1's attribution checks (`M8-4`), stated in one line as soon as it is known.
 - A written verdict per contrast: SE-separated effect vs. "no significant effect."
 
 **Definition of Done**
@@ -67,6 +67,7 @@
 - [ ] Paired Δ ± SE computed correctly (paired, not independent-means) and spot-checked by hand on one contrast.
 - [ ] Block/random stratification present: paired Δ ± SE reported under each holdout.
 - [ ] Block-aware Ext 1 vs. base contrast reported; no Δ pairs runs across the two regimes.
+- [ ] Whether that contrast separates from zero stated, so `M8-4` knows whether to run.
 - [ ] Every null explicitly labeled "no significant effect," none dropped or spun.
 
 ---
