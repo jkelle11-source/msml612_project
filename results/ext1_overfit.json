@@ -1,0 +1,36 @@
+{
+ "check": "M4-2 overfit sanity check, Extension 1 (MissingnessEncoder)",
+ "status": "PASS",
+ "mae": 0.07507,
+ "rmse": 0.110566,
+ "mae_below": 0.1,
+ "zero_guess_mae": 0.689536,
+ "patients": [
+  133946,
+  134453,
+  133109,
+  134750,
+  137188,
+  138686,
+  133227,
+  139770,
+  141431,
+  134580
+ ],
+ "n_targets": 353,
+ "holdout": "BlockEvalMasker.from_config(), trained and scored on the same split",
+ "sampler": {
+  "seed": 2021,
+  "n_samples": 100,
+  "batch_size": 16
+ },
+ "seed": 42,
+ "epochs": 50,
+ "steps_per_epoch": 20,
+ "departure": "steps_per_epoch steps on the one batch per epoch; the training loop takes 1",
+ "loss_first_epoch": 0.671895,
+ "loss_last_epoch": 0.110824,
+ "encoder_grad_norm_last_step": 0.053857095539569855,
+ "device": "cpu",
+ "seconds": 1528.2
+}

@@ -150,6 +150,13 @@ def test_validate_every_overrides_the_config_and_is_recorded(small_dataset, tmp_
     assert saved["validation"]["every_n_epochs"] == 2                       # tiny_config says 1
     assert ["val_mae" in row for row in curve] == [False, True, True]       # epoch 2, and the last
 
+def test_use_mask_embedding_trains_ext1_and_is_recorded(small_dataset, tmp_path):
+    launch(tmp_path, small_dataset, "--use_mask_embedding", "--out", str(tmp_path / "run"))
+    saved = yaml.safe_load((tmp_path / "run" / "config.yaml").read_text())
+    weights = torch.load(tmp_path / "run" / "model.pt")
+    assert saved["model"]["use_mask_embedding"] is True                     # the config says false
+    assert any(key.startswith("mask_encoder.") for key in weights)
+
 # --- an output folder holds one run -----------------------------------------------------
 
 def test_a_run_refuses_a_folder_that_is_not_empty(small_dataset, tmp_path):

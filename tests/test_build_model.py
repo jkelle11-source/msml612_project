@@ -51,9 +51,9 @@ def test_building_leaves_the_loaded_config_unchanged(config):
     build_model(config, "cpu")
     assert config == before
 
-@pytest.mark.parametrize("toggle", ["use_mask_embedding", "use_time_encoding"])
-def test_an_extension_toggle_raises_until_that_extension_exists(config, toggle):
-    config["model"][toggle] = True
+def test_an_extension_toggle_raises_until_that_extension_exists(config):
+    # Extension 1 exists since M4-2 (tests/test_missingness_encoder.py); Extension 2 until M5-2.
+    config["model"]["use_time_encoding"] = True
     with pytest.raises(NotImplementedError):
         build_model(config, "cpu")
 

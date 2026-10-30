@@ -54,6 +54,19 @@ class CSDI_base(nn.Module):
         self.alpha = np.cumprod(self.alpha_hat)
         self.alpha_torch = torch.tensor(self.alpha).float().to(self.device).unsqueeze(1).unsqueeze(1)
 
+        # ADAPTED (M4-2): ours. Extension 1's MissingnessEncoder, which models.build_model puts
+        # here when model.use_mask_embedding is on, after everything above is built. None (the
+        # default) computes no mask_emb, so the model is upstream's.
+        self.mask_encoder = None
+
+    # ADAPTED (M4-2): ours. mask_emb from the conditioning mask alone, never observed_mask,
+    # which still marks the held-out targets (README, input-hook contract). cond_mask is
+    # (B,K,L) here; the encoder takes and returns our (B,T,D) order.
+    def get_mask_emb(self, cond_mask):
+        if self.mask_encoder is None:
+            return None
+        return self.mask_encoder(cond_mask.permute(0, 2, 1))  # (B,L,K,channels)
+
     def time_embedding(self, pos, d_model=128):
         pe = torch.zeros(pos.shape[0], pos.shape[1], d_model).to(self.device)
         position = pos.unsqueeze(2)
@@ -225,10 +238,12 @@ class CSDI_base(nn.Module):
             cond_mask = self.get_randmask(observed_mask)
 
         side_info = self.get_side_info(observed_tp, cond_mask)
+        mask_emb = self.get_mask_emb(cond_mask)  # ADAPTED (M4-2)
 
         loss_func = self.calc_loss if is_train == 1 else self.calc_loss_valid
 
-        return loss_func(observed_data, cond_mask, observed_mask, side_info, is_train, generator=generator)  # ADAPTED (M2-1)
+        return loss_func(observed_data, cond_mask, observed_mask, side_info, is_train, generator=generator,  # ADAPTED (M2-1)
+                         mask_emb=mask_emb)  # ADAPTED (M4-2)
 
     def evaluate(self, batch, n_samples, generator=None):  # ADAPTED (M2-1): generator, see randn_like
         (
@@ -245,8 +260,10 @@ class CSDI_base(nn.Module):
             target_mask = observed_mask - cond_mask
 
             side_info = self.get_side_info(observed_tp, cond_mask)
+            mask_emb = self.get_mask_emb(cond_mask)  # ADAPTED (M4-2): once, reused at every reverse step
 
-            samples = self.impute(observed_data, cond_mask, side_info, n_samples, generator=generator)  # ADAPTED (M2-1)
+            samples = self.impute(observed_data, cond_mask, side_info, n_samples, generator=generator,  # ADAPTED (M2-1)
+                                  mask_emb=mask_emb)  # ADAPTED (M4-2)
 
             for i in range(len(cut_length)):  # to avoid double evaluation
                 target_mask[i, ..., 0 : cut_length[i].item()] = 0
