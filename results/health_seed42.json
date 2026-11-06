@@ -1,0 +1,110 @@
+{
+ "status": "health only, not an effect measurement",
+ "ticket": "M5-3",
+ "seed": 42,
+ "regime": "random",
+ "validation": {
+  "split": "val",
+  "holdout": "random",
+  "fraction": 0.1,
+  "n_samples": 5,
+  "batch_size": 64
+ },
+ "runs": {
+  "base": {
+   "run": "base_random_seed42",
+   "wandb_run": "DATA612/msml612-csdi/bqoimtqw",
+   "device": "mps",
+   "source": "the M4-1 gate run, reused (model.use_mask_embedding off is base exactly, M4-2 tests)",
+   "health": {
+    "n_steps": 500,
+    "finite": true,
+    "loss_first_tenth": 0.5061438006162643,
+    "loss_last_tenth": 0.31324435770511627,
+    "grad_norm_median": 0.7623361051082611,
+    "grad_norm_max": 7.356540203094482,
+    "grad_norm_max_step": 16,
+    "spikes": [],
+    "learning": true,
+    "collapsed": false,
+    "exploded": false,
+    "complete": true,
+    "healthy": true
+   },
+   "final_val_mae": 0.24639598871572943,
+   "forward_fill_val_mae": 0.436614,
+   "below_forward_fill": true,
+   "val_mae_by_epoch": {
+    "24": 0.30493775852813426,
+    "49": 0.26981543239489203,
+    "74": 0.26259868006665676,
+    "99": 0.25372340778857094,
+    "124": 0.26599334104043965,
+    "149": 0.25939472292581106,
+    "174": 0.24688031636685565,
+    "199": 0.24639598871572946
+   },
+   "train_seconds": 6048.0,
+   "val_seconds": 2693.6
+  },
+  "ext1": {
+   "run": "ext1_random_seed42",
+   "wandb_run": "DATA612/msml612-csdi/gwx2us22",
+   "device": "mps",
+   "health": {
+    "n_steps": 500,
+    "finite": true,
+    "loss_first_tenth": 0.506107152402401,
+    "loss_last_tenth": 0.30932591944932936,
+    "grad_norm_median": 0.8317219614982605,
+    "grad_norm_max": 7.340338230133057,
+    "grad_norm_max_step": 16,
+    "spikes": [],
+    "learning": true,
+    "collapsed": false,
+    "exploded": false,
+    "complete": true,
+    "healthy": true
+   },
+   "final_val_mae": 0.24564182892200845,
+   "forward_fill_val_mae": 0.436614,
+   "below_forward_fill": true,
+   "val_mae_by_epoch": {
+    "9": 0.3123491758668736,
+    "19": 0.2947589201524493,
+    "29": 0.28393899451536764,
+    "39": 0.28304492450043683,
+    "49": 0.2677252857868109,
+    "59": 0.26701327811759656,
+    "69": 0.2763386500773085,
+    "79": 0.2703912141560665,
+    "89": 0.26421637735597797,
+    "99": 0.25624246052786026,
+    "109": 0.2630410096127418,
+    "119": 0.2588560363800561,
+    "129": 0.25038323298965004,
+    "139": 0.2512552924368762,
+    "149": 0.25416773491355193,
+    "159": 0.24582325163961502,
+    "169": 0.24690692592713695,
+    "179": 0.2478785621757143,
+    "189": 0.24453530474744564,
+    "199": 0.24564182892200845
+   },
+   "train_seconds": 18009.8,
+   "val_seconds": 17322.9,
+   "mask_encoder_gate": -0.1558
+  },
+  "ext2": null
+ },
+ "config_differences": {
+  "model.use_mask_embedding": {
+   "base": false,
+   "ext1": true
+  },
+  "validation.every_n_epochs": {
+   "base": 25,
+   "ext1": 10
+  }
+ }
+}
