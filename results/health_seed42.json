@@ -10,12 +10,21 @@
   "n_samples": 5,
   "batch_size": 64
  },
+ "timings": "not comparable across runs: they ran on different machines (each run's machine)",
  "runs": {
   "base": {
    "run": "base_random_seed42",
    "wandb_run": "DATA612/msml612-csdi/bqoimtqw",
+   "tags": [
+    "base",
+    "gate",
+    "random",
+    "seed42"
+   ],
+   "commit": "9314475f8a0b361dc6b04c23315a07b61f118729",
    "device": "mps",
-   "source": "the M4-1 gate run, reused (model.use_mask_embedding off is base exactly, M4-2 tests)",
+   "machine": "Apple M4 Pro (20-core GPU, 24 GB)",
+   "note": "the M4-1 gate run, reused: base at dd787a5 retrains bit-for-bit identically to it over the first 500 steps on the same M4 Pro (M5-3 review)",
    "health": {
     "n_steps": 500,
     "finite": true,
@@ -31,7 +40,7 @@
     "complete": true,
     "healthy": true
    },
-   "final_val_mae": 0.24639598871572943,
+   "final_val_mae": 0.24639598871572946,
    "forward_fill_val_mae": 0.436614,
    "below_forward_fill": true,
    "val_mae_by_epoch": {
@@ -45,12 +54,26 @@
     "199": 0.24639598871572946
    },
    "train_seconds": 6048.0,
-   "val_seconds": 2693.6
+   "val_seconds": 2693.6,
+   "val_passes": 8,
+   "epoch_seconds_median": 30.1,
+   "slowest_epoch": {
+    "epoch": 0,
+    "seconds": 34.2
+   }
   },
   "ext1": {
    "run": "ext1_random_seed42",
    "wandb_run": "DATA612/msml612-csdi/gwx2us22",
+   "tags": [
+    "ext1",
+    "health",
+    "random",
+    "seed42"
+   ],
+   "commit": "dd787a58b47c15d7e0f28bb2dea506b2066fb239",
    "device": "mps",
+   "machine": "Apple M4 (8-core GPU, 16 GB)",
    "health": {
     "n_steps": 500,
     "finite": true,
@@ -93,9 +116,14 @@
    },
    "train_seconds": 18009.8,
    "val_seconds": 17322.9,
-   "mask_encoder_gate": -0.1558
-  },
-  "ext2": null
+   "val_passes": 20,
+   "epoch_seconds_median": 87.7,
+   "slowest_epoch": {
+    "epoch": 49,
+    "seconds": 454.9
+   },
+   "mask_encoder_gate": null
+  }
  },
  "config_differences": {
   "model.use_mask_embedding": {
