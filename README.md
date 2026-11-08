@@ -855,8 +855,9 @@ Tests:
 ## Health runs (M5-3)
 
 ```text
-uv run python -m diffusion.health bqoimtqw gwx2us22 \
-    --note "base=the M4-1 gate run, reused: base at dd787a5 retrains bit-for-bit identically to it over the first 500 steps on the same M4 Pro (M5-3 review)"
+uv run python -m diffusion.health bqoimtqw gwx2us22 8m16obhn \
+    --note "base=the M4-1 gate run, reused: base at dd787a5 and at c41b890 retrains bit for bit identically to it over the first 500 steps on the same M4 Pro (M5-3 review)" \
+    --note "ext1=trained at dd787a5: Ext 1 at c41b890 retrains bit for bit identically to Ext 1 at dd787a5 over the first 500 steps on one M4 Pro (M5-3)"
 ```
 
 **Health only, not an effect measurement.** Before the sweep, each variant trains its 200
@@ -869,47 +870,58 @@ recorded without its output folder, and writes
 - **The 500-step health report:** recomputed from the logged steps and checked against the one
   in the run's summary.
 - **Validation:** the final val MAE @10% against forward fill's, and the val curve.
-- **Timings:** training and validation seconds, the median epoch and the slowest one.
-- **Ext 1's gate:** read from the run's `model.pt`.
+- **Timings:** training and validation seconds, the median epoch and the slowest one; and which
+  runs shared a machine, since only those compare.
+- **Each extension encoder's gate:** read from the run's `model.pt` on wandb (or a local one
+  given with `--weights`). A gate starts at 0, so one that has moved shows the encoder in use.
 
 It refuses runs that are unfinished, at different seeds or regimes, or validated with different
-settings, and runs whose summary does not match their logged steps.
+settings; runs whose summary does not match their logged steps; and weights for a run without an
+encoder, or without its encoder's gate.
 
-| Variant | Run | Machine | 500-step health | Final val MAE @10% (5 draws) |
-|---|---|---|---|---|
-| base | `base_random_seed42`, the M4-1 gate run, reused | Apple M4 Pro | healthy | 0.2464 |
-| Ext 1 | `ext1_random_seed42` | Apple M4 | healthy | 0.2456 |
-| Ext 2 | waits on M5-2 | | | |
+| Variant | Run | Machine | 500-step health | Gate | Final val MAE @10% (5 draws) |
+|---|---|---|---|---|---|
+| base | `base_random_seed42`, the M4-1 gate run, reused | Apple M4 Pro | healthy | — | 0.2464 |
+| Ext 1 | `ext1_random_seed42` | Apple M4 | healthy | −0.156 (not yet on wandb) | 0.2456 |
+| Ext 2 | `ext2_random_seed42` | Apple M4 Pro | healthy | −0.053 | 0.2469 |
 
 Validation here is tracking only: 5 draws on the val split ([Launching a run](#launching-a-run-m3-1)),
-against forward fill's 0.4366. Each number is one seed, and the two ran on different machines,
-so they say nothing about whether Ext 1 helps (PROJECT_PLAN §3.3).
+against forward fill's 0.4366. Each number is one seed, so they say nothing about whether either
+extension helps (PROJECT_PLAN §3.3).
 
-- **Base is reused, not retrained.** The gate run was trained at `9314475`. Base at `dd787a5`,
-  the commit Ext 1 trained at, retrains bit for bit identically to it over the first 500 steps
-  on the same M4 Pro: every loss, gradient norm and learning rate (M5-3 review). The two runs'
-  configs differ only in `model.use_mask_embedding` and `validation.every_n_epochs` (25 for the
-  gate run, 10 for Ext 1). How often a run validates cannot change its training: every epoch
-  re-seeds the global RNG ([Random streams](#random-streams-seed-pairing)), and validation draws
-  its noise from the frozen sampling seed.
-- **Timings compare only on one machine.** Ext 1 took 5.0 h to train and 4.8 h to validate
-  (20 passes) on an Apple M4 with an 8-core GPU. Base took 1.7 h and 0.75 h (8 passes) on an M4
-  Pro with a 20-core GPU. A validation pass took 868 s against 337 s, 2.6 times as long, and
-  most of that is the machine. These runs cannot say what the encoder costs; PROJECT_PLAN §8
-  has that, measured on one machine. Ext 1's total includes one stalled epoch (epoch 49, 455 s
-  against a median of 88 s).
+- **The runs stand for the current code.** They trained at three commits: base (the M4-1 gate
+  run) at `9314475`, Ext 1 at `dd787a5`, and Ext 2 at `c41b890`, after M5-2 had changed
+  `models/build.py` and `models/csdi/main_model.py`. So each earlier run was checked against
+  `c41b890` on one M4 Pro over the first 500 steps: base retrains bit for bit identically to the
+  gate run (as it does at `dd787a5`), and Ext 1 to Ext 1 at `dd787a5`. Every loss, gradient norm
+  and learning rate matches (M5-3 review). The runs' configs differ only in the extension
+  toggles, in `model.time_encoding_dk` (which runs from before M5-2 do not have), and in
+  `validation.every_n_epochs` (10 for Ext 1, 25 for the others). How often a run validates cannot
+  change its training: every epoch re-seeds the global RNG
+  ([Random streams](#random-streams-seed-pairing)), and validation draws its noise from the frozen
+  sampling seed.
+- **Timings compare only on one machine.** Base and Ext 2 ran on one M4 Pro, so they compare:
+  Ext 2 took 6,254 s to train against base's 6,048 (3.4% more; a median epoch of 31.2 s against
+  30.1 s), and 341 s a validation pass against 337 s. That matches M5-2's short check. Ext 1 took
+  5.0 h to train and 4.8 h to validate (20 passes) on an Apple M4 with an 8-core GPU. Its
+  validation pass took 868 s against base's 337 s, 2.6 times as long, and most of that is the
+  machine. That run cannot say what the encoder costs; PROJECT_PLAN §8 has that, measured on one
+  machine. Ext 1's total includes one stalled epoch (epoch 49, 455 s against a median of 88 s).
 - **Ext 1's gate** moved from 0 to −0.156, as Sankha read it from the run's `model.pt`, so the
   encoder is in use. That file is on his machine, so the record's `mask_encoder_gate` is null
-  until it is uploaded to the wandb run, where `diffusion.health` reads it.
-- **Ext 2** gets its row when M5-2 lands: rerun the command with its run id added.
+  until it is uploaded to the wandb run; then rerun the command above.
+- **Ext 2's gate** moved from 0 to −0.053 (`time_encoder_gate`, read from the `model.pt` uploaded
+  to its wandb run), so its encoder is in use too.
 
 Tests:
 
 - `tests/test_health.py`: the record of hand-built runs, worked out by hand (health report,
-  val curve, timings, machine, config differences); wandb's row order and a nested or flattened
-  summary making no difference; a float wandb rounded in its last digit not counting as a
-  mismatch; each refusal; the gate read from a run's weights, and weights refused for a run
-  without the encoder; the command line resolving bare ids to the tracking project.
+  val curve, timings, machine, config differences); which runs share a machine; wandb's row order
+  and a nested or flattened summary making no difference; a float wandb rounded in its last digit
+  not counting as a mismatch; each refusal; each encoder's gate read from a run's weights (Ext 1's,
+  Ext 2's, both in Ext 1+2, null with no file), a run from before M5-2 reading as without Ext 2,
+  and weights refused for a run without an encoder or without its encoder's gate; the command line
+  resolving bare ids to the tracking project.
 
 ---
 

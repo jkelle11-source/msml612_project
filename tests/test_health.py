@@ -25,7 +25,8 @@ def fake_run(variant="base", every=2, val_mae=(0.30, 0.25), metadata=APPLE_M4_PR
     config = copy.deepcopy({k: v for k, v in CONFIG.items() if k != "tracking"})
     config["train"]["epochs"] = 4
     config["validation"]["every_n_epochs"] = every
-    config["model"]["use_mask_embedding"] = variant == "ext1"
+    config["model"]["use_mask_embedding"] = variant in ("ext1", "ext1+2")
+    config["model"]["use_time_encoding"] = variant in ("ext2", "ext1+2")
     config |= {"seed": 42, "variant": variant, "regime": "random", "device": "mps", "out_dir": f"/runs/{variant}"}
     history, maes = [], iter(val_mae)
     for step in range(4 * STEPS_PER_EPOCH):
@@ -47,6 +48,9 @@ def fake_run(variant="base", every=2, val_mae=(0.30, 0.25), metadata=APPLE_M4_PR
 
 def ext1_run(**kwargs):
     return fake_run("ext1", every=1, val_mae=(0.31, 0.29, 0.27, 0.24), run_id="run2", **kwargs)
+
+def ext2_run(**kwargs):
+    return fake_run("ext2", run_id="run3", **kwargs)
 
 # --- the record ---------------------------------------------------------------------------
 
@@ -80,6 +84,16 @@ def test_timings_compare_only_on_one_machine():
     t4 = record([fake_run(metadata=COLAB_T4), ext1_run(metadata=COLAB_T4)])
     assert t4["runs"]["base"]["machine"] == "Tesla T4" and t4["timings"] == "comparable: every run is on Tesla T4"
     assert record([fake_run(metadata={}), ext1_run()])["timings"].startswith("unknown")
+
+def test_timings_name_the_runs_that_share_a_machine():
+    # base and Ext 2 on the M4 Pro, Ext 1 on the M4: base and Ext 2 compare with each other only
+    assert record([fake_run(), ext1_run(metadata=APPLE_M4), ext2_run()])["timings"] == (
+        "not comparable across runs: they ran on different machines (each run's machine); "
+        "base and ext2 compare, on Apple M4 Pro (20-core GPU, 24 GB)")
+    three = record([fake_run(), ext1_run(), ext2_run(), fake_run("ext1+2", run_id="run4", metadata=COLAB_T4)])
+    assert three["timings"].endswith("; base, ext1 and ext2 compare, on Apple M4 Pro (20-core GPU, 24 GB)")
+    assert record([fake_run(), ext1_run(metadata=APPLE_M4)])["timings"] == \
+        "not comparable across runs: they ran on different machines (each run's machine)"
 
 def test_the_order_wandb_returns_rows_in_does_not_matter():
     shuffled = fake_run()
@@ -133,17 +147,41 @@ def test_a_note_for_a_variant_not_given_is_refused():
     with pytest.raises(ValueError, match="notes for variants not given"):
         record([fake_run()], notes={"ext2": "pending"})
 
-# --- Ext 1's gate -------------------------------------------------------------------------
+# --- the encoders' gates ------------------------------------------------------------------
 
 def test_the_gate_is_read_from_the_runs_weights():
     run = ext1_run()
     run["weights"] = {"mask_encoder.gate": torch.tensor(-0.15579)}
     assert record([fake_run(), run])["runs"]["ext1"]["mask_encoder_gate"] == -0.1558
 
-def test_weights_for_a_run_without_the_encoder_are_refused():
+def test_each_encoders_gate_is_recorded_and_only_its_own():
+    ext2, both = ext2_run(), fake_run("ext1+2", run_id="run4")
+    ext2["weights"] = {"time_encoder.gate": torch.tensor(-0.05326)}
+    both["weights"] = {"mask_encoder.gate": torch.tensor(0.12346), "time_encoder.gate": torch.tensor(-0.00726)}
+    runs = record([fake_run(), ext1_run(), ext2, both])["runs"]
+    gates = {variant: {k: v for k, v in entry.items() if k.endswith("_gate")} for variant, entry in runs.items()}
+    assert gates == {"base": {},                                    # no encoder, no gate
+                     "ext1": {"mask_encoder_gate": None},           # no model.pt: null, not left out
+                     "ext2": {"time_encoder_gate": -0.0533},
+                     "ext1+2": {"mask_encoder_gate": 0.1235, "time_encoder_gate": -0.0073}}
+
+def test_a_run_from_before_m5_2_has_no_time_encoding_toggle_and_reads_as_off():
+    old = fake_run()
+    del old["config"]["model"]["use_time_encoding"]
+    del old["config"]["model"]["time_encoding_dk"]
+    entry = record([old, ext2_run()])["runs"]["base"]
+    assert not any(key.endswith("_gate") for key in entry)
+
+def test_weights_for_a_run_without_an_encoder_are_refused():
     run = fake_run()
     run["weights"] = {"mask_encoder.gate": torch.tensor(0.0)}
-    with pytest.raises(ValueError, match="without Ext 1's encoder"):
+    with pytest.raises(ValueError, match="without an encoder"):
+        record([run])
+
+def test_weights_missing_an_encoders_gate_are_refused():
+    run = ext2_run()
+    run["weights"] = {"mask_encoder.gate": torch.tensor(-0.1558)}   # Ext 1's file given for Ext 2
+    with pytest.raises(ValueError, match="its weights have no time_encoder.gate"):
         record([run])
 
 # --- the command line ---------------------------------------------------------------------

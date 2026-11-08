@@ -1,6 +1,6 @@
 """The record of single-seed health runs (M5-3): every variant trains and validates end to end.
 
-    uv run python -m diffusion.health bqoimtqw gwx2us22 --note base="the M4-1 gate run, reused"
+    uv run python -m diffusion.health bqoimtqw gwx2us22 8m16obhn --note base="the M4-1 gate run, reused"
 
 Reads each training run from wandb, where ``diffusion.run`` streams everything it logs (M3-2),
 so a teammate's run is recorded without its output folder, and writes
@@ -13,20 +13,23 @@ its bare id in the config's ``tracking`` project. For each variant the record ho
 - the final val MAE @10%, forward fill's, and the val curve: tracking validation (``n_samples``
   draws on the val split), not the frozen protocol, which scores test with 100 (README, Scoring);
 - training and validation seconds, the median epoch, and the slowest one;
-- for a variant with Ext 1's encoder, the encoder's gate, read from the run's ``model.pt``: a
-  ``model.pt`` uploaded to the wandb run, or a local one given with ``--weights``. It is null
-  when neither is there.
+- for each extension encoder the variant has (Ext 1's, Ext 2's, or both in Ext 1+2), the
+  encoder's gate, read from the run's ``model.pt``: a ``model.pt`` uploaded to the wandb run, or a
+  local one given with ``--weights``. A gate starts at 0, so one that has moved shows the encoder
+  in use. It is null when neither file is there.
 
 **Health only, not an effect measurement** (M5-3): one seed, validation only. Whether a
 variant helps waits for the paired 5-seed sweep (PROJECT_PLAN §3.3).
 
 Timings compare only between runs on one machine: Ext 1's validation passes on an Apple M4 took
 2.6 times as long as base's on an M4 Pro, mostly because of the machine (M5-3 review). The record
-names each run's machine and says whether its timings compare.
+names each run's machine and says whether its timings compare, and, when not all of them do,
+which runs share a machine and so compare with each other.
 
 Refused: an unfinished run, runs at different seeds or regimes, two runs of one variant, runs
-validated with different settings, a run that logged fewer epochs than its config trains, and a
-run whose summary does not match its logged steps (health report, final val MAE).
+validated with different settings, a run that logged fewer epochs than its config trains, a run
+whose summary does not match its logged steps (health report, final val MAE), and weights given
+for a run without an encoder or without its encoder's gate.
 """
 
 import argparse
@@ -48,7 +51,10 @@ VALIDATION_KEYS = ("validation.n_samples", "validation.batch_size", "protocol.ev
                    "protocol.eval_sampling_seed", "protocol.eval_holdout_fraction")
 # TODO(M6-2): the block-aware regime validates on BlockEvalMasker's holdout (PROJECT_PLAN §3.1).
 HOLDOUT_OF_REGIME = {"random": "random"}
-GATE_KEY = "mask_encoder.gate"      # MissingnessEncoder.gate, as models.build_model names it
+# Each extension's toggle: its encoder's gate in model.pt, as models.build_model names it, and the
+# gate's field in the record. A run from before M5-2 has no use_time_encoding: off.
+GATES = {"use_mask_embedding": ("mask_encoder.gate", "mask_encoder_gate"),     # Ext 1, MissingnessEncoder
+         "use_time_encoding": ("time_encoder.gate", "time_encoder_gate")}      # Ext 2, ContinuousTimeEncoding
 
 def record_path(seed):
     return RESULTS / f"health_seed{seed}.json"
@@ -117,12 +123,17 @@ def run_entry(run, note=None):
     if scored and not same(scored[-1]["val/mae"], summary.get("final_val_mae")):
         problems.append(f"summary final_val_mae {summary.get('final_val_mae')} is not the last val MAE "
                         f"logged, {scored[-1]['val/mae']}")
-    gate = None
-    if run.get("weights") is not None:
-        if not config["model"]["use_mask_embedding"]:
-            problems.append("weights given for a run without Ext 1's encoder")
-        else:
-            gate = round(float(run["weights"][GATE_KEY]), 4)
+    encoders = [GATES[toggle] for toggle in GATES if config["model"].get(toggle, False)]
+    gates = {field: None for _, field in encoders}
+    weights = run.get("weights")
+    if weights is not None:
+        if not encoders:
+            problems.append("weights given for a run without an encoder")
+        for key, field in encoders:
+            if key in weights:
+                gates[field] = round(float(weights[key]), 4)
+            else:
+                problems.append(f"its weights have no {key}")
     if problems:
         raise ValueError(f"{run['path']} ({run['name']}): " + "; ".join(problems))
 
@@ -148,10 +159,22 @@ def run_entry(run, note=None):
         "val_passes": len(scored),
         "epoch_seconds_median": round(statistics.median(seconds), 1),
         "slowest_epoch": {"epoch": slowest["epoch"], "seconds": slowest["epoch/seconds"]},
+        **gates,
     }
-    if config["model"]["use_mask_embedding"]:
-        entry["mask_encoder_gate"] = gate
     return entry
+
+def timings(entries):
+    """Whether the runs' timings compare: all on one machine, or which of them share one."""
+    by_machine = {}
+    for variant, entry in entries.items():
+        by_machine.setdefault(entry["machine"], []).append(variant)
+    if None in by_machine:
+        return "unknown: a run's machine is not in its wandb metadata"
+    if len(by_machine) == 1:
+        return f"comparable: every run is on {next(iter(by_machine))}"
+    shared = [f"{', '.join(variants[:-1])} and {variants[-1]} compare, on {name}"
+              for name, variants in by_machine.items() if len(variants) > 1]
+    return "; ".join(["not comparable across runs: they ran on different machines (each run's machine)", *shared])
 
 def record(runs, notes=None, ticket="M5-3"):
     """The health record of ``runs`` (``fetch``'s dicts) at one seed; see the module docstring."""
@@ -178,7 +201,6 @@ def record(runs, notes=None, ticket="M5-3"):
         raise ValueError("; ".join(problems))
 
     entries = {run["config"]["variant"]: run_entry(run, notes.get(run["config"]["variant"])) for run in runs}
-    machines = {entry["machine"] for entry in entries.values()}
     first = runs[0]["config"]
     keys = sorted(set().union(*flat.values()))
     return {
@@ -190,9 +212,7 @@ def record(runs, notes=None, ticket="M5-3"):
                        "fraction": first["protocol"]["eval_holdout_fraction"],
                        "n_samples": first["validation"]["n_samples"],
                        "batch_size": first["validation"]["batch_size"]},
-        "timings": ("unknown: a run's machine is not in its wandb metadata" if None in machines
-                    else f"comparable: every run is on {machines.pop()}" if len(machines) == 1
-                    else "not comparable across runs: they ran on different machines (each run's machine)"),
+        "timings": timings(entries),
         "runs": entries,
         "config_differences": {key: {variant: leaves.get(key) for variant, leaves in flat.items()}
                                for key in keys if len({repr(leaves.get(key)) for leaves in flat.values()}) > 1},
@@ -212,7 +232,7 @@ def main(argv=None, fetch=fetch):
     parser = argparse.ArgumentParser(description="Record single-seed health runs from wandb (M5-3).")
     parser.add_argument("runs", nargs="+", help="wandb run paths (entity/project/id) or bare ids in the tracking project")
     parser.add_argument("--weights", action="append", default=[], metavar="VARIANT=PATH",
-                        help="a run's local model.pt, for Ext 1's gate when the wandb run has none (repeatable)")
+                        help="a run's local model.pt, for its encoders' gates when the wandb run has none (repeatable)")
     parser.add_argument("--note", action="append", default=[], metavar="VARIANT=TEXT",
                         help="a line saying where a run comes from, e.g. base='the M4-1 gate run, reused' (repeatable)")
     parser.add_argument("--ticket", default="M5-3")

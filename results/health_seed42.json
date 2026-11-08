@@ -10,7 +10,7 @@
   "n_samples": 5,
   "batch_size": 64
  },
- "timings": "not comparable across runs: they ran on different machines (each run's machine)",
+ "timings": "not comparable across runs: they ran on different machines (each run's machine); base and ext2 compare, on Apple M4 Pro (20-core GPU, 24 GB)",
  "runs": {
   "base": {
    "run": "base_random_seed42",
@@ -24,7 +24,7 @@
    "commit": "9314475f8a0b361dc6b04c23315a07b61f118729",
    "device": "mps",
    "machine": "Apple M4 Pro (20-core GPU, 24 GB)",
-   "note": "the M4-1 gate run, reused: base at dd787a5 retrains bit-for-bit identically to it over the first 500 steps on the same M4 Pro (M5-3 review)",
+   "note": "the M4-1 gate run, reused: base at dd787a5 and at c41b890 retrains bit for bit identically to it over the first 500 steps on the same M4 Pro (M5-3 review)",
    "health": {
     "n_steps": 500,
     "finite": true,
@@ -74,6 +74,7 @@
    "commit": "dd787a58b47c15d7e0f28bb2dea506b2066fb239",
    "device": "mps",
    "machine": "Apple M4 (8-core GPU, 16 GB)",
+   "note": "trained at dd787a5: Ext 1 at c41b890 retrains bit for bit identically to Ext 1 at dd787a5 over the first 500 steps on one M4 Pro (M5-3)",
    "health": {
     "n_steps": 500,
     "finite": true,
@@ -123,16 +124,78 @@
     "seconds": 454.9
    },
    "mask_encoder_gate": null
+  },
+  "ext2": {
+   "run": "ext2_random_seed42",
+   "wandb_run": "DATA612/msml612-csdi/8m16obhn",
+   "tags": [
+    "ext2",
+    "health",
+    "random",
+    "seed42"
+   ],
+   "commit": "c41b890238bdd750d0bd3764ccb63b3be3200141",
+   "device": "mps",
+   "machine": "Apple M4 Pro (20-core GPU, 24 GB)",
+   "health": {
+    "n_steps": 500,
+    "finite": true,
+    "loss_first_tenth": 0.5061683455109596,
+    "loss_last_tenth": 0.31091516494750976,
+    "grad_norm_median": 0.7783185839653015,
+    "grad_norm_max": 7.359429836273193,
+    "grad_norm_max_step": 16,
+    "spikes": [],
+    "learning": true,
+    "collapsed": false,
+    "exploded": false,
+    "complete": true,
+    "healthy": true
+   },
+   "final_val_mae": 0.24686286106212182,
+   "forward_fill_val_mae": 0.436614,
+   "below_forward_fill": true,
+   "val_mae_by_epoch": {
+    "24": 0.28797651035505045,
+    "49": 0.2741958131791601,
+    "74": 0.26787634110095704,
+    "99": 0.2540808340442294,
+    "124": 0.2588224739144189,
+    "149": 0.257372842420577,
+    "174": 0.24692616489977556,
+    "199": 0.24686286106212182
+   },
+   "train_seconds": 6253.7,
+   "val_seconds": 2731.1,
+   "val_passes": 8,
+   "epoch_seconds_median": 31.2,
+   "slowest_epoch": {
+    "epoch": 0,
+    "seconds": 33.4
+   },
+   "time_encoder_gate": -0.0533
   }
  },
  "config_differences": {
+  "model.time_encoding_dk": {
+   "base": null,
+   "ext1": null,
+   "ext2": 16
+  },
   "model.use_mask_embedding": {
    "base": false,
-   "ext1": true
+   "ext1": true,
+   "ext2": false
+  },
+  "model.use_time_encoding": {
+   "base": false,
+   "ext1": false,
+   "ext2": true
   },
   "validation.every_n_epochs": {
    "base": 25,
-   "ext1": 10
+   "ext1": 10,
+   "ext2": 25
   }
  }
 }
