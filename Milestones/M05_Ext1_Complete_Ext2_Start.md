@@ -56,10 +56,10 @@
 - Mechanical-health validation run on high-autocorrelation variables (gradients flow, loss drops, no NaNs).
 
 **Definition of Done**
-- [ ] Time2Vec is the concatenated form (1 linear + `d_k−1` sinusoidal), not summed linears.
-- [ ] `--use_time_encoding` on/off toggles cleanly; off == base; attention code unchanged.
-- [ ] At a seed, every variant's shared starting weights equal base's, the mask encoder's are equal in Ext 1 and Ext 1+2, and the time encoder's are equal in Ext 2 and Ext 1+2.
-- [ ] Nonzero gradients reach the encoder; loss drops without NaNs on a short run.
+- [x] Time2Vec is the concatenated form (1 linear + `d_k−1` sinusoidal), not summed linears.
+- [x] `--use_time_encoding` on/off toggles cleanly; off == base; attention code unchanged.
+- [x] At a seed, every variant's shared starting weights equal base's, the mask encoder's are equal in Ext 1 and Ext 1+2, and the time encoder's are equal in Ext 2 and Ext 1+2.
+- [x] Nonzero gradients reach the encoder; loss drops without NaNs on a short run.
 
 ---
 
