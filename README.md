@@ -31,12 +31,14 @@ models/        # reused CSDI model (denoiser + diffusion process), build_model
                #   BRITS, the learned baseline (brits.py).                  [M3-3]
                #   Ext 1's MissingnessEncoder (missingness.py).             [M4-2]
                #   Ext 2's δ from the conditioning mask (time_encoding.py). [M5-1]
+               #   Ext 2's ContinuousTimeEncoding (time_encoding.py).       [M5-2]
 diffusion/     # training data feed, loop and random streams around the
                #   reused diffusion process; no schedule or q_sample of our
                #   own.                                                     [M2-1]
                #   Run entry point (run.py).                                [M3-1]
                #   Frozen scoring of a run (score.py), the gate (gate.py).  [M4-1]
                #   Ext 1's overfit sanity check (overfit.py).               [M4-2]
+               #   Ext 2's mechanical health check (ext2_health.py).        [M5-2]
 eval/          # EvalMasker / TrainMasker + masked, standardized metrics;
                #   EvalSampler (frozen-noise evaluation pass).              [M1-3]
                #   Mean and forward-fill baselines.                         [M2-3]
@@ -44,6 +46,7 @@ results/       # recorded results (baselines.json).                         [M2-
                #   BRITS's record (learned_baseline.json).                  [M3-3]
                #   The reproduction gate's record (gate.json).              [M4-1]
                #   Ext 1's overfit check (ext1_overfit.json).               [M4-2]
+               #   Ext 2's health check (ext2_health.json).                 [M5-2]
 configs/       # frozen protocol config (config.yaml).
 Docs/          # project plan + shared notes (e.g. CSDI_Objective.md).
 Milestones/    # per-milestone GitHub issue breakdown (M00-M10).
@@ -144,10 +147,11 @@ training loop:
 
 - `models.build_model(config, device)` is the one place the model is built. It reads the
   extension toggles (`model.use_mask_embedding`, `model.use_time_encoding`) once and builds
-  each enabled extension's module into the model, after the parts every variant shares (see
-  [Random streams](#random-streams-seed-pairing)). Until an extension exists, turning its
-  toggle on raises `NotImplementedError` instead of silently training the base model; since
-  M4-2 that is only `use_time_encoding`.
+  each enabled extension's module into the model, after the parts every variant shares and
+  each from the init-RNG state right after them (see
+  [Random streams](#random-streams-seed-pairing)). Both extensions exist since M5-2, so every
+  toggle combination builds; until then, an extension's toggle raised `NotImplementedError`
+  instead of silently training the base model.
 - The model computes `mask_emb` and `time_enc` itself, on both its training-loss path and its
   sampler path, and hands them to the denoiser.
 - Every variant is therefore trained and scored through the same calls, and neither passes a
@@ -181,11 +185,12 @@ evaluation  model.evaluate(batch, n_samples, generator=...)   # frozen, via Eval
 
 An extension adds its module in `build_model`, computes its hook from `cond_mask` inside
 `forward` and `evaluate`, and hands it to `calc_loss` or `impute`. Extension 1 does this
-since M4-2 (see [Extension 1](#extension-1-missingnessencoder-m4-2)). Extension 2's path is
-in place since M5-1: `forward` and `evaluate` compute δ from `cond_mask` and hand it to
-`self.time_encoder`, but `time_enc` stays `None` until M5-2 builds that encoder. Each hook is
-computed once per call and the same tensor is used at every reverse step, since it depends on
-the conditioning mask and not on the diffusion step.
+since M4-2 (see [Extension 1](#extension-1-missingnessencoder-m4-2)), and Extension 2 since
+M5-2 (see [Extension 2](#extension-2-continuoustimeencoding-m5-2)): M5-1 put its path in
+place, `forward` and `evaluate` computing δ from `cond_mask` and handing it to
+`self.time_encoder`, and M5-2 builds that encoder. Each hook is computed once per call and the
+same tensor is used at every reverse step, since it depends on the conditioning mask and not on
+the diffusion step.
 
 Shapes, since the axes swap on the way in:
 
@@ -263,8 +268,8 @@ exactly what it did before:
 - `forward` and `evaluate` call it once and pass `mask_emb` to `calc_loss`/`calc_loss_valid`
   and `impute`.
 
-M5-1, Extension 2's slot, built the same way. With `time_encoder` left `None` (the default;
-`build_model` still refuses `model.use_time_encoding` until M5-2) the model computes exactly
+M5-1, Extension 2's slot, built the same way. With `time_encoder` left `None` (the default,
+and what `build_model` leaves when `model.use_time_encoding` is off) the model computes exactly
 what it did before, and computes no δ:
 
 - `main_model.py` imports `tslo` from `models.time_encoding`.
@@ -330,11 +335,21 @@ Rules:
 
 - Call `streams.seed_model_init()` right before building the model, and build the parts every
   variant shares before any extension module, so shared weights start identical.
+- **Each extension starts from the same draws in every variant that has it** (M5-2).
+  `models.build_model` saves the init RNG's state right after the shared parts
+  (`torch.get_rng_state()`) and restores it before building each extension, so the time encoder
+  starts from the same weights in Ext 2 and Ext 1+2, and the mask encoder from the same weights
+  in Ext 1 and Ext 1+2 as it did in M4-2. Without the restore, whichever encoder is built second
+  would be dealt later draws: at seed 42, Ext 1+2's time encoder would start with
+  `w0` = −0.9452 instead of Ext 2's −0.5433.
 - Call `streams.start_epoch(epoch)` at the top of every epoch, after the model is built. It
   re-seeds all four streams in place, so a DataLoader built once keeps working.
-- **Dropout is not paired across variants.** It draws from the global RNG, and a variant with
-  extra dropout layers consumes more of it. Shuffling, masks, timesteps and noise stay
-  identical regardless.
+- **Dropout is paired only between variants with the same dropout layers.** It draws from the
+  global RNG, and a variant with extra dropout layers consumes more of it. Ext 1's encoder has
+  dropout layers, so dropout is not paired between base and Ext 1 (or Ext 2 and Ext 1+2). Ext 2's
+  encoder has none, and `start_epoch` re-seeds the global RNG, so base and Ext 2 (and Ext 1 and
+  Ext 1+2) draw identical dropout masks (M5-2, tested). Shuffling, masks, timesteps and noise
+  stay identical regardless.
 - **Resuming needs no RNG state.** Because every stream is a function of the run seed and the
   epoch, a checkpoint taken at an epoch boundary needs only the model, the optimizer (plus
   the learning-rate scheduler) and the epoch number; the resumed run then ends
@@ -739,6 +754,99 @@ Tests:
   record, gradients reaching the encoder and its gate opening, the base reference run the same
   way without an encoder, the holdout following the config it is given, and the same seed
   giving the same record.
+
+---
+
+## Extension 2: ContinuousTimeEncoding (M5-2)
+
+```text
+uv run python -m diffusion.run --seed 42 --use_time_encoding   # or model.use_time_encoding: true
+uv run python -m diffusion.ext2_health                         # the mechanical health check
+```
+
+[`models/time_encoding.py`](models/time_encoding.py) is PROJECT_PLAN §4.2's true Time2Vec of
+TSLO δ, `ContinuousTimeEncoding(d_k, d_model)`. At every (hour, feature), δ (the hours since that
+feature was last visible to the model) becomes one linear feature, `w0(δ)`, and `d_k − 1` sine
+features, `sin(w(δ))`, concatenated (not summed: a sum of linear terms is still one linear term)
+and projected to `d_model` by one projection shared by every (hour, feature). Its output,
+`(B, T, D, d_model)`, scaled by a learned gate that starts at 0, is the `time_enc` hook, added to
+the denoiser input (see [Denoiser input-hook contract](#denoiser-input-hook-contract)).
+
+- **Toggle:** `model.use_time_encoding`. `models.build_model` builds the encoder at the
+  denoiser's width (`d_model = diffusion.channels`) with `d_k = model.time_encoding_dk` (16),
+  after the shared parts and from the init-RNG state right after them, so at a run seed it
+  starts from the same weights in Ext 2 and Ext 1+2 (see
+  [Random streams](#random-streams-seed-pairing)). The training loop and `EvalSampler` are
+  unchanged: the model computes δ with `tslo(cond_mask)`, and the encoding, once per call on its
+  training, validation and sampler paths (M5-1). Off, there is no encoder and no δ is computed.
+- **δ from the conditioning mask only** (M5-1), so a held-out target counts as unobserved; never
+  the dataset's `delta_obs`, which still counts the held-out targets as observed.
+- **Raw hours, gate from 0** (both settled in M5-2). Raw hours keep the waves informative from
+  the start: on δ / 48, with the layers' starting frequencies (at most 1 per hour), each wave is
+  nearly flat over its range. Untrained, though, the encoder's output (RMS 1.26 per value at
+  `d_k` 16, from 0.42 to 3.18 across five init seeds, on 64 training patients) outweighs the
+  denoiser input it is added to (0.67) by an amount that depends on the seed, mostly through the
+  linear feature, which grows with δ. The gate makes Ext 2 start out computing exactly what base
+  does. As with Ext 1, step 1 trains only upstream's zero-initialised last layer, step 2 moves the
+  gate, and from step 3 every encoder weight trains.
+- **Size and cost.** 1,121 more weights than base's 414,065 (+0.3%, at `channels: 64`). On the
+  health check below, a training epoch at batch 16 took 31 s against base's 30 s (Apple M4 Pro,
+  MPS), and a 5-draw validation pass 339 s against 335 s.
+- No dropout layers, so dropout stays paired between base and Ext 2 (see
+  [Random streams](#random-streams-seed-pairing)).
+
+**Mechanical health check: PASS.** `diffusion/ext2_health.py` trains Ext 2 at seed 42 through
+the unchanged `diffusion.run.run` for the fewest epochs that reach 500 steps (3 at batch 16, so
+525 steps), untracked, so the run's 500-step health report is complete. It then scores the
+validation split's HR and SysABP targets alone, with the run's own masker and frozen 5-draw
+sampler; SysABP stands in for SpO2, which is not one of our 35 features (PROJECT_PLAN §4.2).
+Recorded in [`results/ext2_health.json`](results/ext2_health.json) (MPS, Apple M4 Pro, torch
+2.14.1):
+
+| | Ext 2 | Base, same short run |
+| --- | --- | --- |
+| 500-step health | healthy | healthy |
+| Loss, first → last tenth of the 500 steps | 0.506 → 0.320 | 0.506 → 0.322 |
+| Gate (starts at 0) | −0.044 | — |
+| Encoder gradient norm, last step | 0.032 | — |
+| Val MAE @ 10% (5 draws) | 0.4731 | 0.4824 |
+| HR val MAE | 0.4729 (8.45 bpm) | 0.4684 (8.37 bpm) |
+| SysABP val MAE | 0.4670 (11.27 mmHg) | 0.4711 (11.37 mmHg) |
+
+PASS means the run is healthy, the gate has opened and gradients reach the encoder; nothing
+more. The two runs start almost identically (first-tenth loss 0.50617 against 0.50614) and share
+their three early gradient spikes (steps 5, 14 and 16), which therefore come from the data and
+the shared start, not from Ext 2. After 525 steps both sit above forward fill's 0.437 (the gate
+run needed 200 epochs to reach 0.246), and Ext 2 is ahead on SysABP and behind on HR. That is one
+seed at three epochs, so not an effect: whether Ext 2 helps waits for the paired 5-seed sweep.
+The config's two learning-rate drops both fall at epoch 2 of 3. Base is recorded beside it as
+`base_reference`, for scale.
+
+Tests:
+
+- `tests/test_time_encoding.py`, the M5-2 part: lesson 3's hand-worked weights (δ = 1 gives
+  `[0.1, 1.5]`, δ = 3 gives `[0.3, 0]`); the layers' shapes (1,121 weights at `d_k` 16,
+  `d_model` 64); the features equal to one linear feature then `d_k − 1` waves, concatenated,
+  worked out element by element; the linear feature growing past 1 while the waves stay in
+  [−1, 1]; the gate a parameter that starts at 0, so the output is exactly 0 although the
+  projection has a bias; each value its own vector from shared weights; at gate 0 only the gate
+  having a gradient, and every weight once it has moved; off building no encoder, on building it
+  at the config's `d_k` and the denoiser's width; at seed 42, every variant's shared weights equal
+  to base's, the mask encoder identical in Ext 1 and Ext 1+2 and to M4-2's, and the time encoder
+  identical in Ext 2 and Ext 1+2 (`w0` −0.5433); with the gate closed, Ext 2's loss, validation
+  loss and samples exactly those of the variant without it, and with it open, different; the gate
+  training first; nonzero gradients on every encoder weight after two steps; the unchanged
+  training loop training it; and a training step drawing no more from the global RNG than base's.
+- `tests/test_build_model.py`: every toggle combination builds, with exactly the encoders its
+  toggles ask for.
+- `tests/test_run.py`: `--use_time_encoding`, alone and with `--use_mask_embedding`, recorded in
+  the saved config, with the encoders' weights saved.
+- `tests/test_ext2_health.py`: `epochs_for` at its boundaries; `status` passing only a healthy
+  run whose gate has opened and whose encoder has gradients; `variable_mae` on a stand-in model
+  that guesses 0; and the whole check on the fake patients: Ext 2 then base through `run()`,
+  untracked, with Ext 1 turned off; a run under 500 steps not passed; the recorded gate equal to
+  the one in `model.pt`; `"all"` reproducing each run's own val MAE; and a rerun replacing its
+  folders and giving the same record.
 
 ---
 

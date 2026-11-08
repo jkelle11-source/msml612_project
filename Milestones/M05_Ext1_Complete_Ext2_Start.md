@@ -47,19 +47,19 @@
 - **Blocked by:** `M5-1`, `M2-2`
 - **Blocks:** `M6-1`
 
-**Context.** The TSLO encoder (§4.2): embed δ with a **true Time2Vec** (linear dim + sinusoidal dims, concatenated), project each (hour, feature) to `d_model`, and **add** it to the denoiser input via the `time_enc` hook. Jake owns it because it's the δ consumer and he owns δ. Toggle: `--use_time_encoding`. Validate on high-autocorrelation variables (HR, SpO2), where recency should matter most — but only for mechanical health this week.
+**Context.** The TSLO encoder (§4.2): embed δ with a **true Time2Vec** (linear dim + sinusoidal dims, concatenated), project each (hour, feature) to `d_model`, and **add** it to the denoiser input via the `time_enc` hook. Jake owns it because it's the δ consumer and he owns δ. Toggle: `--use_time_encoding`. Validate on high-autocorrelation variables (HR, and SysABP standing in for SpO2, which is not one of our 35 features; settled in M5-2), where recency should matter most — but only for mechanical health this week.
 
 **Deliverables**
-- `ContinuousTimeEncoding(d_k, d_model)`: `w0` linear (k=0) + `w` sinusoidal (k≥1), concatenated, projected `d_k → d_model` at each (hour, feature), output `(B, T, D, d_model)`.
+- `ContinuousTimeEncoding(d_k, d_model)`: `w0` linear (k=0) + `w` sinusoidal (k≥1), concatenated, projected `d_k → d_model` at each (hour, feature), output `(B, T, D, d_model)`. δ in raw hours, output scaled by a learned gate that starts at 0, `d_k` = 16 from `model.time_encoding_dk` (§4.2, settled in M5-2).
 - `--use_time_encoding` CLI toggle; default off reproduces base exactly; added to input, attention logits untouched.
 - Built in `models.build_model` after the shared parts, from the same init-RNG state as the mask encoder (§3.3, settled at the M4-2 review): save `torch.get_rng_state()` right after the shared parts and restore it before building each extension. The init RNG deals each module its starting weights in build order, so without the restore the time encoder would start from different weights in Ext 2 and Ext 1+2, and built before the mask encoder it would shift Ext 1+2's mask encoder instead.
 - Mechanical-health validation run on high-autocorrelation variables (gradients flow, loss drops, no NaNs).
 
 **Definition of Done**
-- [ ] Time2Vec is the concatenated form (1 linear + `d_k−1` sinusoidal), not summed linears.
-- [ ] `--use_time_encoding` on/off toggles cleanly; off == base; attention code unchanged.
-- [ ] At a seed, every variant's shared starting weights equal base's, the mask encoder's are equal in Ext 1 and Ext 1+2, and the time encoder's are equal in Ext 2 and Ext 1+2.
-- [ ] Nonzero gradients reach the encoder; loss drops without NaNs on a short run.
+- [x] Time2Vec is the concatenated form (1 linear + `d_k−1` sinusoidal), not summed linears.
+- [x] `--use_time_encoding` on/off toggles cleanly; off == base; attention code unchanged.
+- [x] At a seed, every variant's shared starting weights equal base's, the mask encoder's are equal in Ext 1 and Ext 1+2, and the time encoder's are equal in Ext 2 and Ext 1+2.
+- [x] Nonzero gradients reach the encoder; loss drops without NaNs on a short run.
 
 ---
 
