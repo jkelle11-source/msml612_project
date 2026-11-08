@@ -38,10 +38,10 @@
 - A shared debugging log capturing any seam issues (conditioning, alignment, masking) and their fixes.
 
 **Definition of Done**
-- [ ] Base CSDI trains without divergence; grad norms bounded through the first 500 steps.
-- [ ] Val MAE @10% (standardized) is below forward-fill (< 0.437, its val MAE from `M2-3`) on ≥1 seed.
-- [ ] Runs are launched from config + fixed seed and reproduce on a rerun.
-- [ ] Debugging log committed so Week-4 hardening starts from known state.
+- [x] Base CSDI trains without divergence; grad norms bounded through the first 500 steps.
+- [x] Val MAE @10% (standardized) is below forward-fill (< 0.437, its val MAE from `M2-3`) on ≥1 seed.
+- [x] Runs are launched from config + fixed seed and reproduce on a rerun.
+- [x] Debugging log committed so Week-4 hardening starts from known state.
 
 ---
 
@@ -58,9 +58,9 @@
 - A project workspace/dashboard the whole team can view, with runs named by `variant × seed` and, from Week 6, the training regime (random or block-aware, §3.1).
 
 **Definition of Done**
-- [ ] A base-CSDI run streams loss, val MAE/RMSE, grad norms, and config to wandb.
-- [ ] Run naming encodes variant + seed (+ training regime) so the Week-7 sweep is legible.
-- [ ] All three can open the shared workspace.
+- [x] A base-CSDI run streams loss, val MAE/RMSE, grad norms, and config to wandb.
+- [x] Run naming encodes variant + seed (+ training regime) so the Week-7 sweep is legible.
+- [x] All three can open the shared workspace.
 
 ---
 
@@ -79,7 +79,7 @@
 - A one-line note stating whether it's BRITS or the fallback, and why.
 
 **Definition of Done**
-- [ ] A learned baseline produces a logged MAE @10% in our harness, under both holdouts.
-- [ ] Mean, forward-fill and the learned baseline are logged to wandb.
-- [ ] Fallback (if used) is explicitly labeled in the results log and report notes.
-- [ ] Number stored where the Week-7 headline table can cite it (`results/learned_baseline.json`).
+- [x] A learned baseline produces a logged MAE @10% in our harness, under both holdouts.
+- [x] Mean, forward-fill and the learned baseline are logged to wandb.
+- [x] Fallback (if used) is explicitly labeled in the results log and report notes.
+- [x] Number stored where the Week-7 headline table can cite it (`results/learned_baseline.json`).

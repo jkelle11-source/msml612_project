@@ -35,9 +35,9 @@
 - Inference-path check that δ is computed from `EvalMasker`'s conditioning mask when sampling.
 
 **Definition of Done**
-- [ ] δ is computed from the conditioning mask on the train and inference paths, with correct shapes/batching; `delta_obs` never reaches the model.
-- [ ] Alignment unit test passes on a fixture with known masking, including a held-out target that `delta_obs` would have counted as observed.
-- [ ] Sampling with δ present runs without shape/NaN errors.
+- [x] δ is computed from the conditioning mask on the train and inference paths, with correct shapes/batching; `delta_obs` never reaches the model.
+- [x] Alignment unit test passes on a fixture with known masking, including a held-out target that `delta_obs` would have counted as observed.
+- [x] Sampling with δ present runs without shape/NaN errors.
 
 ---
 
