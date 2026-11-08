@@ -22,9 +22,9 @@ def build_model(conf, device):
 
     state = torch.get_rng_state()
 
-    # Extensions are built after the parts every variant shares, so those start 
+    # Extensions are built after the parts every variant shares, so those start
     # from the same weights in every variant of a run seed (README, Random streams).
-    # Each is built from the init-RNG state right after them (state), so an encoder 
+    # Each is built from the init-RNG state right after them (state), so an encoder
     # starts from the same weights in every variant that has it (PROJECT_PLAN §3.3, M5-2).
     if conf["model"]["use_mask_embedding"]:
         torch.set_rng_state(state)
