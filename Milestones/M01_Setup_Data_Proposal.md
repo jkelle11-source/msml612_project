@@ -38,10 +38,10 @@
 - uv-managed environment (`python ≥ 3.10`, `torch ≥ 2.1`, `einops`, `wandb`): dependencies declared in `pyproject.toml` and pinned in `uv.lock`. **All training runs on NVIDIA/CUDA.** Pin the exact `cuXXX` wheel to the training box's driver in M1-1.
 
 **Definition of Done**
-- [ ] Loader returns `(N, 48, D)` + mask for Set A; shapes and missingness rate (~80%) sanity-checked against the archive.
-- [ ] TSLO δ verified against a hand-computed example on 2–3 patients; δ resets to 0 at each observation.
-- [ ] z-score statistics are train-split-only (no val/test leakage) and the scaler round-trips (standardize → inverse ≈ identity).
-- [ ] `uv sync` reproduces the env from `uv.lock` from scratch on a teammate's machine.
+- [x] Loader returns `(N, 48, D)` + mask for Set A; shapes and missingness rate (~80%) sanity-checked against the archive.
+- [x] TSLO δ verified against a hand-computed example on 2–3 patients; δ resets to 0 at each observation.
+- [x] z-score statistics are train-split-only (no val/test leakage) and the scaler round-trips (standardize → inverse ≈ identity).
+- [x] `uv sync` reproduces the env from `uv.lock` from scratch on a teammate's machine.
 
 ---
 
@@ -61,9 +61,9 @@
 - README section citing the reused implementation (repo, commit, paper) and stating exactly what we adapt vs. reuse.
 
 **Definition of Done**
-- [ ] `git log`/README records the exact upstream source + commit.
-- [ ] A toy batch runs forward+backward through the denoiser without errors.
-- [ ] README reuse citation is committed and visible on the repo root.
+- [x] `git log`/README records the exact upstream source + commit.
+- [x] A toy batch runs forward+backward through the denoiser without errors.
+- [x] README reuse citation is committed and visible on the repo root.
 
 ---
 
@@ -81,10 +81,10 @@
 - Unit tests: `EvalMasker` targets byte-identical across seeds; `TrainMasker` targets differ across iterations; **eval targets never enter any conditioning input** (no leakage).
 
 **Definition of Done**
-- [ ] `EvalMasker` output is byte-identical across two different run seeds (test green).
-- [ ] `TrainMasker` output differs across iterations but is reproducible from a fixed seed, and is unaffected by draws from the global RNG (test green).
-- [ ] Leakage test proves no eval target appears in any conditioning tensor.
-- [ ] MAE/RMSE match a hand-computed value on a tiny fixture.
+- [x] `EvalMasker` output is byte-identical across two different run seeds (test green).
+- [x] `TrainMasker` output differs across iterations but is reproducible from a fixed seed, and is unaffected by draws from the global RNG (test green).
+- [x] Leakage test proves no eval target appears in any conditioning tensor.
+- [x] MAE/RMSE match a hand-computed value on a tiny fixture.
 
 ---
 
@@ -104,10 +104,10 @@
 - CSDI §§3–4 read together; a shared one-paragraph summary of the score-based imputation objective in `Docs/`.
 
 **Definition of Done**
-- [ ] All three PhysioNet accounts confirmed; Set A downloadable.
-- [ ] Repo skeleton merged; README documents layout + hook contract.
-- [ ] `EvalMasker` seed committed to a config file and referenced by `M1-3`.
-- [ ] Shared CSDI-objective note committed.
+- [x] All three PhysioNet accounts confirmed; Set A downloadable.
+- [x] Repo skeleton merged; README documents layout + hook contract.
+- [x] `EvalMasker` seed committed to a config file and referenced by `M1-3`.
+- [x] Shared CSDI-objective note committed.
 
 ---
 
@@ -124,6 +124,6 @@
 - Explicit statement of the honesty-aware performance framing (§7) and the code-reuse decision with citation (§0).
 
 **Definition of Done**
-- [ ] Proposal submitted by **Wed Oct 8**.
-- [ ] All three co-authored / reviewed it (each section has a reviewer other than its author).
-- [ ] Reuse-of-CSDI decision and citation stated in the proposal.
+- [x] Proposal submitted by **Wed Oct 8**.
+- [x] All three co-authored / reviewed it (each section has a reviewer other than its author).
+- [x] Reuse-of-CSDI decision and citation stated in the proposal.
