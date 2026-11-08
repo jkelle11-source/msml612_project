@@ -49,6 +49,7 @@
 - `d_model ∈ {64, 128, 256}` sweep on the best variant, 3 seeds, `n_heads = 8` fixed (§3.6).
 - Diffusion-steps `T ∈ {50, 100, 200}` sweep (each a full retrain), best variant, 3 seeds — or at a single `d_model` if compute is tight, with that noted.
 - Mask-encoder layers `∈ {1, 2, 3}` for the two encoder-bearing variants, 3 seeds, reported under the block holdout (`BlockEvalMasker`, Ext 1's primary regime) as well as the random one.
+- Before that study, a config key for the mask encoder's layer count: `models.build_model` builds `MissingnessEncoder` with its default `n_layers = 2` (layer pairs, one temporal and one feature layer each), so nothing yet varies it. Default it to 2 so earlier runs are unchanged, and have it reach each run's saved config (README, Ext 1's hand-off note, `M5-3`).
 - Results folded into the results store with paired-Δ ± SE; null cells labeled.
 
 **Definition of Done**
