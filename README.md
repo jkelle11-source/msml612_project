@@ -39,6 +39,7 @@ diffusion/     # training data feed, loop and random streams around the
                #   Frozen scoring of a run (score.py), the gate (gate.py).  [M4-1]
                #   Ext 1's overfit sanity check (overfit.py).               [M4-2]
                #   Ext 2's mechanical health check (ext2_health.py).        [M5-2]
+               #   Single-seed health record from wandb (health.py).        [M5-3]
 eval/          # EvalMasker / TrainMasker + masked, standardized metrics;
                #   EvalSampler (frozen-noise evaluation pass).              [M1-3]
                #   Mean and forward-fill baselines.                         [M2-3]
@@ -47,6 +48,7 @@ results/       # recorded results (baselines.json).                         [M2-
                #   The reproduction gate's record (gate.json).              [M4-1]
                #   Ext 1's overfit check (ext1_overfit.json).               [M4-2]
                #   Ext 2's health check (ext2_health.json).                 [M5-2]
+               #   Single-seed health runs (health_seed42.json).            [M5-3]
 configs/       # frozen protocol config (config.yaml).
 Docs/          # project plan + shared notes (e.g. CSDI_Objective.md).
 Milestones/    # per-milestone GitHub issue breakdown (M00-M10).
@@ -737,6 +739,39 @@ this one, and the gated encoder was run on the same protocol unchanged. Results 
 for bit on one machine; another CPU's float rounding drifts over 1,000 steps, which is why the
 record names the machine and torch version.
 
+**Hand-off to the combined model (M5-3).** What `M6-1` needs to compose Ext 1 with Ext 2 into
+the four variants:
+
+- **Finalized.** `models/missingness.py` is unchanged since M4-2. M5-2's change to
+  `models.build_model` (each encoder built from the init-RNG state right after the shared parts)
+  leaves Ext 1's starting weights where M4-2 had them, and Ext 1 at `c41b890` retrains bit for
+  bit identically to Ext 1 at `dd787a5` over 500 steps. Its 200-epoch health run is healthy, with
+  its gate opened to −0.159 ([Health runs](#health-runs-m5-3)).
+- **Flags.** `--use_mask_embedding` on `diffusion.run`, or `model.use_mask_embedding: true`
+  (default `false`), is Ext 1's only switch, independent of `--use_time_encoding`. With both on,
+  the variant is `ext1+2` and a run is named `ext1+2_<regime>_seed<seed>`. Ext 1 has no config
+  key of its own: `d_model` is `diffusion.channels` (64; the `d_model` sweep resizes both
+  encoders with it), `n_features` and `n_timesteps` come from `data` (35 and 48), and its 2 heads
+  and 2 layer pairs are `MissingnessEncoder`'s defaults. M8-1's mask-encoder-layers study will
+  need a config key for the layers.
+- **Shapes.** `CSDI_base.get_mask_emb` gives the encoder the conditioning mask, permuted from
+  upstream's `(B, K, L)` to our `(B, T, D)` = `(B, 48, 35)`. It returns `mask_emb`,
+  `(B, T, D, d_model)` = `(B, 48, 35, 64)`, already scaled by its gate (`mask_encoder.gate` in
+  `model.pt`). The denoiser checks that shape and adds `mask_emb`, permuted to
+  `(B, channels, K, L)`, to its projected input; `time_enc` has the same shape and is added the
+  same way after it. The two are separate additions from the same conditioning mask, and neither
+  encoder reads the other's output. Each is computed once per model call: once per training
+  step, and once per sampler call, reused at every reverse step.
+- **Composes with Ext 2** (tests): every toggle combination builds (`tests/test_build_model.py`);
+  both flags together train through `diffusion.run` and save both encoders (`tests/test_run.py`);
+  the two hooks add together in the denoiser (`tests/test_denoiser_hooks.py`); at a run seed the
+  mask encoder starts from the same weights in Ext 1 and Ext 1+2, and the shared weights from
+  base's; and Ext 1 changes a working Ext 2 exactly as it changes base: with its gate at 0,
+  Ext 1+2 computes exactly Ext 2, and with it open, something else, on the training, validation
+  and sampler paths (`tests/test_time_encoding.py`). As between base and Ext 1, dropout is not
+  paired between Ext 2 and Ext 1+2: Ext 1's dropout draws from the global RNG
+  ([Random streams](#random-streams-seed-pairing)).
+
 Tests:
 
 - `tests/test_missingness_encoder.py`: the output's shape; the layers matching the same layers
@@ -822,6 +857,11 @@ seed at three epochs, so not an effect: whether Ext 2 helps waits for the paired
 The config's two learning-rate drops both fall at epoch 2 of 3. Base is recorded beside it as
 `base_reference`, for scale.
 
+Ext 2's full 200-epoch health run is healthy, with its gate opened to −0.053
+([Health runs](#health-runs-m5-3)). For composing it with Ext 1 in `M6-1`, see
+[Hand-off to the combined model](#extension-1-missingnessencoder-m4-2) in Extension 1's section,
+which covers both hooks.
+
 Tests:
 
 - `tests/test_time_encoding.py`, the M5-2 part: lesson 3's hand-worked weights (δ = 1 gives
@@ -850,6 +890,81 @@ Tests:
 
 ---
 
+## Health runs (M5-3)
+
+```text
+uv run python -m diffusion.health bqoimtqw t504tr0f 8m16obhn \
+    --note "base=the M4-1 gate run, reused: base at dd787a5 and at c41b890 retrains bit for bit identically to it over the first 500 steps on the same M4 Pro (M5-3 review)" \
+    --note "ext1=rerun on the M4 Pro so every run is on one machine; replaces Sankha's run gwx2us22 on an Apple M4 (healthy, final val MAE 0.2456, gate -0.156 as he read it), which diverges from this one from step 8 (M5-3)"
+```
+
+**Health only, not an effect measurement.** Before the sweep, each variant trains its 200
+epochs at seed 42 through `diffusion.run`, validated as it goes, to show that it trains and
+evaluates end to end. `diffusion/health.py` reads the runs from wandb, so a teammate's run is
+recorded without its output folder, and writes
+[`results/health_seed42.json`](results/health_seed42.json). For each variant the record has:
+
+- **Where the run came from:** its wandb path, tags, commit, device and machine.
+- **The 500-step health report:** recomputed from the logged steps and checked against the one
+  in the run's summary.
+- **Validation:** the final val MAE @10% against forward fill's, and the val curve.
+- **Timings:** training and validation seconds, the median epoch and the slowest one; and which
+  runs shared a machine, since only those compare.
+- **Each extension encoder's gate:** read from the run's `model.pt` on wandb (or a local one
+  given with `--weights`). A gate starts at 0, so one that has moved shows the encoder in use.
+
+It refuses runs that are unfinished, at different seeds or regimes, or validated with different
+settings; runs whose summary does not match their logged steps; and weights for a run without an
+encoder, or without its encoder's gate.
+
+All three runs are on one Apple M4 Pro (20-core GPU), validated every 25 epochs:
+
+| Variant | Run | 500-step health | Gate | Training | Validation pass | Final val MAE @10% (5 draws) |
+|---|---|---|---|---|---|---|
+| base | `bqoimtqw`, the M4-1 gate run, reused | healthy | — | 6,048 s | 337 s | 0.2464 |
+| Ext 1 | `t504tr0f` | healthy | −0.159 | 7,570 s (+25%) | 338 s | 0.2433 |
+| Ext 2 | `8m16obhn` | healthy | −0.053 | 6,254 s (+3.4%) | 341 s | 0.2469 |
+
+Validation here is tracking only: 5 draws on the val split ([Launching a run](#launching-a-run-m3-1)),
+against forward fill's 0.4366. Each number is one seed, so they say nothing about whether either
+extension helps (PROJECT_PLAN §3.3).
+
+- **The runs stand for the current code.** They trained at three commits: base (the M4-1 gate
+  run) at `9314475`, Ext 2 at `c41b890`, after M5-2 had changed `models/build.py` and
+  `models/csdi/main_model.py`, and Ext 1 at `a6e4deb`, whose training code is `c41b890`'s. Base
+  at `c41b890` retrains bit for bit identically to the gate run over the first 500 steps on this
+  M4 Pro, as it does at `dd787a5`: every loss, gradient norm and learning rate (M5-3 review). The
+  runs' configs differ only in the extension toggles and in `model.time_encoding_dk`, which runs
+  from before M5-2 do not have.
+- **Both gates have moved from 0**, so both encoders are in use: Ext 1's to −0.159
+  (`mask_encoder_gate`) and Ext 2's to −0.053 (`time_encoder_gate`), read from the `model.pt`
+  uploaded to each wandb run.
+- **What the encoders cost** (one run each, one machine). Ext 1 trains 25% longer than base
+  (a median epoch of 37.8 s against 30.1 s), in line with PROJECT_PLAN §8's 24% per step; Ext 2,
+  3.4% longer (31.2 s), in line with M5-2's short check. A validation pass costs about the same
+  for all three, 337–341 s.
+- **Ext 1 was rerun on this machine.** Sankha's run (`gwx2us22`, at `dd787a5`) was on an Apple
+  M4 with an 8-core GPU, validated every 10 epochs: also healthy, with final val MAE 0.2456 and
+  gate −0.156 as he read it from its `model.pt`, which is not on wandb. It took 5.0 h to train
+  and 868 s a validation pass, 2.6 times as long as here, so that was the machine, not the
+  encoder. The two Ext 1 runs share their code and seed but first differ at step 8 by float
+  rounding: training is bit-identical only on one kind of chip, which is why every paired run
+  goes on one GPU model (PROJECT_PLAN §3.3). The rerun itself repeats, bit for bit over its first
+  500 steps, a separate 500-step run of Ext 1 at `c41b890` on this M4 Pro, which in turn matches
+  Ext 1 at `dd787a5`.
+
+Tests:
+
+- `tests/test_health.py`: the record of hand-built runs, worked out by hand (health report,
+  val curve, timings, machine, config differences); which runs share a machine; wandb's row order
+  and a nested or flattened summary making no difference; a float wandb rounded in its last digit
+  not counting as a mismatch; each refusal; each encoder's gate read from a run's weights (Ext 1's,
+  Ext 2's, both in Ext 1+2, null with no file), a run from before M5-2 reading as without Ext 2,
+  and weights refused for a run without an encoder or without its encoder's gate; the command line
+  resolving bare ids to the tracking project.
+
+---
+
 ## Environment
 
 The environment is managed with [uv](https://docs.astral.sh/uv/): dependencies are declared
@@ -862,6 +977,41 @@ with `pytest` in the dev group.
 `cu130` index (CUDA 13.0, matching Colab's driver), so the lock resolves `torch 2.14.1+cu130`
 there. macOS and Windows resolve the plain PyPI wheel (CPU/MPS), so local tests still run with
 no extra config.
+
+**Every run in a paired comparison trains and is scored on one GPU model: a Colab T4, unless
+the M6 timing test picks a faster one** (PROJECT_PLAN §3.3). The rule was settled at the M5-3
+review; the GPU itself stays open until that test. The rule covers the M6 dry run, the Week-7
+sweep, and the Week-8 ablation and attribution checks: every variant, regime and seed.
+Deterministic kernels ([Training](#training)) make reruns bit-identical only on one kind of GPU.
+On another, float rounding differs from the first optimizer step: base at seed 42, with the same
+code and learning rate, gave the same loss on a T4 and on an M4 Pro at step 0, and losses 0.002
+apart by step 10. So a seed whose base ran on one GPU and whose Ext 1 ran on another is not
+paired. When the chosen GPU is not free, wait for one; never take another GPU.
+
+Why the T4 is the default:
+
+- It is the one GPU on every Colab tier, so all three of us can get it.
+- The plan's budget is timed on it (PROJECT_PLAN §8).
+- It has no TF32, so it computes in float32 throughout. An A100, L4 or H100 runs the denoiser's
+  convolutions in TF32 by default (`torch.backends.cudnn.allow_tf32` is `True` in torch
+  2.14.1), and nothing here turns that off.
+
+It is also Colab's slowest GPU, and Week 7 is about 270 T4-hours. So before the dry run, M6-2
+times training and scoring on each GPU everyone who runs a paired run can get (T4, L4 and A100
+on Colab Pro). It picks the one that finishes the sweep soonest, counting how often it is free
+and its compute units. If the pick has TF32, the setting is made explicit and is the same for
+every run. The pick and its timings are recorded here.
+
+Check the GPU before launching:
+
+```text
+!nvidia-smi --query-gpu=name --format=csv,noheader
+```
+
+It should print the chosen GPU's name (`Tesla T4` for the T4). wandb records each run's GPU in
+its metadata, and `diffusion.health` copies it into its record. Health checks and debugging can run on any machine, but their
+timings compare only with runs on the same machine
+([Health runs](#health-runs-m5-3)).
 
 Colab notebook cells run Colab's own Python, not this environment, so launch project code
 with `uv run` from a shell cell:

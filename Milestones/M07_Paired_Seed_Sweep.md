@@ -13,7 +13,7 @@
 - **Josh** — Qualitative trajectories (5 patients × 3 variables: HR, serum sodium, GCS); temporal coherence vs. mean/forward-fill
 
 ## Coordination notes
-- **GPU access is the schedule risk** (§8). 30 × 200-epoch runs need reliable single-GPU time: on a Colab T4, about 44 h of training and 190 h of test scoring (§8 risk register); if it's shared/queued, start Monday and checkpoint aggressively so a preemption doesn't cost a whole cell. Run the 20 random-regime runs first: if time runs out, the 10 block-aware runs drop to 3 seeds and the block contrast is labelled exploratory (§8 risk register). Base's 50%/90% scoring (10 passes, about 34 h) comes last and is the first cut: to seeds 42–44, as the gate, stated as such.
+- **GPU access is the schedule risk** (§8). 30 × 200-epoch runs need reliable single-GPU time: on a Colab T4, about 44 h of training and 190 h of test scoring (§8 risk register). Every run trains and is scored on the GPU `M6-2`'s timing test picked (§3.3; a T4 unless it found a faster one), and the hours above shrink if it did. When that GPU is not free, a run waits rather than taking another GPU, which would unpair it from its seed's other variants. If it's shared/queued, start Monday and checkpoint aggressively so a preemption doesn't cost a whole cell. Run the 20 random-regime runs first: if time runs out, the 10 block-aware runs drop to 3 seeds and the block contrast is labelled exploratory (§8 risk register). Base's 50%/90% scoring (10 passes, about 34 h) comes last and is the first cut: to seeds 42–44, as the gate, stated as such.
 - **Report the paired Δ, not two independent means** (§3.3). The SE of the paired difference is what separates signal from noise here; expected gains (~0.01–0.02) are the same magnitude as CSDI's masking sensitivity, which is *why* masking is frozen and seeds are paired (§6).
 - **Nulls are findings, stated as such** (§3.5, §7). An overlapping error bar is "no significant effect," reported plainly. This is the honesty bar the whole grade strategy leans on.
 - Block-vs-random stratification matters: Ext 1's honest home is **block missingness** and Ext 2's is **high-autocorrelation variables** (§4.1, §4.2), so the table must let those regimes be read separately.
@@ -35,13 +35,14 @@
 - 30 completed 200-epoch runs, checkpointed and tracked in wandb: 4 variants × 5 seeds in the random regime, then base and Ext 1 × 5 seeds in the block-aware regime.
 - Per-run final MAE/RMSE @10% (standardized) under both holdouts (random `EvalMasker`, block `BlockEvalMasker`; §3.1) written to the structured results store, tagged by variant + regime + seed + holdout. Scores come from each run's final weights; validation MAE, tracked for the curves only, uses the holdout the regime trains for: `EvalMasker`'s in the random regime, `BlockEvalMasker`'s in the block-aware regime.
 - Base (random regime) × seeds 42–46 also scored at 50% and 90%: `EvalMasker` at `protocol.robustness_fractions`, frozen sampler, final weights (`diffusion.score --fraction 0.5` and `--fraction 0.9`, `M4-1`). 10 passes of about 3.4 h each, scored after the 30 runs, recorded in the results store with the fraction in the key, and their mean ± SE filling §6's reproduced-CSDI row at 50% and 90%. If compute runs short this is cut first, to seeds 42–44 as in the gate, and the cut is stated.
-- A run manifest (config, regime, seed, wall-clock, checkpoint path) for reproducibility and the runtime study.
+- A run manifest (config, regime, seed, GPU, wall-clock, checkpoint path) for reproducibility and the runtime study.
 
 **Definition of Done**
 - [ ] All 30 cells complete (or any incomplete cell is documented with cause + plan; a block-aware regime cut to 3 seeds is stated as exploratory).
 - [ ] Results land in the structured store keyed by `(variant, regime, seed)`.
 - [ ] Runs are resumable from checkpoints; the manifest reproduces any cell.
 - [ ] Pairing integrity confirmed (per-seed shared RNG across variants within each regime, per `M6-2`).
+- [ ] Every run's manifest entry names the GPU `M6-2` picked, for training and for scoring (§3.3).
 - [ ] Base (random regime) scored at 50% and 90% on 5 seeds, or on 42–44 with the cut stated; mean ± SE recorded for §6's reproduced-CSDI row.
 
 ---
