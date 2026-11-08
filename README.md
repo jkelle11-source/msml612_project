@@ -739,6 +739,39 @@ this one, and the gated encoder was run on the same protocol unchanged. Results 
 for bit on one machine; another CPU's float rounding drifts over 1,000 steps, which is why the
 record names the machine and torch version.
 
+**Hand-off to the combined model (M5-3).** What `M6-1` needs to compose Ext 1 with Ext 2 into
+the four variants:
+
+- **Finalized.** `models/missingness.py` is unchanged since M4-2. M5-2's change to
+  `models.build_model` (each encoder built from the init-RNG state right after the shared parts)
+  leaves Ext 1's starting weights where M4-2 had them, and Ext 1 at `c41b890` retrains bit for
+  bit identically to Ext 1 at `dd787a5` over 500 steps. Its 200-epoch health run is healthy, with
+  its gate opened to −0.159 ([Health runs](#health-runs-m5-3)).
+- **Flags.** `--use_mask_embedding` on `diffusion.run`, or `model.use_mask_embedding: true`
+  (default `false`), is Ext 1's only switch, independent of `--use_time_encoding`. With both on,
+  the variant is `ext1+2` and a run is named `ext1+2_<regime>_seed<seed>`. Ext 1 has no config
+  key of its own: `d_model` is `diffusion.channels` (64; the `d_model` sweep resizes both
+  encoders with it), `n_features` and `n_timesteps` come from `data` (35 and 48), and its 2 heads
+  and 2 layer pairs are `MissingnessEncoder`'s defaults. M8-1's mask-encoder-layers study will
+  need a config key for the layers.
+- **Shapes.** `CSDI_base.get_mask_emb` gives the encoder the conditioning mask, permuted from
+  upstream's `(B, K, L)` to our `(B, T, D)` = `(B, 48, 35)`. It returns `mask_emb`,
+  `(B, T, D, d_model)` = `(B, 48, 35, 64)`, already scaled by its gate (`mask_encoder.gate` in
+  `model.pt`). The denoiser checks that shape and adds `mask_emb`, permuted to
+  `(B, channels, K, L)`, to its projected input; `time_enc` has the same shape and is added the
+  same way after it. The two are separate additions from the same conditioning mask, and neither
+  encoder reads the other's output. Each is computed once per model call: once per training
+  step, and once per sampler call, reused at every reverse step.
+- **Composes with Ext 2** (tests): every toggle combination builds (`tests/test_build_model.py`);
+  both flags together train through `diffusion.run` and save both encoders (`tests/test_run.py`);
+  the two hooks add together in the denoiser (`tests/test_denoiser_hooks.py`); at a run seed the
+  mask encoder starts from the same weights in Ext 1 and Ext 1+2, and the shared weights from
+  base's; and Ext 1 changes a working Ext 2 exactly as it changes base: with its gate at 0,
+  Ext 1+2 computes exactly Ext 2, and with it open, something else, on the training, validation
+  and sampler paths (`tests/test_time_encoding.py`). As between base and Ext 1, dropout is not
+  paired between Ext 2 and Ext 1+2: Ext 1's dropout draws from the global RNG
+  ([Random streams](#random-streams-seed-pairing)).
+
 Tests:
 
 - `tests/test_missingness_encoder.py`: the output's shape; the layers matching the same layers
@@ -823,6 +856,11 @@ run needed 200 epochs to reach 0.246), and Ext 2 is ahead on SysABP and behind o
 seed at three epochs, so not an effect: whether Ext 2 helps waits for the paired 5-seed sweep.
 The config's two learning-rate drops both fall at epoch 2 of 3. Base is recorded beside it as
 `base_reference`, for scale.
+
+Ext 2's full 200-epoch health run is healthy, with its gate opened to −0.053
+([Health runs](#health-runs-m5-3)). For composing it with Ext 1 in `M6-1`, see
+[Hand-off to the combined model](#extension-1-missingnessencoder-m4-2) in Extension 1's section,
+which covers both hooks.
 
 Tests:
 

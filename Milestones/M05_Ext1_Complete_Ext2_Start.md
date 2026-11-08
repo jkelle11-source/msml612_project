@@ -76,6 +76,6 @@
 - **Sankha:** Single-seed runs of base, Ext 1, and Ext 2, each producing a logged (health-only) MAE @10%; no effect claims.
 
 **Definition of Done**
-- [ ] Ext 1 hand-off note committed; `--use_mask_embedding` confirmed composable.
-- [ ] All three variants train + evaluate end-to-end at one seed and log a number.
-- [ ] Results explicitly flagged "health only — not an effect measurement."
+- [x] Ext 1 hand-off note committed; `--use_mask_embedding` confirmed composable.
+- [x] All three variants train + evaluate end-to-end at one seed and log a number.
+- [x] Results explicitly flagged "health only — not an effect measurement."

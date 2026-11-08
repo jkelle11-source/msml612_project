@@ -414,6 +414,34 @@ def test_the_gate_starts_closed_so_ext2_starts_as_the_variant_without_it(inputs,
     for path in PATHS:
         assert torch.equal(run_path(with_ext2, batch_of(inputs), path), run_path(without, batch_of(inputs), path))
 
+def without_and_with_ext1(ext2):
+    """Ext 2 and Ext 1+2 (or base and Ext 1) at seed 42, Ext 2's gate open in both so that Ext 1+2
+    is held to a working Ext 2. eval: Ext 1's dropout draws from the global RNG (README, Random
+    streams). nonzero_output_layer, or upstream's zero last layer makes every comparison vacuous."""
+    without = nonzero_output_layer(variant(False, ext2, num_steps=5).eval())
+    with_ext1 = nonzero_output_layer(variant(True, ext2, num_steps=5).eval())
+    if ext2:
+        with torch.no_grad():
+            without.time_encoder.gate.fill_(1.0)
+            with_ext1.time_encoder.gate.fill_(1.0)
+    return without, with_ext1
+
+# Ext 1's side of composing (M5-3): Ext 1 changes Ext 2 exactly as it changes base.
+@pytest.mark.parametrize("ext2", [False, True])
+def test_the_mask_gate_starts_closed_so_ext1_starts_as_the_variant_without_it(inputs, ext2):
+    without, with_ext1 = without_and_with_ext1(ext2)
+    assert with_ext1.mask_encoder.gate.item() == 0
+    for path in PATHS:
+        assert torch.equal(run_path(with_ext1, batch_of(inputs), path), run_path(without, batch_of(inputs), path))
+
+@pytest.mark.parametrize("ext2", [False, True])
+def test_with_the_mask_gate_open_ext1_changes_the_loss_and_the_samples(inputs, ext2):
+    without, with_ext1 = without_and_with_ext1(ext2)
+    with torch.no_grad():
+        with_ext1.mask_encoder.gate.fill_(1.0)
+    for path in PATHS:
+        assert not torch.equal(run_path(with_ext1, batch_of(inputs), path), run_path(without, batch_of(inputs), path))
+
 def test_with_the_gate_open_ext2_changes_the_loss_and_the_samples(inputs):
     without = nonzero_output_layer(variant(False, False, num_steps=5).eval())
     with_ext2 = nonzero_output_layer(variant(False, True, num_steps=5).eval())
