@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from .diff_models import diff_CSDI  # ADAPTED (M1-2): relative import, upstream is a flat script dir
+from ..time_encoding import tslo    # ADAPTED (M5-1)
 
 
 # ADAPTED (M2-1): ours. Upstream calls torch.randn_like directly, which always draws from the
@@ -59,6 +60,11 @@ class CSDI_base(nn.Module):
         # default) computes no mask_emb, so the model is upstream's.
         self.mask_encoder = None
 
+        # ADAPTED (M5-1): ours. Extension 2's ContinuousTimeEncoding, which models.build_model puts
+        # here when model.use_time_encoding is on, after everything above is built. None (the
+        # default) computes no time_enc, so the model is upstream's.
+        self.time_encoder = None
+
     # ADAPTED (M4-2): ours. mask_emb from the conditioning mask alone, never observed_mask,
     # which still marks the held-out targets (README, input-hook contract). cond_mask is
     # (B,K,L) here; the encoder takes and returns our (B,T,D) order.
@@ -66,6 +72,15 @@ class CSDI_base(nn.Module):
         if self.mask_encoder is None:
             return None
         return self.mask_encoder(cond_mask.permute(0, 2, 1))  # (B,L,K,channels)
+
+    # ADAPTED (M5-1): ours. time_enc from the conditioning mask alone, never observed_mask,
+    # which still marks the held-out targets (README, input-hook contract). cond_mask is
+    # (B,K,L) here; the encoder takes and returns our (B,T,D) order.
+    def get_time_enc(self, cond_mask):
+        if self.time_encoder is None:
+            return None
+        delta = tslo(cond_mask.permute(0, 2, 1))
+        return self.time_encoder(delta)  # (B,L,K,channels)
 
     def time_embedding(self, pos, d_model=128):
         pe = torch.zeros(pos.shape[0], pos.shape[1], d_model).to(self.device)
@@ -239,11 +254,12 @@ class CSDI_base(nn.Module):
 
         side_info = self.get_side_info(observed_tp, cond_mask)
         mask_emb = self.get_mask_emb(cond_mask)  # ADAPTED (M4-2)
+        time_enc = self.get_time_enc(cond_mask)  # ADAPTED (M5-1)
 
         loss_func = self.calc_loss if is_train == 1 else self.calc_loss_valid
 
         return loss_func(observed_data, cond_mask, observed_mask, side_info, is_train, generator=generator,  # ADAPTED (M2-1)
-                         mask_emb=mask_emb)  # ADAPTED (M4-2)
+                         mask_emb=mask_emb, time_enc=time_enc)  # ADAPTED (M4-2, M5-1)
 
     def evaluate(self, batch, n_samples, generator=None):  # ADAPTED (M2-1): generator, see randn_like
         (
@@ -261,9 +277,10 @@ class CSDI_base(nn.Module):
 
             side_info = self.get_side_info(observed_tp, cond_mask)
             mask_emb = self.get_mask_emb(cond_mask)  # ADAPTED (M4-2): once, reused at every reverse step
+            time_enc = self.get_time_enc(cond_mask)  # ADAPTED (M5-1): once, reused at every reverse step
 
             samples = self.impute(observed_data, cond_mask, side_info, n_samples, generator=generator,  # ADAPTED (M2-1)
-                                  mask_emb=mask_emb)  # ADAPTED (M4-2)
+                                  mask_emb=mask_emb, time_enc=time_enc)  # ADAPTED (M4-2, M5-1)
 
             for i in range(len(cut_length)):  # to avoid double evaluation
                 target_mask[i, ..., 0 : cut_length[i].item()] = 0

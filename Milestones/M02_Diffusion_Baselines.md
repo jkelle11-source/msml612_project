@@ -39,11 +39,11 @@
 - `models.build_model(config, device)`: the one place the model is built from config. It takes the head count from `model.n_heads`, always sets `target_strategy: "external"`, and raises `NotImplementedError` if an extension toggle is on before that extension exists; `M4-2` and `M5-2` add their modules here.
 
 **Definition of Done**
-- [ ] Forward-noising variance matches the closed-form value for the reused schedule at sampled timesteps (numerical check).
-- [ ] One training step runs end-to-end on a real batch without shape/NaN errors.
-- [ ] Loss is computed only over `TrainMasker` targets (verified against the mask); upstream's `get_randmask` is not on the training path.
-- [ ] Diffusion/optimizer settings are config-driven, not hardcoded, and their defaults equal upstream's published PhysioNet values.
-- [ ] The model is built only through `build_model`, and an extension toggle that is on raises until that extension exists.
+- [x] Forward-noising variance matches the closed-form value for the reused schedule at sampled timesteps (numerical check).
+- [x] One training step runs end-to-end on a real batch without shape/NaN errors.
+- [x] Loss is computed only over `TrainMasker` targets (verified against the mask); upstream's `get_randmask` is not on the training path.
+- [x] Diffusion/optimizer settings are config-driven, not hardcoded, and their defaults equal upstream's published PhysioNet values.
+- [x] The model is built only through `build_model`, and an extension toggle that is on raises until that extension exists.
 
 ---
 
@@ -61,9 +61,9 @@
 - A short interface note documenting the exact call signature the training loop uses.
 
 **Definition of Done**
-- [ ] Denoiser runs forward+backward on a real `(B, 48, D)` batch.
-- [ ] Passing a dummy nonzero `mask_emb`/`time_enc` changes the output; passing `None` reproduces the base exactly.
-- [ ] Call signature documented and matches `M2-1`'s training loop.
+- [x] Denoiser runs forward+backward on a real `(B, 48, D)` batch.
+- [x] Passing a dummy nonzero `mask_emb`/`time_enc` changes the output; passing `None` reproduces the base exactly.
+- [x] Call signature documented and matches `M2-1`'s training loop.
 
 ---
 
@@ -81,11 +81,11 @@
 - Reused reverse sampler exercised end-to-end with an untrained model: `EvalMasker`'s conditioning mask passed as upstream's `gt_mask`, output shape correct, no NaNs, K-draw stacking works.
 
 **Definition of Done**
-- [ ] Mean and forward-fill @10% measured in standardized units and logged (test: 0.705 and 0.449; the plan's estimates were ~0.72 and ~0.42).
-- [ ] Both measured and logged @50% and @90% as well.
-- [ ] Reused sampler returns samples in our `(K, B, 48, D)` layout (upstream's native layout is `(B, K, D, 48)`) with no NaNs.
-- [ ] The scored target set (observed minus conditioning) is exactly `EvalMasker`'s held-out targets.
-- [ ] Baseline numbers stored where the Week-7 headline table can cite them.
+- [x] Mean and forward-fill @10% measured in standardized units and logged (test: 0.705 and 0.449; the plan's estimates were ~0.72 and ~0.42).
+- [x] Both measured and logged @50% and @90% as well.
+- [x] Reused sampler returns samples in our `(K, B, 48, D)` layout (upstream's native layout is `(B, K, D, 48)`) with no NaNs.
+- [x] The scored target set (observed minus conditioning) is exactly `EvalMasker`'s held-out targets.
+- [x] Baseline numbers stored where the Week-7 headline table can cite them.
 
 ---
 
@@ -105,9 +105,9 @@
 - README: the new keys under "Frozen protocol constants".
 
 **Definition of Done**
-- [ ] Each patient loses exactly `floor(0.10 · n_observed)` values, in contiguous 3-hour all-feature slots apart from the one trimmed slot (tests green).
-- [ ] Targets are byte-identical across run seeds; golden fingerprint committed.
-- [ ] `EvalMasker`'s golden fingerprint is unchanged.
-- [ ] Seed and window length committed to `configs/config.yaml`.
-- [ ] Mean and forward-fill block-holdout MAE recorded next to their random-holdout numbers.
-- [ ] Merged by **Tue Oct 21**, before `M4-2` starts.
+- [x] Each patient loses exactly `floor(0.10 · n_observed)` values, in contiguous 3-hour all-feature slots apart from the one trimmed slot (tests green).
+- [x] Targets are byte-identical across run seeds; golden fingerprint committed.
+- [x] `EvalMasker`'s golden fingerprint is unchanged.
+- [x] Seed and window length committed to `configs/config.yaml`.
+- [x] Mean and forward-fill block-holdout MAE recorded next to their random-holdout numbers.
+- [x] Merged by **Tue Oct 21**, before `M4-2` starts.

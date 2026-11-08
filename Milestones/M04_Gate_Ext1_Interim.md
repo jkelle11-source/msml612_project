@@ -36,11 +36,11 @@
 - PaCO2 and PaO2 errors checked on the gate runs' test scores. In `M3-3` a visible bad pH (735, 187) dragged BRITS's same-hour PaCO2 and PaO2 guesses off by up to 6,796 standardized units through its feature regression (README, Learned baseline). Report whether CSDI's feature attention does the same, and if it does, say so next to the gate number.
 
 **Definition of Done**
-- [ ] Mean MAE @10% over ≥3 seeds is within the 0.22–0.24 band (or the closest achieved value is documented honestly).
-- [ ] PaCO2 and PaO2 errors on the gate's test scores checked, and the result stated.
-- [ ] Per-seed numbers + mean logged; runs reproducible from config.
-- [ ] Gate status (PASS/FAIL) stated explicitly for the interim.
-- [ ] If FAIL: a written debugging plan for Week 5 is committed (§3.4).
+- [x] Mean MAE @10% over ≥3 seeds is within the 0.22–0.24 band (or the closest achieved value is documented honestly).
+- [x] PaCO2 and PaO2 errors on the gate's test scores checked, and the result stated.
+- [x] Per-seed numbers + mean logged; runs reproducible from config.
+- [x] Gate status (PASS/FAIL) stated explicitly for the interim.
+- [x] If FAIL: a written debugging plan for Week 5 is committed (§3.4).
 
 ---
 
@@ -58,11 +58,11 @@
 - Gradient check (nonzero gradients reach the encoder) and an overfit sanity check (10-patient subset trained and scored on `BlockEvalMasker`'s targets from `M2-4`, MAE < 0.1 in 50 epochs). Ten patients are one batch, so an epoch of the training loop is a single step; the check runs 20 steps per epoch, and base goes through the same protocol, recorded beside it for scale (settled at the review).
 
 **Definition of Done**
-- [ ] Encoder attends over both time and features (shapes/transposes verified).
-- [ ] `mask_emb` depends on the conditioning mask alone: changing `observed_mask` while keeping the conditioning mask fixed leaves it unchanged.
-- [ ] `--use_mask_embedding` on/off toggles cleanly; off == base.
-- [ ] Nonzero gradients reach the encoder during training.
-- [ ] Overfit sanity check passes (MAE < 0.1 on `BlockEvalMasker`'s targets for the 10-patient subset).
+- [x] Encoder attends over both time and features (shapes/transposes verified).
+- [x] `mask_emb` depends on the conditioning mask alone: changing `observed_mask` while keeping the conditioning mask fixed leaves it unchanged.
+- [x] `--use_mask_embedding` on/off toggles cleanly; off == base.
+- [x] Nonzero gradients reach the encoder during training.
+- [x] Overfit sanity check passes (MAE < 0.1 on `BlockEvalMasker`'s targets for the 10-patient subset).
 
 ---
 
@@ -79,7 +79,7 @@
 - Explicit statement of whether the reproduction gate passed.
 
 **Definition of Done**
-- [ ] Interim submitted by **Wed Oct 29**.
-- [ ] Gate status reported truthfully (pass, or fail + debugging plan).
-- [ ] Ext 1 framed as preliminary/mechanical, with no effect claim.
-- [ ] Reviewed by all three.
+- [x] Interim submitted by **Wed Oct 29**.
+- [x] Gate status reported truthfully (pass, or fail + debugging plan).
+- [x] Ext 1 framed as preliminary/mechanical, with no effect claim.
+- [x] Reviewed by all three.

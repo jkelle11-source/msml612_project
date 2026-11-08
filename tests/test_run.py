@@ -157,6 +157,22 @@ def test_use_mask_embedding_trains_ext1_and_is_recorded(small_dataset, tmp_path)
     assert saved["model"]["use_mask_embedding"] is True                     # the config says false
     assert any(key.startswith("mask_encoder.") for key in weights)
 
+def test_use_time_encoding_trains_ext2_and_is_recorded(small_dataset, tmp_path):
+    launch(tmp_path, small_dataset, "--use_time_encoding", "--out", str(tmp_path / "run"))
+    saved = yaml.safe_load((tmp_path / "run" / "config.yaml").read_text())
+    weights = torch.load(tmp_path / "run" / "model.pt")
+    assert saved["model"]["use_time_encoding"] is True                      # the config says false
+    assert saved["model"]["use_mask_embedding"] is False
+    assert any(key.startswith("time_encoder.") for key in weights)
+    assert not any(key.startswith("mask_encoder.") for key in weights)
+
+def test_both_extension_flags_train_ext1_and_2(small_dataset, tmp_path):
+    launch(tmp_path, small_dataset, "--use_mask_embedding", "--use_time_encoding", "--out", str(tmp_path / "run"))
+    saved = yaml.safe_load((tmp_path / "run" / "config.yaml").read_text())
+    weights = torch.load(tmp_path / "run" / "model.pt")
+    assert saved["model"]["use_mask_embedding"] is True and saved["model"]["use_time_encoding"] is True
+    assert {key.split(".")[0] for key in weights} >= {"mask_encoder", "time_encoder"}
+
 # --- an output folder holds one run -----------------------------------------------------
 
 def test_a_run_refuses_a_folder_that_is_not_empty(small_dataset, tmp_path):
