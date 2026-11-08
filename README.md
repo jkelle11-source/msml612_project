@@ -30,6 +30,7 @@ models/        # reused CSDI model (denoiser + diffusion process), build_model
                #   ContinuousTimeEncoding).                                 [M1-2]
                #   BRITS, the learned baseline (brits.py).                  [M3-3]
                #   Ext 1's MissingnessEncoder (missingness.py).             [M4-2]
+               #   Ext 2's δ from the conditioning mask (time_encoding.py). [M5-1]
 diffusion/     # training data feed, loop and random streams around the
                #   reused diffusion process; no schedule or q_sample of our
                #   own.                                                     [M2-1]
@@ -157,8 +158,12 @@ training loop:
 - **Both hooks are computed from the conditioning mask** (`gt_mask`, which `CSDI_base` calls
   `cond_mask`), never from `observed_mask` or the dataset's `delta_obs`. Those two still
   include the held-out targets, so an extension that read them would know where the targets
-  are, which is the leak PROJECT_PLAN §3.1 rules out. For Extension 2 this means TSLO is
-  recomputed from the conditioning mask for every batch, not read from `delta_obs`.
+  are, which is the leak PROJECT_PLAN §3.1 rules out. For Extension 2 this means TSLO δ is
+  recomputed from the conditioning mask for every batch, not read from `delta_obs` (M5-1):
+  `CSDI_base.get_time_enc` runs `models.time_encoding.tslo`, which is
+  `data.physionet.compute_tslo`'s rule in torch, on `cond_mask`, on the batch's device. A
+  held-out target therefore counts as unobserved: δ keeps counting from the last value the
+  model can see.
 
 **Where the hooks travel** (M2-2). The frozen calls above stay as they are; the hooks run
 inside the model, from the two places `CSDI_base` calls the denoiser:
@@ -176,9 +181,11 @@ evaluation  model.evaluate(batch, n_samples, generator=...)   # frozen, via Eval
 
 An extension adds its module in `build_model`, computes its hook from `cond_mask` inside
 `forward` and `evaluate`, and hands it to `calc_loss` or `impute`. Extension 1 does this
-since M4-2 (see [Extension 1](#extension-1-missingnessencoder-m4-2)); `time_enc` is still
-always `None` until M5-2. Each hook is computed once per call and the same tensor is used at
-every reverse step, since it depends on the conditioning mask and not on the diffusion step.
+since M4-2 (see [Extension 1](#extension-1-missingnessencoder-m4-2)). Extension 2's path is
+in place since M5-1: `forward` and `evaluate` compute δ from `cond_mask` and hand it to
+`self.time_encoder`, but `time_enc` stays `None` until M5-2 builds that encoder. Each hook is
+computed once per call and the same tensor is used at every reverse step, since it depends on
+the conditioning mask and not on the diffusion step.
 
 Shapes, since the axes swap on the way in:
 
@@ -256,6 +263,18 @@ exactly what it did before:
 - `forward` and `evaluate` call it once and pass `mask_emb` to `calc_loss`/`calc_loss_valid`
   and `impute`.
 
+M5-1, Extension 2's slot, built the same way. With `time_encoder` left `None` (the default;
+`build_model` still refuses `model.use_time_encoding` until M5-2) the model computes exactly
+what it did before, and computes no δ:
+
+- `main_model.py` imports `tslo` from `models.time_encoding`.
+- `CSDI_base.__init__` sets `self.time_encoder = None`, after `mask_encoder`.
+- `CSDI_base.get_time_enc(cond_mask)` returns `None` without an encoder, and otherwise the
+  encoder's `time_enc` from δ, which `tslo` computes from the conditioning mask reordered to
+  our `(B, T, D)`.
+- `forward` and `evaluate` call it once and pass `time_enc` to `calc_loss`/`calc_loss_valid`
+  and `impute`.
+
 **Replaced** (M2-1): upstream's internal train masking. `get_randmask` draws from the global
 NumPy/torch RNGs, which would break seed pairing, so `models.build_model` sets
 `target_strategy: "external"` and the training loop (see [Training](#training)) supplies
@@ -280,6 +299,15 @@ reused schedule numerically (M2-1): the model's ᾱ_t equals the quad schedule w
 from `configs/config.yaml`, and the values it noises at every step have the closed-form mean
 √ᾱ_t · x₀ and variance 1 − ᾱ_t. Mind upstream's names when reading `CSDI_base`: `alpha` is the
 cumulative ᾱ_t and `alpha_hat` the per-step 1 − β_t, the reverse of the DDPM paper's.
+
+`tests/test_time_encoding.py` covers M5-1. `tslo` matches `compute_tslo`, keeps the mask's
+device and dtype, and leaves the mask alone. With a stand-in encoder in the slot, on the
+training, validation and sampler paths: the encoder is given `compute_tslo` of the
+conditioning mask, once per call; changing `observed_mask` leaves δ unchanged; a held-out
+target counts as unobserved where `delta_obs` reads 0; every denoiser call receives the
+resulting `time_enc`; `EvalSampler` hands the model δ of `EvalMasker`'s and
+`BlockEvalMasker`'s conditioning masks; sampling with δ present is finite; and the base model
+never computes δ.
 
 ---
 
@@ -759,7 +787,9 @@ This writes `data/processed/physionet_set_a.npz` (about 10 MB) in a few seconds.
 `values` is z-scored with training-split statistics and is 0 where `mask` is 0. The split is
 70/10/20 by patient, fixed by `data.split_seed` in [`configs/config.yaml`](configs/config.yaml).
 `delta_obs` is computed from the full observation mask; `data.physionet.compute_tslo`
-recomputes it for any other mask.
+recomputes it for any other mask. `delta_obs` never reaches the model, because it still
+counts the held-out targets as observed: Extension 2's δ is recomputed from the conditioning
+mask (see the [input-hook contract](#denoiser-input-hook-contract)).
 
 **Known bad values, kept as recorded.** Raw Set A contains data-entry errors, and
 `data.physionet` keeps them, as upstream CSDI's loader does, so our numbers rest on the same
