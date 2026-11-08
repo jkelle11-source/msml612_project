@@ -1,0 +1,132 @@
+{
+ "check": "M5-2 mechanical health check, Extension 2 (ContinuousTimeEncoding)",
+ "note": "health only, not an effect measurement; whether Ext 2 helps waits for the paired 5-seed sweep",
+ "status": "PASS",
+ "variant": "ext2",
+ "seed": 42,
+ "epochs": 3,
+ "steps": 525,
+ "lr_drops_at_epochs": [
+  2,
+  2
+ ],
+ "health": {
+  "n_steps": 500,
+  "finite": true,
+  "loss_first_tenth": 0.5061683455109596,
+  "loss_last_tenth": 0.32023794040083886,
+  "grad_norm_median": 0.6110561788082123,
+  "grad_norm_max": 7.359429836273193,
+  "grad_norm_max_step": 16,
+  "spikes": [
+   {
+    "step": 5,
+    "loss": 0.7721143960952759,
+    "grad_norm": 6.310311794281006
+   },
+   {
+    "step": 14,
+    "loss": 0.5143290758132935,
+    "grad_norm": 6.370481014251709
+   },
+   {
+    "step": 16,
+    "loss": 0.5123774409294128,
+    "grad_norm": 7.359429836273193
+   }
+  ],
+  "learning": true,
+  "collapsed": false,
+  "exploded": false,
+  "complete": true,
+  "healthy": true
+ },
+ "final_val_mae": 0.4730596841760377,
+ "variable_mae": {
+  "HR": {
+   "mae": 0.47287,
+   "mae_raw": 8.4512,
+   "n_targets": 1710
+  },
+  "SysABP": {
+   "mae": 0.467025,
+   "mae_raw": 11.2698,
+   "n_targets": 994
+  },
+  "all": {
+   "mae": 0.47306,
+   "n_targets": 12886
+  }
+ },
+ "variables_note": "SysABP stands in for SpO2, which is not one of the 35 features",
+ "validation": {
+  "split": "val",
+  "n_samples": 5,
+  "batch_size": 64
+ },
+ "time_encoder": {
+  "d_k": 16,
+  "n_parameters": 1121,
+  "gate_last_step": -0.04380108043551445,
+  "grad_norm_last_step": 0.03193652629852295
+ },
+ "n_parameters": 415186,
+ "device": "mps",
+ "machine": "macOS-27.2-arm64-arm-64bit-Mach-O",
+ "torch": "2.14.1",
+ "seconds": 772.4,
+ "base_reference": {
+  "note": "the same short run without the encoder, for scale; not an effect of Ext 2",
+  "variant": "base",
+  "health": {
+   "n_steps": 500,
+   "finite": true,
+   "loss_first_tenth": 0.5061438006162643,
+   "loss_last_tenth": 0.3216350412368774,
+   "grad_norm_median": 0.6222812533378601,
+   "grad_norm_max": 7.356540203094482,
+   "grad_norm_max_step": 16,
+   "spikes": [
+    {
+     "step": 5,
+     "loss": 0.7721176743507385,
+     "grad_norm": 6.310164928436279
+    },
+    {
+     "step": 14,
+     "loss": 0.5141284465789795,
+     "grad_norm": 6.361521244049072
+    },
+    {
+     "step": 16,
+     "loss": 0.5122525691986084,
+     "grad_norm": 7.356540203094482
+    }
+   ],
+   "learning": true,
+   "collapsed": false,
+   "exploded": false,
+   "complete": true,
+   "healthy": true
+  },
+  "final_val_mae": 0.4823537264575984,
+  "variable_mae": {
+   "HR": {
+    "mae": 0.468373,
+    "mae_raw": 8.3709,
+    "n_targets": 1710
+   },
+   "SysABP": {
+    "mae": 0.471116,
+    "mae_raw": 11.3686,
+    "n_targets": 994
+   },
+   "all": {
+    "mae": 0.482354,
+    "n_targets": 12886
+   }
+  },
+  "n_parameters": 414065,
+  "seconds": 758.6
+ }
+}
