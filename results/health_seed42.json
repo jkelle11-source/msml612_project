@@ -10,7 +10,7 @@
   "n_samples": 5,
   "batch_size": 64
  },
- "timings": "not comparable across runs: they ran on different machines (each run's machine); base and ext2 compare, on Apple M4 Pro (20-core GPU, 24 GB)",
+ "timings": "comparable: every run is on Apple M4 Pro (20-core GPU, 24 GB)",
  "runs": {
   "base": {
    "run": "base_random_seed42",
@@ -64,24 +64,24 @@
   },
   "ext1": {
    "run": "ext1_random_seed42",
-   "wandb_run": "DATA612/msml612-csdi/gwx2us22",
+   "wandb_run": "DATA612/msml612-csdi/t504tr0f",
    "tags": [
     "ext1",
     "health",
     "random",
     "seed42"
    ],
-   "commit": "dd787a58b47c15d7e0f28bb2dea506b2066fb239",
+   "commit": "a6e4deb4300bbf908607bb5447a6fea00e8486ba",
    "device": "mps",
-   "machine": "Apple M4 (8-core GPU, 16 GB)",
-   "note": "trained at dd787a5: Ext 1 at c41b890 retrains bit for bit identically to Ext 1 at dd787a5 over the first 500 steps on one M4 Pro (M5-3)",
+   "machine": "Apple M4 Pro (20-core GPU, 24 GB)",
+   "note": "rerun on the M4 Pro so every run is on one machine; replaces Sankha's run gwx2us22 on an Apple M4 (healthy, final val MAE 0.2456, gate -0.156 as he read it), which diverges from this one from step 8 (M5-3)",
    "health": {
     "n_steps": 500,
     "finite": true,
-    "loss_first_tenth": 0.506107152402401,
-    "loss_last_tenth": 0.30932591944932936,
-    "grad_norm_median": 0.8317219614982605,
-    "grad_norm_max": 7.340338230133057,
+    "loss_first_tenth": 0.5061071535944939,
+    "loss_last_tenth": 0.3093382281064987,
+    "grad_norm_median": 0.8281775414943695,
+    "grad_norm_max": 7.340338706970215,
     "grad_norm_max_step": 16,
     "spikes": [],
     "learning": true,
@@ -90,40 +90,28 @@
     "complete": true,
     "healthy": true
    },
-   "final_val_mae": 0.24564182892200845,
+   "final_val_mae": 0.24330930699215292,
    "forward_fill_val_mae": 0.436614,
    "below_forward_fill": true,
    "val_mae_by_epoch": {
-    "9": 0.3123491758668736,
-    "19": 0.2947589201524493,
-    "29": 0.28393899451536764,
-    "39": 0.28304492450043683,
-    "49": 0.2677252857868109,
-    "59": 0.26701327811759656,
-    "69": 0.2763386500773085,
-    "79": 0.2703912141560665,
-    "89": 0.26421637735597797,
-    "99": 0.25624246052786026,
-    "109": 0.2630410096127418,
-    "119": 0.2588560363800561,
-    "129": 0.25038323298965004,
-    "139": 0.2512552924368762,
-    "149": 0.25416773491355193,
-    "159": 0.24582325163961502,
-    "169": 0.24690692592713695,
-    "179": 0.2478785621757143,
-    "189": 0.24453530474744564,
-    "199": 0.24564182892200845
+    "24": 0.2895501243493868,
+    "49": 0.26804304795110573,
+    "74": 0.26916898395233524,
+    "99": 0.2563758375619471,
+    "124": 0.2618140190734527,
+    "149": 0.25119286600977664,
+    "174": 0.24380591963580392,
+    "199": 0.24330930699215292
    },
-   "train_seconds": 18009.8,
-   "val_seconds": 17322.9,
-   "val_passes": 20,
-   "epoch_seconds_median": 87.7,
+   "train_seconds": 7569.9,
+   "val_seconds": 2702.7,
+   "val_passes": 8,
+   "epoch_seconds_median": 37.8,
    "slowest_epoch": {
-    "epoch": 49,
-    "seconds": 454.9
+    "epoch": 0,
+    "seconds": 39.6
    },
-   "mask_encoder_gate": null
+   "mask_encoder_gate": -0.1593
   },
   "ext2": {
    "run": "ext2_random_seed42",
@@ -179,7 +167,7 @@
  "config_differences": {
   "model.time_encoding_dk": {
    "base": null,
-   "ext1": null,
+   "ext1": 16,
    "ext2": 16
   },
   "model.use_mask_embedding": {
@@ -191,11 +179,6 @@
    "base": false,
    "ext1": false,
    "ext2": true
-  },
-  "validation.every_n_epochs": {
-   "base": 25,
-   "ext1": 10,
-   "ext2": 25
   }
  }
 }

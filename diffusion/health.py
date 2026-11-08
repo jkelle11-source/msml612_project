@@ -1,6 +1,6 @@
 """The record of single-seed health runs (M5-3): every variant trains and validates end to end.
 
-    uv run python -m diffusion.health bqoimtqw gwx2us22 8m16obhn --note base="the M4-1 gate run, reused"
+    uv run python -m diffusion.health bqoimtqw t504tr0f 8m16obhn --note base="the M4-1 gate run, reused"
 
 Reads each training run from wandb, where ``diffusion.run`` streams everything it logs (M3-2),
 so a teammate's run is recorded without its output folder, and writes
@@ -22,7 +22,7 @@ its bare id in the config's ``tracking`` project. For each variant the record ho
 variant helps waits for the paired 5-seed sweep (PROJECT_PLAN §3.3).
 
 Timings compare only between runs on one machine: Ext 1's validation passes on an Apple M4 took
-2.6 times as long as base's on an M4 Pro, mostly because of the machine (M5-3 review). The record
+2.6 times as long as base's on an M4 Pro, and on the M4 Pro as long as base's (M5-3). The record
 names each run's machine and says whether its timings compare, and, when not all of them do,
 which runs share a machine and so compare with each other.
 

@@ -855,9 +855,9 @@ Tests:
 ## Health runs (M5-3)
 
 ```text
-uv run python -m diffusion.health bqoimtqw gwx2us22 8m16obhn \
+uv run python -m diffusion.health bqoimtqw t504tr0f 8m16obhn \
     --note "base=the M4-1 gate run, reused: base at dd787a5 and at c41b890 retrains bit for bit identically to it over the first 500 steps on the same M4 Pro (M5-3 review)" \
-    --note "ext1=trained at dd787a5: Ext 1 at c41b890 retrains bit for bit identically to Ext 1 at dd787a5 over the first 500 steps on one M4 Pro (M5-3)"
+    --note "ext1=rerun on the M4 Pro so every run is on one machine; replaces Sankha's run gwx2us22 on an Apple M4 (healthy, final val MAE 0.2456, gate -0.156 as he read it), which diverges from this one from step 8 (M5-3)"
 ```
 
 **Health only, not an effect measurement.** Before the sweep, each variant trains its 200
@@ -879,39 +879,41 @@ It refuses runs that are unfinished, at different seeds or regimes, or validated
 settings; runs whose summary does not match their logged steps; and weights for a run without an
 encoder, or without its encoder's gate.
 
-| Variant | Run | Machine | 500-step health | Gate | Final val MAE @10% (5 draws) |
-|---|---|---|---|---|---|
-| base | `base_random_seed42`, the M4-1 gate run, reused | Apple M4 Pro | healthy | — | 0.2464 |
-| Ext 1 | `ext1_random_seed42` | Apple M4 | healthy | −0.156 (not yet on wandb) | 0.2456 |
-| Ext 2 | `ext2_random_seed42` | Apple M4 Pro | healthy | −0.053 | 0.2469 |
+All three runs are on one Apple M4 Pro (20-core GPU), validated every 25 epochs:
+
+| Variant | Run | 500-step health | Gate | Training | Validation pass | Final val MAE @10% (5 draws) |
+|---|---|---|---|---|---|---|
+| base | `bqoimtqw`, the M4-1 gate run, reused | healthy | — | 6,048 s | 337 s | 0.2464 |
+| Ext 1 | `t504tr0f` | healthy | −0.159 | 7,570 s (+25%) | 338 s | 0.2433 |
+| Ext 2 | `8m16obhn` | healthy | −0.053 | 6,254 s (+3.4%) | 341 s | 0.2469 |
 
 Validation here is tracking only: 5 draws on the val split ([Launching a run](#launching-a-run-m3-1)),
 against forward fill's 0.4366. Each number is one seed, so they say nothing about whether either
 extension helps (PROJECT_PLAN §3.3).
 
 - **The runs stand for the current code.** They trained at three commits: base (the M4-1 gate
-  run) at `9314475`, Ext 1 at `dd787a5`, and Ext 2 at `c41b890`, after M5-2 had changed
-  `models/build.py` and `models/csdi/main_model.py`. So each earlier run was checked against
-  `c41b890` on one M4 Pro over the first 500 steps: base retrains bit for bit identically to the
-  gate run (as it does at `dd787a5`), and Ext 1 to Ext 1 at `dd787a5`. Every loss, gradient norm
-  and learning rate matches (M5-3 review). The runs' configs differ only in the extension
-  toggles, in `model.time_encoding_dk` (which runs from before M5-2 do not have), and in
-  `validation.every_n_epochs` (10 for Ext 1, 25 for the others). How often a run validates cannot
-  change its training: every epoch re-seeds the global RNG
-  ([Random streams](#random-streams-seed-pairing)), and validation draws its noise from the frozen
-  sampling seed.
-- **Timings compare only on one machine.** Base and Ext 2 ran on one M4 Pro, so they compare:
-  Ext 2 took 6,254 s to train against base's 6,048 (3.4% more; a median epoch of 31.2 s against
-  30.1 s), and 341 s a validation pass against 337 s. That matches M5-2's short check. Ext 1 took
-  5.0 h to train and 4.8 h to validate (20 passes) on an Apple M4 with an 8-core GPU. Its
-  validation pass took 868 s against base's 337 s, 2.6 times as long, and most of that is the
-  machine. That run cannot say what the encoder costs; PROJECT_PLAN §8 has that, measured on one
-  machine. Ext 1's total includes one stalled epoch (epoch 49, 455 s against a median of 88 s).
-- **Ext 1's gate** moved from 0 to −0.156, as Sankha read it from the run's `model.pt`, so the
-  encoder is in use. That file is on his machine, so the record's `mask_encoder_gate` is null
-  until it is uploaded to the wandb run; then rerun the command above.
-- **Ext 2's gate** moved from 0 to −0.053 (`time_encoder_gate`, read from the `model.pt` uploaded
-  to its wandb run), so its encoder is in use too.
+  run) at `9314475`, Ext 2 at `c41b890`, after M5-2 had changed `models/build.py` and
+  `models/csdi/main_model.py`, and Ext 1 at `a6e4deb`, whose training code is `c41b890`'s. Base
+  at `c41b890` retrains bit for bit identically to the gate run over the first 500 steps on this
+  M4 Pro, as it does at `dd787a5`: every loss, gradient norm and learning rate (M5-3 review). The
+  runs' configs differ only in the extension toggles and in `model.time_encoding_dk`, which runs
+  from before M5-2 do not have.
+- **Both gates have moved from 0**, so both encoders are in use: Ext 1's to −0.159
+  (`mask_encoder_gate`) and Ext 2's to −0.053 (`time_encoder_gate`), read from the `model.pt`
+  uploaded to each wandb run.
+- **What the encoders cost** (one run each, one machine). Ext 1 trains 25% longer than base
+  (a median epoch of 37.8 s against 30.1 s), in line with PROJECT_PLAN §8's 24% per step; Ext 2,
+  3.4% longer (31.2 s), in line with M5-2's short check. A validation pass costs about the same
+  for all three, 337–341 s.
+- **Ext 1 was rerun on this machine.** Sankha's run (`gwx2us22`, at `dd787a5`) was on an Apple
+  M4 with an 8-core GPU, validated every 10 epochs: also healthy, with final val MAE 0.2456 and
+  gate −0.156 as he read it from its `model.pt`, which is not on wandb. It took 5.0 h to train
+  and 868 s a validation pass, 2.6 times as long as here, so that was the machine, not the
+  encoder. The two Ext 1 runs share their code and seed but first differ at step 8 by float
+  rounding: training is bit-identical only on one kind of chip, which is why every paired run
+  goes on one GPU model (PROJECT_PLAN §3.3). The rerun itself repeats, bit for bit over its first
+  500 steps, a separate 500-step run of Ext 1 at `c41b890` on this M4 Pro, which in turn matches
+  Ext 1 at `dd787a5`.
 
 Tests:
 
