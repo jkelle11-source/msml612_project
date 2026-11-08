@@ -227,6 +227,8 @@ def main(argv=None):
                         help="override validation.every_n_epochs; recorded in the saved config")
     parser.add_argument("--use_mask_embedding", action="store_true",
                         help="turn on model.use_mask_embedding (Extension 1, M4-2); recorded in the saved config")
+    parser.add_argument("--use_time_encoding", action="store_true",
+                        help="turn on model.use_time_encoding (Extension 2, M5-2); recorded in the saved config")
     parser.add_argument("--out", type=Path,
                         help="output folder (default outputs/<run name>, e.g. outputs/base_random_seed42)")
     parser.add_argument("--overwrite", action="store_true",
@@ -244,6 +246,8 @@ def main(argv=None):
         config["validation"]["every_n_epochs"] = args.validate_every
     if args.use_mask_embedding:
         config["model"]["use_mask_embedding"] = True
+    if args.use_time_encoding:
+        config["model"]["use_time_encoding"] = True
     device = pick_device(args.device)
     out_dir = args.out or OUTPUTS / run_name(config, args.seed)             # the run's wandb name
     print(f"{variant_name(config)} seed {args.seed} on {device}, {config['train']['epochs']} epochs -> {out_dir}", flush=True)

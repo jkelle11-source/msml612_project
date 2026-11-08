@@ -123,6 +123,13 @@ model:
   use_mask_embedding: false   # Extension 1 (--use_mask_embedding)
   use_time_encoding: false    # Extension 2 (--use_time_encoding)
 
+  # Extension 2's Time2Vec size d_k (PROJECT_PLAN §4.2; settled in M5-2): one
+  # linear feature plus d_k - 1 sine features of TSLO δ, projected to
+  # diffusion.channels. 16 gives 15 waves whose starting frequencies span the
+  # 0-48 h range of δ, for about 1.1k weights. Read only when use_time_encoding
+  # is on. Not tuned: no ablation row sweeps it, so one value, fixed here.
+  time_encoding_dk: 16
+
 # -----------------------------------------------------------------------------
 # Reused diffusion process and denoiser (PROJECT_PLAN §0, decision 1; M2-1).
 # Upstream's published PhysioNet configuration (config/base.yaml at the pinned

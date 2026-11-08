@@ -51,11 +51,12 @@ def test_building_leaves_the_loaded_config_unchanged(config):
     build_model(config, "cpu")
     assert config == before
 
-def test_an_extension_toggle_raises_until_that_extension_exists(config):
-    # Extension 1 exists since M4-2 (tests/test_missingness_encoder.py); Extension 2 until M5-2.
-    config["model"]["use_time_encoding"] = True
-    with pytest.raises(NotImplementedError):
-        build_model(config, "cpu")
+def test_every_toggle_combination_builds(config):
+    # Both extensions exist since M5-2 (tests/test_missingness_encoder.py, tests/test_time_encoding.py).
+    for ext1, ext2 in ((False, False), (True, False), (False, True), (True, True)):
+        config["model"].update(use_mask_embedding=ext1, use_time_encoding=ext2)
+        model = build_model(config, "cpu")
+        assert (model.mask_encoder is not None) == ext1 and (model.time_encoder is not None) == ext2
 
 def test_initial_weights_follow_the_callers_seed(config):
     # Seeding belongs to RunStreams.seed_model_init(), called right before build_model;
