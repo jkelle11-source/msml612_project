@@ -70,7 +70,7 @@ Per-variable **z-scoring** using **training-split statistics only**, applied to 
 
 ### 3.3 Paired 5-seed evaluation
 - Seeds **42–46** (field-standard set).
-- **Common random numbers:** the same 5 seeds across all four variants, so each variant shares data order, train-mask stream, and init RNG with the others at the matching seed. Init is paired by build order: the parts every variant shares are built first, and each extension's module is then built from the same init-RNG state, the one right after the shared parts, so a seed's shared weights match in every variant and each encoder starts from the same weights in every variant that has it (Ext 1 and Ext 1+2; Ext 2 and Ext 1+2). The diffusion timestep and noise draws are paired as well, each stream drawn from its own generator rather than the global RNG (as `TrainMasker` is, §3.1); **dropout is the one stream that is not paired**, because a variant with extra dropout layers consumes more of the global RNG. Comparisons are **paired differences**; we report the mean paired Δ and the **SE of the paired Δ**, which is typically far smaller than the SE of either mean. The block-aware regime (§3.1) uses the same seeds and the same rules: its base and Ext 1 are paired with each other, never with the random regime's runs.
+- **Common random numbers:** the same 5 seeds across all four variants, so each variant shares data order, train-mask stream, and init RNG with the others at the matching seed. Init is paired by build order: the parts every variant shares are built first, and each extension's module is then built from the same init-RNG state, the one right after the shared parts, so a seed's shared weights match in every variant and each encoder starts from the same weights in every variant that has it (Ext 1 and Ext 1+2; Ext 2 and Ext 1+2). The diffusion timestep and noise draws are paired as well, each stream drawn from its own generator rather than the global RNG (as `TrainMasker` is, §3.1); **dropout is the one stream that is not always paired**, because a variant with extra dropout layers consumes more of the global RNG. Ext 1's encoder has dropout layers, so it is not paired between base and Ext 1 (or Ext 2 and Ext 1+2); Ext 2's encoder has none, and the global RNG is re-seeded at every epoch, so base and Ext 2 (and Ext 1 and Ext 1+2) draw identical dropout masks (checked in M5-2). Comparisons are **paired differences**; we report the mean paired Δ and the **SE of the paired Δ**, which is typically far smaller than the SE of either mean. The block-aware regime (§3.1) uses the same seeds and the same rules: its base and Ext 1 are paired with each other, never with the random regime's runs.
 - **Frozen evaluation noise:** the reverse sampler's noise comes from one frozen seed (`eval_sampling_seed`), re-seeded at the start of every evaluation pass and run at a fixed batch size and patient order, so a checkpoint's score depends on its weights alone and every variant, seed and epoch is scored with identical noise.
 - Every headline number is mean ± SE over the 5 seeds. A contrast whose paired-Δ error bar overlaps zero is reported as **"no significant effect,"** never hidden or spun.
 
@@ -138,6 +138,8 @@ $$\text{T2V}(\delta)_k = \begin{cases}\omega_0\delta + \phi_0 & k=0\\ \sin(\omeg
 
 Each (hour, feature) is encoded and projected to `d_model` on its own, so the value at that position is told its own staleness rather than a summary of every feature's. The projection is shared across features; the denoiser's feature embedding tells them apart.
 
+$\delta$ is computed inside the model from the conditioning mask (M5-1), never read from the dataset's `delta_obs`, which still counts held-out targets as observed (§3.1). It goes in as **raw hours** (0 to 48), and the output is scaled by a learned **gate that starts at 0**, as Ext 1's is (§4.1; both settled in M5-2). Raw hours keep the waves informative from the start: with the layers' starting frequencies (at most 1 per hour), $\delta / 48$ would leave each wave nearly flat over its range. But untrained, the linear dimension grows with $\delta$, and the encoder's output is larger than the denoiser input it is added to by an amount that depends on the init seed (RMS 1.26 at $d_k = 16$, from 0.42 to 3.18 over five seeds, against 0.67 per value, on 64 training patients). Without the gate, the paired Ext 2 − base difference at each seed would partly measure how hard that seed's starting $\omega_0$ disrupts the start of training. With it, Ext 2 starts out computing exactly what base does.
+
 ```python
 class ContinuousTimeEncoding(nn.Module):
     """True Time2Vec of per-feature TSLO; projected to d_model at each (hour, feature), added like a PE."""
@@ -146,15 +148,17 @@ class ContinuousTimeEncoding(nn.Module):
         self.w0 = nn.Linear(1, 1)             # linear component (k=0)
         self.w  = nn.Linear(1, d_k - 1)       # periodic components (k>=1)
         self.proj = nn.Linear(d_k, d_model)   # shared by every (hour, feature)
+        self.gate = nn.Parameter(torch.zeros(()))   # starts at 0: Ext 2 starts as base
 
     def forward(self, delta):                 # delta: (B, T, D) TSLO in hours
         d = delta.unsqueeze(-1)               # (B, T, D, 1)
         t2v = torch.cat([self.w0(d), torch.sin(self.w(d))], dim=-1)  # (B,T,D,d_k)
-        return self.proj(t2v)                                        # (B, T, D, d_model)
+        return self.gate * self.proj(t2v)                            # (B, T, D, d_model)
 ```
 
 - **Toggle:** `--use_time_encoding`. The encoding is **added to the denoiser input** like a positional encoding — it does **not** touch the attention logits.
-- **Primary evaluation regime:** high-autocorrelation variables (heart rate, SpO2), where recency matters most.
+- **Size:** $d_k = 16$ (`model.time_encoding_dk`): 15 waves whose starting frequencies span the 0–48 h range, for 1,121 weights at `d_model` 64 (Ext 1 adds 106,305). Not tuned; no ablation row sweeps it.
+- **Primary evaluation regime:** high-autocorrelation variables, where recency matters most: heart rate and, standing in for SpO2 (not one of our 35 features; SaO2, a sparse lab, is), systolic arterial pressure (SysABP), the densest vital after HR apart from urine output (settled in M5-2).
 
 ### 4.3 Extension 3 (Stretch) — Studentized, Patient-Level Conformal Intervals
 
@@ -337,7 +341,7 @@ Proposal (Oct 8) · Interim Report (Oct 29) · Presentation (Dec 2) · Final Rep
 | Deliverable milestones missed | Medium | Proposal/interim/slides are explicit tasks with owners and dates in §5. |
 | Conformal not reached | Medium | Explicit stretch; gated at end of Week 8; cut cleanly. |
 | PhysioNet DUA wall | Low | Legacy archive Set A (open CSVs); if a DUA appears it's sign-and-download, not CITI. Register day 1, all three. |
-| TSLO misaligned after masking | Medium | Week-5 alignment check; unit test $\delta$ against observations. |
+| TSLO misaligned after masking | Medium | Week-5 alignment check; unit test $\delta$ against observations. **Tested in M5-1:** $\delta$ is recomputed from the conditioning mask inside the model, so a held-out target counts as unobserved on the training, validation and sampler paths. |
 
 ---
 
