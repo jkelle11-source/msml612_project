@@ -429,8 +429,9 @@ validation split as it goes, and writes to `outputs/<run name>/` (git-ignored), 
 `outputs/base_random_seed42/`, the run's name on wandb
 ([Experiment tracking](#experiment-tracking-m3-2)). Options: `--device` (`cuda`, `mps`, `cpu`,
 default the first available), `--epochs` to override `train.epochs`, `--validate-every` to
-override `validation.every_n_epochs`, `--config`, `--dataset`, `--out`, `--overwrite`, `--wandb`,
-`--tag`. The output folder must be empty or new, so two runs' files never mix; `--overwrite`
+override `validation.every_n_epochs`, `--variant` to set the extension toggles
+([The four variants](#the-four-variants-m6-1)), `--config`, `--dataset`, `--out`, `--overwrite`,
+`--wandb`, `--tag`. The output folder must be empty or new, so two runs' files never mix; `--overwrite`
 first deletes the files listed below from it, and nothing else.
 Everything is written while the run is going, so a stopped run keeps what it has done:
 
@@ -971,46 +972,68 @@ One model, two independent toggles. A variant is nothing but its toggles: the sh
 built and seeded the same way in all four, and each encoder is built from the same init-RNG
 state in every variant that has it ([Random streams](#random-streams-seed-pairing)).
 
-| Variant | `diffusion.run` flags | `model.use_mask_embedding` | `model.use_time_encoding` | Run name |
-| --- | --- | --- | --- | --- |
-| `base` | *(none)* | `false` | `false` | `base_<regime>_seed<seed>` |
-| `ext1` | `--use_mask_embedding` | `true` | `false` | `ext1_<regime>_seed<seed>` |
-| `ext2` | `--use_time_encoding` | `false` | `true` | `ext2_<regime>_seed<seed>` |
-| `ext1+2` | `--use_mask_embedding --use_time_encoding` | `true` | `true` | `ext1+2_<regime>_seed<seed>` |
+| Variant | `--variant` | Toggle flags | `model.use_mask_embedding` | `model.use_time_encoding` | Run name |
+| --- | --- | --- | --- | --- | --- |
+| `base` | `--variant base` | *(none)* | `false` | `false` | `base_<regime>_seed<seed>` |
+| `ext1` | `--variant ext1` | `--use_mask_embedding` | `true` | `false` | `ext1_<regime>_seed<seed>` |
+| `ext2` | `--variant ext2` | `--use_time_encoding` | `false` | `true` | `ext2_<regime>_seed<seed>` |
+| `ext1+2` | `--variant ext1+2` | `--use_mask_embedding --use_time_encoding` | `true` | `true` | `ext1+2_<regime>_seed<seed>` |
 
 ```text
-uv run python -m diffusion.run --seed 42 --use_mask_embedding --use_time_encoding   # ext1+2, seed 42
+uv run python -m diffusion.run --seed 42 --variant ext1+2      # ext1+2, seed 42
 ```
 
-For the harness (M6-2), `diffusion.run.VARIANT_FLAGS` holds the same mapping, variant name to
-flags, in this order; a harness that calls `run()` directly sets the two toggles in the config it
-passes instead, which gives the same run. The flags only switch a toggle on, so a config that
-already has one on keeps it. `variant_name(config)` reads a variant back from its toggles.
+`diffusion.run.VARIANTS` is the one definition of a variant: its toggles, every one written on or
+off. There are three ways to set a run to a variant, and they give the same run:
+
+- **`--variant <name>`** on `diffusion.run` sets every toggle to the variant's, on or off,
+  whatever the config held, so `--variant base` on a saved Ext 1 config trains base. It is
+  refused alongside a toggle flag.
+- **`with_variant(config, name)`** does the same for a harness that calls `run()` itself: it
+  returns a copy of the config with every toggle written, and leaves the caller's alone.
+- **The toggle flags**, `VARIANT_FLAGS[name]`, only switch toggles on, so they give the variant
+  only on a config whose toggles are all off, as the repo's are.
+
+`variant_name(config)` reads a variant back from its toggles. `VARIANTS` lists every variant a
+run can be, not the sweep: the harness (M6-2) names the variants it trains, so M6-3's
+`ext1blind`, which goes into `VARIANTS` with its toggle written in every variant, is not swept by
+being there.
 
 - **`base` is the gate model, exactly.** With both toggles off the model has neither encoder and
-  only upstream's weights. On an Apple M4 Pro (MPS), base at seed 42 trained for 3 epochs
-  (525 steps) at the gate runs' commit, `9314475`, and on this branch gives bit-for-bit the same
-  losses, gradient norms, final weights (all 139 tensors) and samples from those weights
-  (2 draws on 32 val patients, the frozen seed): every SHA-256 matches. Nothing since the gate
-  has changed what base computes; M4-2 and M5-2 only added code that runs when a toggle is on.
+  only upstream's weights. On the Apple M4 Pro (20-core GPU, MPS, torch 2.14.1) that trained the
+  gate runs, base at seed 42 on this branch retrains the M4-1 gate run (`bqoimtqw`, trained at
+  `9314475`) bit for bit: every one of its 35,000 steps' losses, gradient norms and learning
+  rates, and its final weights, all 139 tensors (M6-1 review). Samples from equal weights match
+  too, at `9314475` and on this branch (2 draws on 32 val patients, the frozen seed). Nothing since
+  the gate has changed what base computes: M4-2, M5-1 and M5-2 only added code that runs when a
+  toggle is on. `tests/test_variants.py` holds base to numbers worked out at `9314475`, so a
+  later change to base fails the suite.
 - **`ext1+2` composes cleanly.** Its two hooks are separate additions to the denoiser input,
   computed from the same conditioning mask, and neither encoder reads the other (see
   [Hand-off to the combined model](#extension-1-missingnessencoder-m4-2)). A 3-epoch run at
-  seed 42 on the same M4 Pro, through `diffusion.run` with both flags (not logged to wandb):
-  healthy over its first 500 steps (loss 0.506 in the first tenth, 0.316 in the last, one
-  spike at step 16, as base and Ext 2 have), finite throughout, and both gates opened from 0
-  (`mask_encoder.gate` −0.051, `time_encoder.gate` −0.036). Its val MAE after 3 epochs, 0.4723
-  (5 draws), is above forward fill's 0.4366, like Ext 2's short check ([Extension 2](#extension-2-continuoustimeencoding-m5-2)):
-  525 steps is a plumbing check, not a result.
+  seed 42 on the same M4 Pro, through `diffusion.run` with both on (not logged to wandb):
+  healthy over its first 500 steps (loss 0.506 in the first tenth, 0.316 in the last; one
+  gradient spike, at step 16, where base's and Ext 2's short runs also spike, besides steps 5
+  and 14), finite throughout, and both gates opened from 0 (`mask_encoder.gate` −0.052,
+  `time_encoder.gate` −0.035). Its val MAE after 3 epochs, 0.4728 (5 draws), is above forward
+  fill's 0.4366, as Ext 2's (0.4731) and base's (0.4824) are after the same short run
+  ([Extension 2](#extension-2-continuoustimeencoding-m5-2)): 525 steps is a plumbing check, not a
+  result. Josh's run of it on his own M4 Pro gave 0.4723 and gates −0.051 and −0.036; runs
+  repeat bit for bit only on one machine, which is why every health run is on this one (M5-3).
 
 Tests:
 
-- `tests/test_variants.py`: `VARIANT_FLAGS` names exactly the four variants, and each one's flags
-  on `diffusion.run` train that variant and save exactly its encoders; every variant, at the
-  gate's width and depth on 16 Set A patients, runs forward and backward with finite gradients
-  on every weight and samples finite `(K, N, 48, 35)` draws through `EvalSampler`; with both on,
-  one backward pass gives nonzero gradients on every weight of both encoders and both gates
-  have opened; base has neither encoder.
+- `tests/test_variants.py`: `VARIANTS` and `VARIANT_FLAGS` hold exactly the four variants'
+  toggles and flags; `with_variant` writes every toggle, from a config with all of them off or
+  all on, and leaves the caller's config alone; each variant's toggle flags, and `--variant` on
+  a config with every toggle on, train that variant and save exactly its encoders; `--variant`
+  with a toggle flag refused before anything runs; every variant, at the gate's width and depth
+  on 4 Set A patients, runs forward and backward with finite gradients on every weight and
+  samples finite `(K, N, 48, 35)` draws through `EvalSampler`; with both on, one backward pass
+  gives nonzero gradients on every weight of both encoders and both gates have opened; and base
+  at seed 42 on the fake patients (CPU, width 16, 2 layers, 8 steps) gives, to 1e-4, the losses,
+  gradient norms, weights and samples worked out at `9314475`. It runs 2 layers because a
+  1-layer model hides a change to the skip connections' 1/√layers.
 - Composition itself is covered where each extension landed: `tests/test_build_model.py`,
   `tests/test_time_encoding.py` (pairing, each gate at 0 giving the variant without it on every
   path) and `tests/test_run.py` (both flags through `diffusion.run`).
