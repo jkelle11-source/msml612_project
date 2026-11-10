@@ -37,10 +37,10 @@
 - A short note documenting the exact flag combinations for the four variants.
 
 **Definition of Done**
-- [ ] All four toggle combinations run forward+backward and sample.
-- [ ] `base` (both off) reproduces the gate model exactly.
-- [ ] `+both` shows nonzero gradients reaching *both* encoders.
-- [ ] Variant→flags mapping documented for the harness.
+- [x] All four toggle combinations run forward+backward and sample.
+- [x] `base` (both off) reproduces the gate model exactly.
+- [x] `+both` shows nonzero gradients reaching *both* encoders.
+- [x] Variant→flags mapping documented for the harness.
 
 ---
 

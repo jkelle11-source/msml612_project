@@ -66,11 +66,33 @@ def pick_device(name="auto"):
         return name
     return "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
+# The variants (M6-1): each one's extension toggles in model:, every one written on or off, so
+# setting a variant never depends on what the config held before. This table is the only place
+# a variant is defined: with_variant() and --variant set it, VARIANT_FLAGS gives the toggle flags
+# that switch on the same ones, and variant_name() reads it back. It lists every variant a run can
+# be, not the sweep: the harness (M6-2) names the variants it trains, so a variant added here
+# (M6-3's ext1blind) is not swept by being added.
+VARIANTS = {
+    "base": {"use_mask_embedding": False, "use_time_encoding": False},
+    "ext1": {"use_mask_embedding": True, "use_time_encoding": False},
+    "ext2": {"use_mask_embedding": False, "use_time_encoding": True},
+    "ext1+2": {"use_mask_embedding": True, "use_time_encoding": True},
+}
+# The toggle flags of each variant, for a config whose toggles are all off (the repo's). They only
+# switch toggles on; --variant also switches them off.
+VARIANT_FLAGS = {name: [f"--{toggle}" for toggle, on in toggles.items() if on]
+                 for name, toggles in VARIANTS.items()}
+
+def with_variant(config, name):
+    """A copy of ``config`` set to variant ``name``: every toggle in ``VARIANTS`` written, on or off."""
+    config = copy.deepcopy(config)
+    config["model"].update(VARIANTS[name])
+    return config
+
 def variant_name(config):
-    """``base``, ``ext1``, ``ext2`` or ``ext1+2``, from the extension toggles."""
-    on = [name for name, toggle in (("ext1", "use_mask_embedding"), ("ext2", "use_time_encoding"))
-          if config["model"][toggle]]
-    return "+".join(on).replace("ext1+ext2", "ext1+2") or "base"
+    """``base``, ``ext1``, ``ext2`` or ``ext1+2``, from the extension toggles (``VARIANTS``)."""
+    toggles = {toggle: bool(config["model"][toggle]) for toggle in VARIANTS["base"]}
+    return next(name for name, variant in VARIANTS.items() if variant == toggles)
 
 def run_name(config, seed):
     """``<variant>_<regime>_seed<seed>``, e.g. ``base_random_seed42``: the run's name on wandb (M3-2)."""
@@ -225,6 +247,9 @@ def main(argv=None):
     parser.add_argument("--epochs", type=int, help="override train.epochs; recorded in the saved config")
     parser.add_argument("--validate-every", type=int,
                         help="override validation.every_n_epochs; recorded in the saved config")
+    parser.add_argument("--variant", choices=list(VARIANTS),
+                        help="set every extension toggle to this variant's, on or off (M6-1); recorded in "
+                             "the saved config. Not with --use_mask_embedding or --use_time_encoding")
     parser.add_argument("--use_mask_embedding", action="store_true",
                         help="turn on model.use_mask_embedding (Extension 1, M4-2); recorded in the saved config")
     parser.add_argument("--use_time_encoding", action="store_true",
@@ -238,12 +263,16 @@ def main(argv=None):
     parser.add_argument("--tag", action="append", default=[],
                         help="a wandb tag saying what the run is for, e.g. gate, sweep, dry-run, debug (repeatable)")
     args = parser.parse_args(argv)
+    if args.variant is not None and (args.use_mask_embedding or args.use_time_encoding):
+        parser.error("--variant sets every extension toggle; give it or the toggle flags, not both")
 
     config = copy.deepcopy(yaml.safe_load(args.config.read_text()))
     if args.epochs is not None:
         config["train"]["epochs"] = args.epochs
     if args.validate_every is not None:
         config["validation"]["every_n_epochs"] = args.validate_every
+    if args.variant is not None:
+        config = with_variant(config, args.variant)
     if args.use_mask_embedding:
         config["model"]["use_mask_embedding"] = True
     if args.use_time_encoding:
