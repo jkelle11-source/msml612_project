@@ -965,6 +965,58 @@ Tests:
 
 ---
 
+## The four variants (M6-1)
+
+One model, two independent toggles. A variant is nothing but its toggles: the shared parts are
+built and seeded the same way in all four, and each encoder is built from the same init-RNG
+state in every variant that has it ([Random streams](#random-streams-seed-pairing)).
+
+| Variant | `diffusion.run` flags | `model.use_mask_embedding` | `model.use_time_encoding` | Run name |
+| --- | --- | --- | --- | --- |
+| `base` | *(none)* | `false` | `false` | `base_<regime>_seed<seed>` |
+| `ext1` | `--use_mask_embedding` | `true` | `false` | `ext1_<regime>_seed<seed>` |
+| `ext2` | `--use_time_encoding` | `false` | `true` | `ext2_<regime>_seed<seed>` |
+| `ext1+2` | `--use_mask_embedding --use_time_encoding` | `true` | `true` | `ext1+2_<regime>_seed<seed>` |
+
+```text
+uv run python -m diffusion.run --seed 42 --use_mask_embedding --use_time_encoding   # ext1+2, seed 42
+```
+
+For the harness (M6-2), `diffusion.run.VARIANT_FLAGS` holds the same mapping, variant name to
+flags, in this order; a harness that calls `run()` directly sets the two toggles in the config it
+passes instead, which gives the same run. The flags only switch a toggle on, so a config that
+already has one on keeps it. `variant_name(config)` reads a variant back from its toggles.
+
+- **`base` is the gate model, exactly.** With both toggles off the model has neither encoder and
+  only upstream's weights. On an Apple M4 Pro (MPS), base at seed 42 trained for 3 epochs
+  (525 steps) at the gate runs' commit, `9314475`, and on this branch gives bit-for-bit the same
+  losses, gradient norms, final weights (all 139 tensors) and samples from those weights
+  (2 draws on 32 val patients, the frozen seed): every SHA-256 matches. Nothing since the gate
+  has changed what base computes; M4-2 and M5-2 only added code that runs when a toggle is on.
+- **`ext1+2` composes cleanly.** Its two hooks are separate additions to the denoiser input,
+  computed from the same conditioning mask, and neither encoder reads the other (see
+  [Hand-off to the combined model](#extension-1-missingnessencoder-m4-2)). A 3-epoch run at
+  seed 42 on the same M4 Pro, through `diffusion.run` with both flags (not logged to wandb):
+  healthy over its first 500 steps (loss 0.506 in the first tenth, 0.316 in the last, one
+  spike at step 16, as base and Ext 2 have), finite throughout, and both gates opened from 0
+  (`mask_encoder.gate` −0.051, `time_encoder.gate` −0.036). Its val MAE after 3 epochs, 0.4723
+  (5 draws), is above forward fill's 0.4366, like Ext 2's short check ([Extension 2](#extension-2-continuoustimeencoding-m5-2)):
+  525 steps is a plumbing check, not a result.
+
+Tests:
+
+- `tests/test_variants.py`: `VARIANT_FLAGS` names exactly the four variants, and each one's flags
+  on `diffusion.run` train that variant and save exactly its encoders; every variant, at the
+  gate's width and depth on 16 Set A patients, runs forward and backward with finite gradients
+  on every weight and samples finite `(K, N, 48, 35)` draws through `EvalSampler`; with both on,
+  one backward pass gives nonzero gradients on every weight of both encoders and both gates
+  have opened; base has neither encoder.
+- Composition itself is covered where each extension landed: `tests/test_build_model.py`,
+  `tests/test_time_encoding.py` (pairing, each gate at 0 giving the variant without it on every
+  path) and `tests/test_run.py` (both flags through `diffusion.run`).
+
+---
+
 ## Environment
 
 The environment is managed with [uv](https://docs.astral.sh/uv/): dependencies are declared

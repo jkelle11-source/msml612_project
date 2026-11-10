@@ -66,6 +66,16 @@ def pick_device(name="auto"):
         return name
     return "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
+# The four variants (M6-1): each one's command-line flags, which set the toggles of the same
+# names in model:. The harness (M6-2) trains a variant with `diffusion.run --seed <s> <flags>`
+# or the toggles set in the config it passes to run(); both give the same run.
+VARIANT_FLAGS = {
+    "base": [],
+    "ext1": ["--use_mask_embedding"],
+    "ext2": ["--use_time_encoding"],
+    "ext1+2": ["--use_mask_embedding", "--use_time_encoding"],
+}
+
 def variant_name(config):
     """``base``, ``ext1``, ``ext2`` or ``ext1+2``, from the extension toggles."""
     on = [name for name, toggle in (("ext1", "use_mask_embedding"), ("ext2", "use_time_encoding"))
