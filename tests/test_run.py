@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 
 import numpy as np
@@ -8,9 +9,12 @@ from conftest import CONFIG
 from data.physionet import save_dataset
 import torch
 import wandb
-from diffusion.run import RUN_FILES, health_report, main, run, run_name, validate, variant_name
+from diffusion.run import (RUN_FILES, VARIANTS, chain_sha256, health_report, main, run, run_name, validate,
+                           variant_name, weight_hashes, with_variant)
+from diffusion.streams import RunStreams
 from diffusion.train import train
 from eval import EvalMasker
+from models.build import build_model
 
 def tiny_config(epochs=2):
     """A model small enough to train and validate in a few seconds on the 40 fake patients."""
@@ -291,7 +295,8 @@ def test_the_config_seed_and_toggles_reach_wandb(small_dataset, tmp_path, fake_w
     assert (init["entity"], init["project"]) == (CONFIG["tracking"]["wandb_entity"], CONFIG["tracking"]["wandb_project"])
     assert init["name"] == "base_random_seed43" and init["tags"] == ["base", "random", "seed43"]
     assert init["config"] == {**as_saved(tiny_config()), "seed": 43, "variant": "base", "regime": "random",
-                              "device": "cpu", "out_dir": str(tmp_path.resolve())}     # where the run's files are
+                              "device": "cpu", "gpu": None,                 # no GPU on the CPU (M6-2)
+                              "out_dir": str(tmp_path.resolve())}           # where the run's files are
     assert {"use_mask_embedding", "use_time_encoding"} <= set(init["config"]["model"])
 
 def test_the_summary_carries_the_health_report_and_forward_fill_bar(small_dataset, tmp_path, fake_wandb):
@@ -384,3 +389,74 @@ def test_tracking_does_not_change_the_run(small_dataset, tmp_path, monkeypatch, 
     weights = [torch.load(tmp_path / d / "model.pt") for d in ("untracked", "tracked")]
     assert weights[0].keys() == weights[1].keys()
     assert all(torch.equal(weights[0][k], weights[1][k]) for k in weights[0])
+
+# --- pairing hashes and the paired GPU (M6-2) -------------------------------------------
+
+def test_the_stream_hashes_are_of_exactly_what_training_drew(small_dataset, tmp_path):
+    drawn = {}
+
+    def capture(epoch, model, values, mask, cond_mask):
+        drawn.setdefault(epoch, []).append((values.clone(), mask.clone(), cond_mask.clone()))
+
+    train(tiny_config(), small_dataset, 42, "cpu", on_batch=capture)
+    _, summary = run(tiny_config(), small_dataset, 42, "cpu", tmp_path, log=quiet)
+    curve = json.loads((tmp_path / "curve.json").read_text())
+    for row in curve:
+        data, masks = hashlib.sha256(), hashlib.sha256()
+        for values, mask, cond_mask in drawn[row["epoch"]]:
+            data.update(values.numpy().tobytes())
+            data.update(mask.numpy().tobytes())
+            masks.update(cond_mask.numpy().tobytes())
+        assert (row["data_order_sha256"], row["train_mask_sha256"]) == (data.hexdigest(), masks.hexdigest())
+    assert curve[0]["data_order_sha256"] != curve[1]["data_order_sha256"]      # reshuffled every epoch
+    for stream in ("data_order", "train_mask"):
+        assert summary["pairing"][stream] == chain_sha256(row[f"{stream}_sha256"] for row in curve)
+
+def test_the_starting_weights_are_hashed_before_the_first_update(small_dataset, tmp_path):
+    RunStreams(42).seed_model_init()                        # as train() builds the model
+    start = build_model(tiny_config(), "cpu").state_dict()
+    model, summary = run(tiny_config(), small_dataset, 42, "cpu", tmp_path, log=quiet)
+    assert summary["pairing"]["init_shared"] == weight_hashes(start)["shared"]
+    assert summary["pairing"]["init_shared"] != weight_hashes(model.state_dict())["shared"]    # trained since
+
+def test_a_seeds_variants_hash_the_same_streams_and_starting_weights(small_dataset, tmp_path):
+    pairing = {}
+    for variant, seed in [*((v, 42) for v in VARIANTS), ("base", 43)]:
+        _, summary = run(with_variant(tiny_config(), variant), small_dataset, seed, "cpu",
+                         tmp_path / f"{variant}_{seed}", log=quiet)
+        pairing[variant, seed] = summary["pairing"]
+    for key in ("data_order", "train_mask", "init_shared"):
+        assert len({pairing[v, 42][key] for v in VARIANTS}) == 1
+        assert pairing["base", 43][key] != pairing["base", 42][key]
+    assert set(pairing["base", 42]) == {"init_shared", "data_order", "train_mask"}
+    assert set(pairing["ext1+2", 42]) == {"init_shared", "init_mask_encoder", "init_time_encoder",
+                                          "data_order", "train_mask"}
+    assert pairing["ext1", 42]["init_mask_encoder"] == pairing["ext1+2", 42]["init_mask_encoder"]
+    assert pairing["ext2", 42]["init_time_encoder"] == pairing["ext1+2", 42]["init_time_encoder"]
+
+def test_hashing_the_streams_does_not_change_training(small_dataset, tmp_path):
+    _, unhashed = train(tiny_config(), small_dataset, 42, "cpu")
+    run(tiny_config(), small_dataset, 42, "cpu", tmp_path, log=quiet)
+    assert [json.loads(line) for line in (tmp_path / "history.jsonl").read_text().splitlines()] == unhashed
+
+def picked(gpu):
+    config = tiny_config()
+    config["protocol"]["paired_gpu"] = gpu
+    return config
+
+@pytest.mark.parametrize("gpu, refusal", [(None, "timing test"), ("Tesla T4", "not on cpu")])
+def test_a_paired_run_refuses_to_start_anywhere_but_the_picked_gpu(gpu, refusal, small_dataset, tmp_path, fake_wandb):
+    with pytest.raises(RuntimeError, match=refusal):
+        run(picked(gpu), small_dataset, 42, "cpu", tmp_path / "run", log=quiet, wandb_mode="online", paired=True)
+    assert not (tmp_path / "run").exists() and fake_wandb == []           # nothing written, nothing sent
+
+def test_a_paired_run_on_the_picked_gpu_starts_and_records_it(small_dataset, tmp_path, fake_wandb, monkeypatch):
+    monkeypatch.setattr("diffusion.run.gpu_name", lambda device: "Tesla T4")     # as on a Colab T4
+    _, summary = run(picked("Tesla T4"), small_dataset, 42, "cpu", tmp_path, log=quiet, wandb_mode="online",
+                     paired=True)
+    assert summary["gpu"] == fake_wandb[0].init["config"]["gpu"] == "Tesla T4"
+    assert fake_wandb[0].summary["gpu"] == "Tesla T4"
+
+def test_an_unpaired_run_goes_anywhere_and_says_where(small_dataset, tmp_path):
+    _, summary = run(picked("Tesla T4"), small_dataset, 42, "cpu", tmp_path, log=quiet)     # health, debugging
+    assert summary["device"] == "cpu" and summary["gpu"] is None

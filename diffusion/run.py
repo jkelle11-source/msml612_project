@@ -8,12 +8,14 @@ Trains with ``diffusion.train.train``, scores the validation split every
 
 - ``config.yaml``: the resolved config the run used. ``--config`` on it reruns the run.
 - ``history.jsonl``: one record per training step, ``{"epoch", "loss", "grad_norm", "lr"}``.
-- ``curve.json``: one row per epoch: mean loss, largest gradient norm, seconds, and val
-  MAE/RMSE on the epochs that were scored.
+- ``curve.json``: one row per epoch: mean loss, largest gradient norm, seconds, the SHA-256 of
+  the epoch's batches and of its train masks (M6-2), and val MAE/RMSE on the epochs that were scored.
 - ``model.pt``: the weights after the latest scored epoch. The last epoch is always scored, so a
   finished run leaves its final weights here, the ones that are scored (PROJECT_PLAN §3.1).
 - ``summary.json``: the 500-step health report, the final val MAE, whether it is below
-  forward fill's, and the run's path on wandb (``entity/project/id``; null if untracked).
+  forward fill's, the GPU it trained on, its pairing hashes (M6-2: the starting weights of each
+  part, the data order and the train masks), and the run's path on wandb (``entity/project/id``;
+  null if untracked).
 
 The run refuses an output folder that is not empty, so two runs' files never mix; with
 ``--overwrite`` it first deletes the files a run writes (``RUN_FILES``), and nothing else.
@@ -24,10 +26,14 @@ norm and learning rate, every epoch's ``curve.json`` row, the config and output 
 ``summary.json`` as the run's summary. ``--wandb`` picks the mode (online, offline, disabled);
 without it wandb follows ``WANDB_MODE`` if that is set, else goes online, and so does ``run()``
 called from Python without ``wandb_mode``. ``--tag`` adds tags that say what a run is for.
+
+A paired run (``run(..., paired=True)``, the M6-2 harness's) starts only on the GPU the timing test
+picked, ``protocol.paired_gpu`` (PROJECT_PLAN §3.3), and not at all before one is picked.
 """
 
 import argparse
 import copy
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -65,6 +71,42 @@ def pick_device(name="auto"):
     if name != "auto":
         return name
     return "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+
+def gpu_name(device):
+    """The GPU model ``device`` computes on, as ``nvidia-smi`` names it (``Tesla T4``); None off CUDA."""
+    return torch.cuda.get_device_name(torch.device(device)) if str(device).startswith("cuda") else None
+
+def require_paired_gpu(protocol, device):
+    """Refuse a paired run on any GPU but ``protocol.paired_gpu`` (PROJECT_PLAN §3.3, M6-2).
+
+    Shared seeds pair two runs only on one kind of GPU: on another, float rounding differs from the
+    first optimizer step. Raises ``RuntimeError``, also while the timing test has not picked one.
+    """
+    wanted, found = protocol.get("paired_gpu"), gpu_name(device)
+    if wanted is None:
+        raise RuntimeError("protocol.paired_gpu is not set: M6-2's GPU timing test picks it, "
+                           "and no paired run starts before it does")
+    if found != wanted:
+        raise RuntimeError(f"a paired run goes on a {wanted}, not on {found or device}: "
+                           f"wait for a {wanted}, never take another GPU (README, Environment)")
+
+# Extension encoders, as models.build_model attaches them; every other weight is shared by all
+# four variants, so starts the same in each at a seed (README, Random streams).
+ENCODERS = ("mask_encoder", "time_encoder")
+
+def weight_hashes(state_dict):
+    """``{"shared": ..., "mask_encoder": ...}``: a SHA-256 of each part's weights, for the parts the model has."""
+    hashes = {}
+    for key in sorted(state_dict):
+        part = key.split(".")[0] if key.split(".")[0] in ENCODERS else "shared"
+        digest = hashes.setdefault(part, hashlib.sha256())
+        digest.update(key.encode())
+        digest.update(state_dict[key].detach().cpu().contiguous().numpy().tobytes())
+    return {part: digest.hexdigest() for part, digest in hashes.items()}
+
+def chain_sha256(digests):
+    """One SHA-256 over a run's per-epoch digests, in order: a whole stream as one value."""
+    return hashlib.sha256("".join(digests).encode()).hexdigest()
 
 # The variants (M6-1): each one's extension toggles in model:, every one written on or off, so
 # setting a variant never depends on what the config held before. This table is the only place
@@ -151,7 +193,7 @@ def health_report(history, n_steps=500):
                          and report["complete"])
     return report
 
-def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wandb_mode=None, tags=()):
+def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wandb_mode=None, tags=(), paired=False):
     """Train one model and score it on the validation split as it goes; returns ``(model, summary)``.
 
     ``out_dir`` must be empty or new. With ``overwrite`` an earlier run's files are deleted first,
@@ -160,8 +202,11 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
     ``WANDB_MODE`` decide, as the command line does, so a harness looping over ``run()`` is
     tracked unless told otherwise. ``tags`` are added to the wandb run's variant, regime and seed.
     Nothing is written to ``out_dir`` until wandb has started, so a run that cannot start (no
-    wandb login) can simply be run again.
+    wandb login) can simply be run again. With ``paired`` (a sweep run, M6-2) it refuses to start,
+    before writing or sending anything, on any GPU but ``protocol.paired_gpu``.
     """
+    if paired:
+        require_paired_gpu(config["protocol"], device)
     config = {key: value for key, value in config.items() if key != "tracking"}     # see TRACKING
     out_dir = Path(out_dir)
     if out_dir.exists() and any(out_dir.iterdir()):
@@ -176,12 +221,24 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
     sampler = EvalSampler(protocol["eval_sampling_seed"], validation["n_samples"], validation["batch_size"])
     epochs, bar = config["train"]["epochs"], forward_fill_val_mae()
     history, curve, clock = [], [], {"start": time.time()}
+    # Pairing hashes (M6-2): the starting weights, then each epoch's batches and train masks as
+    # training draws them, so diffusion.results can check a seed's variants were given the same.
+    init, epoch_streams = {}, {}
     variant = variant_name(config)
     tracker = wandb.init(entity=TRACKING["wandb_entity"], project=TRACKING["wandb_project"],
                          mode=wandb_mode, name=run_name(config, seed), job_type="train",
                          tags=[variant, REGIME, f"seed{seed}", *tags],
                          config={**config, "seed": seed, "variant": variant, "regime": REGIME, "device": device,
-                                 "out_dir": str(out_dir.resolve())})
+                                 "gpu": gpu_name(device), "out_dir": str(out_dir.resolve())})
+
+    def on_batch(epoch, model, values, mask, cond_mask):
+        if not init:                                            # the first step, before any update
+            init.update(weight_hashes(model.state_dict()))
+        if not epoch_streams:
+            epoch_streams.update(data_order=hashlib.sha256(), train_mask=hashlib.sha256())
+        epoch_streams["data_order"].update(values.numpy().tobytes())
+        epoch_streams["data_order"].update(mask.numpy().tobytes())
+        epoch_streams["train_mask"].update(cond_mask.numpy().tobytes())
 
     def on_step_end(record):
         history.append(record)
@@ -196,7 +253,9 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
                "loss": float(np.mean([r["loss"] for r in rows])),
                "grad_norm_max": max(r["grad_norm"] for r in rows),
                "lr": rows[-1]["lr"],
-               "seconds": round(time.time() - clock["start"], 1)}
+               "seconds": round(time.time() - clock["start"], 1),
+               **{f"{stream}_sha256": digest.hexdigest() for stream, digest in epoch_streams.items()}}
+        epoch_streams.clear()
         line = f"epoch {epoch + 1}/{epochs}  loss {row['loss']:.4f}  max grad norm {row['grad_norm_max']:.2f}"
         if (epoch + 1) % validation["every_n_epochs"] == 0 or epoch + 1 == epochs:
             started = time.time()
@@ -219,13 +278,19 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
         (out_dir / "history.jsonl").write_text("")
-        model, _ = train(config, dataset, seed, device, on_epoch_end=on_epoch_end, on_step_end=on_step_end)
+        model, _ = train(config, dataset, seed, device, on_epoch_end=on_epoch_end, on_step_end=on_step_end,
+                         on_batch=on_batch)
 
         final = curve[-1]                                       # the last epoch is always scored
         summary = {
             "variant": variant,
             "seed": seed,
             "device": device,
+            "gpu": gpu_name(device),
+            # one level deep, so wandb's summary keeps it whole (it flattens a nested block's keys)
+            "pairing": {**{f"init_{part}": digest for part, digest in init.items()},
+                        **{stream: chain_sha256(row[f"{stream}_sha256"] for row in curve)
+                           for stream in ("data_order", "train_mask")}},
             "validation": {"split": "val", "n_samples": validation["n_samples"], "batch_size": validation["batch_size"]},
             "health": health_report(history),
             "final_val_mae": final["val_mae"],
