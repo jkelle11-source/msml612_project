@@ -20,7 +20,7 @@ def use_deterministic_kernels():
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     torch.use_deterministic_algorithms(True)
 
-def train(config, dataset, run_seed, device, on_epoch_end = None, on_step_end = None):
+def train(config, dataset, run_seed, device, on_epoch_end = None, on_step_end = None, on_batch = None):
 
     use_deterministic_kernels()
 
@@ -61,7 +61,12 @@ def train(config, dataset, run_seed, device, on_epoch_end = None, on_step_end = 
         for values, mask in loader:
         
             cond_mask, _ = streams.train_masker(mask)
-            
+
+            # Pairing checks (M6-2): what the data-order and train-mask streams gave this step, and
+            # on the first step the starting weights. Read only; called before the model sees it.
+            if on_batch is not None:
+                on_batch(epoch, model, values, mask, cond_mask)
+
             optimizer.zero_grad()
             
             loss = model(to_batch(values, mask, cond_mask), 

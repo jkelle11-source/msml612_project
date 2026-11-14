@@ -28,7 +28,9 @@ Two files are written to the run folder, named for what was scored (e.g. ``test_
   gate's PaCO2/PaO2 check, M9-2's per-variable analysis).
 
 The scores are also added to the run's wandb summary (``wandb_run`` in its ``summary.json``) under
-the baselines' keys, e.g. ``random/0.1/test/mae``, so the runs table lines CSDI up with them.
+the baselines' keys, e.g. ``random/0.1/test/mae``, so the runs table lines CSDI up with them, with
+the GPU they were scored on (``random/0.1/test/gpu``), which ``diffusion.results`` collects (M6-2).
+A paired run's scoring (``score(..., paired=True)``) starts only on ``protocol.paired_gpu``.
 ``--wandb disabled`` skips that, as does ``WANDB_MODE`` set to anything but ``online``.
 """
 
@@ -46,7 +48,7 @@ import wandb
 import yaml
 
 from data.physionet import load_dataset
-from diffusion.run import CONFIG_PATH, DATASET_PATH, pick_device
+from diffusion.run import CONFIG_PATH, DATASET_PATH, gpu_name, pick_device, require_paired_gpu
 from diffusion.train import use_deterministic_kernels
 from eval import BlockEvalMasker, EvalMasker, EvalSampler, masked_errors, masked_mae, masked_rmse, \
     median_imputation, per_variable_mae
@@ -73,13 +75,16 @@ def holdout_masker(protocol, grid, holdout, fraction):
     raise ValueError(f"holdout must be 'random' or 'block', not {holdout!r}")
 
 def score(run_dir, dataset, device, holdout="random", fraction=None, split="test",
-          config_path=CONFIG_PATH, log=print):
+          config_path=CONFIG_PATH, log=print, paired=False):
     """Score ``run_dir``'s final weights on ``split``'s frozen holdout; writes and returns its scores.
 
     ``fraction`` defaults to ``protocol.eval_holdout_fraction`` (10%). The holdout and sampler come
     from ``config_path``'s frozen ``protocol`` block; the model from the run's own saved config.
+    With ``paired`` (a sweep run, M6-2) it refuses any GPU but that block's ``paired_gpu``.
     """
     use_deterministic_kernels()                 # before any CUDA work (README, Training)
+    if paired:
+        require_paired_gpu(yaml.safe_load(Path(config_path).read_text())["protocol"], device)
     run_dir = Path(run_dir)
     if not (run_dir / "summary.json").exists():
         raise FileNotFoundError(f"{run_dir} has no summary.json: the run has not finished, "
@@ -130,6 +135,7 @@ def score(run_dir, dataset, device, holdout="random", fraction=None, split="test
         "sampler": {"eval_sampling_seed": sampler.seed, "eval_n_samples": sampler.n_samples,
                     "eval_batch_size": sampler.batch_size},
         "device": device,
+        "gpu": gpu_name(device),
         "seconds": round(time.time() - started, 1),
         "model_sha256": hashlib.sha256(weights).hexdigest(),
         "wandb_run": summary.get("wandb_run"),
@@ -140,9 +146,11 @@ def score(run_dir, dataset, device, holdout="random", fraction=None, split="test
     return scores
 
 def attach_to_wandb(scores, mode=None):
-    """Add ``scores``' MAE and RMSE to its run's wandb summary; returns whether it did.
+    """Add ``scores``' MAE and RMSE, and the GPU they were scored on, to its run's wandb summary;
+    returns whether it did.
 
-    Keys are the baselines' (``eval.baselines.wandb_summary``): ``<holdout>/<fraction>/<split>/<metric>``.
+    Keys are the baselines' (``eval.baselines.wandb_summary``): ``<holdout>/<fraction>/<split>/<metric>``,
+    and ``.../gpu`` (null off CUDA, and for scores from before M6-2, which did not record it).
     Skipped for an untracked run, and unless ``mode`` (default ``WANDB_MODE``, else online) is online.
     """
     mode = mode or os.environ.get("WANDB_MODE") or "online"
@@ -150,7 +158,8 @@ def attach_to_wandb(scores, mode=None):
         return False
     prefix = f"{scores['holdout']}/{scores['fraction']}/{scores['split']}"
     wandb.Api().run(scores["wandb_run"]).summary.update({f"{prefix}/mae": scores["mae"],
-                                                         f"{prefix}/rmse": scores["rmse"]})
+                                                         f"{prefix}/rmse": scores["rmse"],
+                                                         f"{prefix}/gpu": scores.get("gpu")})
     return True
 
 def main(argv=None):
