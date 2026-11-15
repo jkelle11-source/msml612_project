@@ -60,6 +60,16 @@
 - **A GPU timing test, before the dry run** (§3.3), to pick the one GPU every paired run uses. On each GPU that everyone who runs paired runs can get, time 2 training epochs (`diffusion.run --epochs 2`; the second epoch is the clean one) and the first 2 of the test split's 50 batches of a frozen scoring pass (`eval.EvalSampler.batches`: 100 draws, batch 16), with deterministic kernels as in a real run. Candidates: T4, L4 and A100. Jake and Sankha have Colab Pro; Josh, who runs `M8-4`'s checks, has applied for student Colab Pro, and without it only the T4 is open to him. From the timings, estimate the Week-7 sweep's hours on each GPU and pick the one that finishes it soonest, counting how often it was free and its compute units per hour. The T4 stays unless another is clearly faster and reliably free. If the pick has TF32, set it explicitly, the same for every run. Record the timings and the pick in the README (Environment) and PROJECT_PLAN §3.3.
 - A **20-epoch dry-run** over the four variants and the block-aware pair at ≥2 seeds proving pairing + logging, on the GPU the timing test picked.
 
+**Notes for the driver** (from the review of #55, the pairing hashes, paired-GPU guard and results store)
+- Call `run()` and `score()` with `paired=True`, or `--paired` on either command line; without it the GPU guard never runs.
+- After every `score()`, call `diffusion.score.attach_to_wandb(scores)`: the results store reads only wandb.
+- To resume a run, load its checkpoint after `train()`'s `on_start` hook has hashed the weights as built, and keep its earlier `curve.json` rows, from which each stream's hash chain is rebuilt.
+- To check that a rerun cell reproduces its numbers, tag the rerun apart (e.g. `rerun`): the store refuses two runs in one cell.
+- Run each regime from one pinned commit: the store refuses a regime whose runs come from different commits.
+- Score every run with the frozen sampler and holdouts of `configs/config.yaml`: the store refuses any other scoring, so a dry-run scoring pass costs as much as a sweep one.
+- For an in-harness check, `diffusion.results.problems()` takes runs as wandb holds them (a config with `seed`, `variant` and `regime`; a summary with the `<holdout>/<fraction>/test/*` keys). Running `diffusion.results --tag dry-run` at the end of the dry run is simpler.
+- The block-aware regime's name (today's `REGIME` constant, read from the config once `mix` lands) becomes the store's key and part of every run name; the store's tests call it `block-aware`.
+
 **Definition of Done**
 - [ ] Within a seed and regime, the variants demonstrably share data order and RNG (asserted in-harness or logged and diffed).
 - [ ] Timing test recorded for every candidate GPU; the pick, with its TF32 setting, written into the README and PROJECT_PLAN §3.3 before the dry run.
