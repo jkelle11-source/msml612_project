@@ -51,7 +51,7 @@ class EvalMasker:
         target = flat_target.reshape(mask.shape)
         return mask - target, target
 
-def block_targets(mask, count, generator, window):
+def block_targets(mask, count, generator, window, offset=0):
     """Pick ``count`` of one patient's observed values as targets, in whole time slots (§3.1).
 
     ``mask`` is one patient's ``(T, D)`` observation mask. Its ``T`` hours are tiled into
@@ -61,26 +61,36 @@ def block_targets(mask, count, generator, window):
     subset of its observed values, so exactly ``count`` are hidden, and the walk stops. A slot
     with nothing observed hides nothing. Returns a fresh ``(T, D)`` array with ``mask``'s dtype.
 
+    ``offset`` (M6-3) shifts the slots ``offset`` hours later, off that grid: they start at
+    hours ``offset + s * window``, there is one slot fewer, and the hours before the first slot
+    and after the last are never hidden. 0, the default, is the grid itself.
+
     All randomness comes from ``generator`` (a ``np.random.Generator``): one permutation of the
     slots, then at most one ``choice`` in the trimmed slot. That draw order is part of the
     frozen block holdout. Shared by ``BlockEvalMasker`` (``count = floor(fraction *
-    n_observed)``) and, from M6-2, ``TrainMasker``'s ``mix`` strategy.
+    n_observed)``), ``OffGridBlockEvalMasker`` and, from M6-2, ``TrainMasker``'s ``mix`` strategy.
     """
     T, D = mask.shape
     slots, remainder = T // window, T % window
     if remainder:
         raise ValueError(f"window {window} must divide the {T} hours of the grid")
+    if not 0 <= offset < window:
+        raise ValueError(f"offset {offset} must be at least 0 and less than the window, {window}")
+    if offset:
+        slots -= 1                              # the last slot would run past the grid
+    first, last = offset * D, (offset + slots * window) * D     # the slots' span, flattened
     flat_mask = mask.reshape(-1)
-    n_observed = np.count_nonzero(flat_mask)
+    n_observed = np.count_nonzero(flat_mask[first:last])
     if count > n_observed:
-        raise ValueError(f"count ({count}) greater than {n_observed} observed values")
+        raise ValueError(f"count ({count}) greater than {n_observed} observed values"
+                         + (f" in hours {offset}-{offset + slots * window - 1}" if offset else ""))
     shuffled_slots = generator.permutation(slots)
     target = np.zeros(T * D, dtype=mask.dtype)
     left = count
     for s in shuffled_slots:
         if left == 0:
             break
-        start, end = s * (window * D), (s + 1) * (window * D)
+        start, end = first + s * (window * D), first + (s + 1) * (window * D)
         observed = np.flatnonzero(flat_mask[start:end]) + start
         if len(observed) <= left:
             target[observed] = 1
@@ -103,6 +113,8 @@ class BlockEvalMasker:
     layout is part of the frozen protocol too: ``grid`` is ``(T, D)`` and any other mask shape
     is rejected.
     """
+
+    offset = 0                                  # on the grid (OffGridBlockEvalMasker shifts it)
 
     def __init__(self, seed, fraction, window, grid=(48, 35)):
         self.seed = seed
@@ -133,8 +145,32 @@ class BlockEvalMasker:
             obs_count = np.count_nonzero(mask[i])
             count = int(obs_count * self.fraction)
             rng = np.random.default_rng([self.seed, int(record_id)])
-            target[i] = block_targets(mask[i], count, rng, self.window)
+            target[i] = block_targets(mask[i], count, rng, self.window, self.offset)
         return mask - target, target
+
+class OffGridBlockEvalMasker(BlockEvalMasker):
+    """``BlockEvalMasker`` with its windows moved off the grid (PROJECT_PLAN §4.1's grid check, M6-3).
+
+    The same per-patient count (``floor(fraction * n_observed)``) and ``window``-hour windows, but
+    the slots start ``offset`` hours later (``block_targets``): with the frozen 3 hours and an
+    offset of 1, 15 windows at hours 1-3, 4-6, ..., 43-45, so none starts on a multiple of 3, the
+    16-slot grid that ``BlockEvalMasker`` and the ``mix`` strategy hide on and Ext 1's hour embedding
+    can learn. Hours 0, 46 and 47 are never hidden. Seeded and frozen like ``BlockEvalMasker``, from
+    a seed of its own, one generator per patient from ``(seed, record_id)``. Scoring only: no
+    training regime hides off the grid.
+    """
+
+    def __init__(self, seed, fraction, window, offset, grid=(48, 35)):
+        super().__init__(seed, fraction, window, grid)
+        self.offset = offset
+
+    @classmethod
+    def from_config(cls, path=CONFIG_PATH):
+        config = yaml.safe_load(Path(path).read_text())
+        protocol, data = config["protocol"], config["data"]
+        grid = (data["n_timesteps"], data["n_features"])
+        return cls(protocol["offgrid_block_eval_masker_seed"], protocol["eval_holdout_fraction"],
+                   protocol["block_window_hours"], protocol["offgrid_block_offset_hours"], grid)
 
 class TrainMasker:
     """Fresh conditioning/target split every training step (PROJECT_PLAN §3.1; CSDI "random").

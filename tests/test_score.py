@@ -10,7 +10,7 @@ from conftest import CONFIG
 from data.physionet import save_dataset
 from diffusion.run import run
 from diffusion.score import attach_to_wandb, main, score
-from eval import BlockEvalMasker, EvalMasker, EvalSampler, masked_mae, median_imputation
+from eval import BlockEvalMasker, EvalMasker, EvalSampler, OffGridBlockEvalMasker, masked_mae, median_imputation
 from models.build import build_model
 import torch
 
@@ -99,7 +99,7 @@ def test_the_robustness_rates_hold_out_their_own_fraction(run_dir, small_dataset
                                                                        small_dataset["record_ids"][idx])
     assert np.array_equal(fake_sampler[0]["cond_mask"], cond) and scores["fraction"] == 0.5
 
-@pytest.mark.parametrize("holdout, fraction", [("random", 0.3), ("block", 0.5), ("blocks", 0.1)])
+@pytest.mark.parametrize("holdout, fraction", [("random", 0.3), ("block", 0.5), ("offgrid", 0.5), ("blocks", 0.1)])
 def test_holdouts_outside_the_frozen_protocol_are_refused(run_dir, small_dataset, holdout, fraction):
     with pytest.raises(ValueError):
         score(run_dir, small_dataset, "cpu", holdout=holdout, fraction=fraction, log=quiet)
@@ -171,6 +171,17 @@ def test_both_files_are_written_named_for_what_was_scored(run_dir, small_dataset
     median = np.load(run_dir / "median_test_block_0.1.npy")
     assert median.shape == (len(small_dataset["test_idx"]), 48, 35) and median.dtype == np.float32
     assert scores["holdout_settings"] == {"block_eval_masker_seed": 8080, "block_window_hours": 3}
+
+def test_the_offgrid_holdout_is_scored_under_a_name_of_its_own(run_dir, small_dataset, fake_sampler):
+    # §4.1's grid check (M6-3): base's and Ext 1's runs scored, without retraining, off the grid.
+    scores = score(run_dir, small_dataset, "cpu", holdout="offgrid", log=quiet)
+    idx = small_dataset["test_idx"]
+    cond, target = OffGridBlockEvalMasker.from_config()(small_dataset["mask"][idx], small_dataset["record_ids"][idx])
+    assert np.array_equal(fake_sampler[0]["cond_mask"], cond) and scores["n_targets"] == int(target.sum())
+    assert json.loads((run_dir / "scores_test_offgrid_0.1.json").read_text()) == scores
+    assert (run_dir / "median_test_offgrid_0.1.npy").exists() and not (run_dir / "scores_test_block_0.1.json").exists()
+    assert scores["holdout_settings"] == {"offgrid_block_eval_masker_seed": 9090, "block_window_hours": 3,
+                                          "offgrid_block_offset_hours": 1}
 
 def test_the_scores_name_the_run_and_its_seed(run_dir, small_dataset, fake_sampler):
     scores = score(run_dir, small_dataset, "cpu", log=quiet)

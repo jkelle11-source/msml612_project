@@ -118,12 +118,13 @@ def chain_sha256(digests):
 # a variant is defined: with_variant() and --variant set it, VARIANT_FLAGS gives the toggle flags
 # that switch on the same ones, and variant_name() reads it back. It lists every variant a run can
 # be, not the sweep: the harness (M6-2) names the variants it trains, so a variant added here
-# (M6-3's ext1blind) is not swept by being added.
+# (M6-3's ext1blind, §4.1's control, trained only if M8-4 is triggered) is not swept by being added.
 VARIANTS = {
-    "base": {"use_mask_embedding": False, "use_time_encoding": False},
-    "ext1": {"use_mask_embedding": True, "use_time_encoding": False},
-    "ext2": {"use_mask_embedding": False, "use_time_encoding": True},
-    "ext1+2": {"use_mask_embedding": True, "use_time_encoding": True},
+    "base": {"use_mask_embedding": False, "use_time_encoding": False, "mask_embedding_blind": False},
+    "ext1": {"use_mask_embedding": True, "use_time_encoding": False, "mask_embedding_blind": False},
+    "ext2": {"use_mask_embedding": False, "use_time_encoding": True, "mask_embedding_blind": False},
+    "ext1+2": {"use_mask_embedding": True, "use_time_encoding": True, "mask_embedding_blind": False},
+    "ext1blind": {"use_mask_embedding": True, "use_time_encoding": False, "mask_embedding_blind": True},
 }
 # The toggle flags of each variant, for a config whose toggles are all off (the repo's). They only
 # switch toggles on; --variant also switches them off.
@@ -137,9 +138,15 @@ def with_variant(config, name):
     return config
 
 def variant_name(config):
-    """``base``, ``ext1``, ``ext2`` or ``ext1+2``, from the extension toggles (``VARIANTS``)."""
-    toggles = {toggle: bool(config["model"][toggle]) for toggle in VARIANTS["base"]}
-    return next(name for name, variant in VARIANTS.items() if variant == toggles)
+    """``base``, ``ext1``, ``ext2``, ``ext1+2`` or ``ext1blind``, from the extension toggles (``VARIANTS``).
+
+    A toggle a config does not have is off: a config saved before M6-3 has no ``mask_embedding_blind``.
+    """
+    toggles = {toggle: bool(config["model"].get(toggle, False)) for toggle in VARIANTS["base"]}
+    for name, variant in VARIANTS.items():
+        if variant == toggles:
+            return name
+    raise ValueError(f"the extension toggles {toggles} are none of the variants {list(VARIANTS)}")
 
 def run_name(config, seed):
     """``<variant>_<regime>_seed<seed>``, e.g. ``base_random_seed42``: the run's name on wandb (M3-2)."""
@@ -323,11 +330,14 @@ def main(argv=None):
                         help="override validation.every_n_epochs; recorded in the saved config")
     parser.add_argument("--variant", choices=list(VARIANTS),
                         help="set every extension toggle to this variant's, on or off (M6-1); recorded in "
-                             "the saved config. Not with --use_mask_embedding or --use_time_encoding")
+                             "the saved config. Not with a toggle flag")
     parser.add_argument("--use_mask_embedding", action="store_true",
                         help="turn on model.use_mask_embedding (Extension 1, M4-2); recorded in the saved config")
     parser.add_argument("--use_time_encoding", action="store_true",
                         help="turn on model.use_time_encoding (Extension 2, M5-2); recorded in the saved config")
+    parser.add_argument("--mask_embedding_blind", action="store_true",
+                        help="turn on model.mask_embedding_blind (Ext 1-blind, M6-3), with --use_mask_embedding; "
+                             "recorded in the saved config")
     parser.add_argument("--out", type=Path,
                         help="output folder (default outputs/<run name>, e.g. outputs/base_random_seed42)")
     parser.add_argument("--overwrite", action="store_true",
@@ -339,7 +349,7 @@ def main(argv=None):
     parser.add_argument("--paired", action="store_true",
                         help="a paired run (M6-2): refuse to start on any GPU but protocol.paired_gpu")
     args = parser.parse_args(argv)
-    if args.variant is not None and (args.use_mask_embedding or args.use_time_encoding):
+    if args.variant is not None and (args.use_mask_embedding or args.use_time_encoding or args.mask_embedding_blind):
         parser.error("--variant sets every extension toggle; give it or the toggle flags, not both")
 
     config = copy.deepcopy(yaml.safe_load(args.config.read_text()))
@@ -353,6 +363,12 @@ def main(argv=None):
         config["model"]["use_mask_embedding"] = True
     if args.use_time_encoding:
         config["model"]["use_time_encoding"] = True
+    if args.mask_embedding_blind:
+        config["model"]["mask_embedding_blind"] = True
+    try:
+        variant_name(config)
+    except ValueError as error:                 # e.g. --mask_embedding_blind without Ext 1
+        parser.error(str(error))
     device = pick_device(args.device)
     out_dir = args.out or OUTPUTS / run_name(config, args.seed)             # the run's wandb name
     print(f"{variant_name(config)} seed {args.seed} on {device}, {config['train']['epochs']} epochs -> {out_dir}", flush=True)

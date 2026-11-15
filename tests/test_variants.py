@@ -16,7 +16,7 @@ from models.build import build_model
 needs_raw_data = pytest.mark.skipif(not RAW_DIR.exists(), reason="raw Set A not downloaded")
 
 T, D = 48, 35
-NAMES = ["base", "ext1", "ext2", "ext1+2"]
+NAMES = ["base", "ext1", "ext2", "ext1+2", "ext1blind"]
 
 def config_of(name, **diffusion):
     """The repo's config set to variant ``name``."""
@@ -49,7 +49,7 @@ def encoders_saved(weights):
     return {name for name in ("mask_encoder", "time_encoder") if any(k.startswith(name + ".") for k in weights)}
 
 ENCODERS = {"base": set(), "ext1": {"mask_encoder"}, "ext2": {"time_encoder"},
-            "ext1+2": {"mask_encoder", "time_encoder"}}
+            "ext1+2": {"mask_encoder", "time_encoder"}, "ext1blind": {"mask_encoder"}}
 
 @pytest.fixture(scope="module")
 def real(set_a) -> dict[str, torch.Tensor]:
@@ -74,23 +74,25 @@ def train_steps(model, inputs, steps):
 
 # --- the variants and how a run is set to one ------------------------------------------------
 
-def test_there_are_exactly_the_four_variants():
-    # M6-3 adds ext1blind here, with its toggle written in every variant.
+def test_there_are_exactly_the_four_variants_and_ext1blind():
+    # M6-3's ext1blind (§4.1's control, tests/test_ext1_blind.py), with its toggle written in every variant.
     assert VARIANTS == {
-        "base": {"use_mask_embedding": False, "use_time_encoding": False},
-        "ext1": {"use_mask_embedding": True, "use_time_encoding": False},
-        "ext2": {"use_mask_embedding": False, "use_time_encoding": True},
-        "ext1+2": {"use_mask_embedding": True, "use_time_encoding": True},
+        "base": {"use_mask_embedding": False, "use_time_encoding": False, "mask_embedding_blind": False},
+        "ext1": {"use_mask_embedding": True, "use_time_encoding": False, "mask_embedding_blind": False},
+        "ext2": {"use_mask_embedding": False, "use_time_encoding": True, "mask_embedding_blind": False},
+        "ext1+2": {"use_mask_embedding": True, "use_time_encoding": True, "mask_embedding_blind": False},
+        "ext1blind": {"use_mask_embedding": True, "use_time_encoding": False, "mask_embedding_blind": True},
     }
     assert list(VARIANTS) == NAMES
     assert VARIANT_FLAGS == {"base": [], "ext1": ["--use_mask_embedding"], "ext2": ["--use_time_encoding"],
-                             "ext1+2": ["--use_mask_embedding", "--use_time_encoding"]}
+                             "ext1+2": ["--use_mask_embedding", "--use_time_encoding"],
+                             "ext1blind": ["--use_mask_embedding", "--mask_embedding_blind"]}
 
 @pytest.mark.parametrize("start", [False, True], ids=["from all off", "from all on"])
 @pytest.mark.parametrize("name", NAMES)
 def test_with_variant_writes_every_toggle_whatever_the_config_held(name, start):
     config = copy.deepcopy(CONFIG)
-    config["model"].update(use_mask_embedding=start, use_time_encoding=start)
+    config["model"].update(use_mask_embedding=start, use_time_encoding=start, mask_embedding_blind=start)
     before = copy.deepcopy(config)
     set_to = with_variant(config, name)
     assert variant_name(set_to) == name
@@ -106,13 +108,13 @@ def test_each_variants_flags_train_that_variant(small_dataset, tmp_path, name):
 @pytest.mark.parametrize("name", NAMES)
 def test_variant_trains_that_variant_even_from_a_config_with_every_toggle_on(small_dataset, tmp_path, name):
     config = copy.deepcopy(CONFIG)
-    config["model"].update(use_mask_embedding=True, use_time_encoding=True)
+    config["model"].update(use_mask_embedding=True, use_time_encoding=True, mask_embedding_blind=True)
     saved, weights = launch(tmp_path, small_dataset, config, "--variant", name)
     assert variant_name(saved) == name
     assert all(saved["model"][toggle] is on for toggle, on in VARIANTS[name].items())
     assert encoders_saved(weights) == ENCODERS[name]
 
-@pytest.mark.parametrize("flag", ["--use_mask_embedding", "--use_time_encoding"])
+@pytest.mark.parametrize("flag", ["--use_mask_embedding", "--use_time_encoding", "--mask_embedding_blind"])
 def test_variant_and_a_toggle_flag_together_are_refused(small_dataset, tmp_path, flag):
     with pytest.raises(SystemExit):
         launch(tmp_path, small_dataset, CONFIG, "--variant", "base", flag)

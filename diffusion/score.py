@@ -9,7 +9,9 @@ is an earlier epoch's, and it is refused. The holdout and the sampler are the fr
 from ``configs/config.yaml``:
 
 - the holdout: ``EvalMasker``'s random holdout at 10% (``--fraction 0.5`` or ``0.9`` for CSDI's
-  robustness rates), or ``BlockEvalMasker``'s block holdout (``--holdout block``, 10% only);
+  robustness rates), ``BlockEvalMasker``'s block holdout (``--holdout block``, 10% only), or
+  ``OffGridBlockEvalMasker``'s, the block holdout off its grid (``--holdout offgrid``, 10% only;
+  §4.1's grid check, M6-3);
 - the sampler: ``EvalSampler.from_config()``, 100 draws per patient with the frozen
   ``eval_sampling_seed``, 16 patients at a time.
 
@@ -53,9 +55,11 @@ import yaml
 from data.physionet import load_dataset
 from diffusion.run import CONFIG_PATH, DATASET_PATH, gpu_name, pick_device, require_paired_gpu
 from diffusion.train import use_deterministic_kernels
-from eval import BlockEvalMasker, EvalMasker, EvalSampler, masked_errors, masked_mae, masked_rmse, \
-    median_imputation, per_variable_mae
+from eval import BlockEvalMasker, EvalMasker, EvalSampler, OffGridBlockEvalMasker, masked_errors, masked_mae, \
+    masked_rmse, median_imputation, per_variable_mae
 from models.build import build_model
+
+HOLDOUTS = ("random", "block", "offgrid")
 
 def scores_name(split, holdout, fraction):
     """``test_random_0.1``: how a scoring's files are named."""
@@ -71,7 +75,11 @@ def holdout_settings(protocol, holdout):
     if holdout == "block":
         return {"block_eval_masker_seed": protocol["block_eval_masker_seed"],
                 "block_window_hours": protocol["block_window_hours"]}
-    raise ValueError(f"holdout must be 'random' or 'block', not {holdout!r}")
+    if holdout == "offgrid":
+        return {"offgrid_block_eval_masker_seed": protocol["offgrid_block_eval_masker_seed"],
+                "block_window_hours": protocol["block_window_hours"],
+                "offgrid_block_offset_hours": protocol["offgrid_block_offset_hours"]}
+    raise ValueError(f"holdout must be one of {HOLDOUTS}, not {holdout!r}")
 
 def holdout_masker(protocol, grid, holdout, fraction):
     """The frozen holdout to score, and its settings as ``results/baselines.json`` records them."""
@@ -82,7 +90,10 @@ def holdout_masker(protocol, grid, holdout, fraction):
             raise ValueError(f"the random holdout is frozen at {rates}, not {fraction}")
         return EvalMasker(protocol["eval_masker_seed"], fraction, grid), settings
     if fraction != protocol["eval_holdout_fraction"]:
-        raise ValueError(f"the block holdout is frozen at {protocol['eval_holdout_fraction']}, not {fraction}")
+        raise ValueError(f"the {holdout} holdout is frozen at {protocol['eval_holdout_fraction']}, not {fraction}")
+    if holdout == "offgrid":
+        return OffGridBlockEvalMasker(protocol["offgrid_block_eval_masker_seed"], fraction, protocol["block_window_hours"],
+                                      protocol["offgrid_block_offset_hours"], grid), settings
     return BlockEvalMasker(protocol["block_eval_masker_seed"], fraction, protocol["block_window_hours"], grid), settings
 
 def score(run_dir, dataset, device, holdout="random", fraction=None, split="test",
@@ -179,7 +190,7 @@ def attach_to_wandb(scores, mode=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Score a finished run's final weights with the frozen sampler (M4-1).")
     parser.add_argument("run_dir", type=Path, help="the run's output folder, e.g. outputs/base_random_seed42")
-    parser.add_argument("--holdout", choices=("random", "block"), default="random")
+    parser.add_argument("--holdout", choices=HOLDOUTS, default="random")
     parser.add_argument("--fraction", type=float,
                         help="the random holdout's rate: 0.1 (default), or 0.5 or 0.9, the robustness rates")
     parser.add_argument("--split", choices=("test", "val"), default="test")

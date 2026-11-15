@@ -91,6 +91,11 @@ On Set A, 94% of patients lose at least one complete window. The slot walk is
 (`TrainMasker`'s `mix`) reuses with its own generator. `EvalMasker`'s holdout is unchanged by
 it. Tests: `tests/test_block_eval_masker.py`, including a golden fingerprint of the holdout.
 
+The off-grid block holdout, `eval.OffGridBlockEvalMasker` (M6-3; PROJECT_PLAN §4.1's grid
+check), has two more frozen keys: `protocol.offgrid_block_eval_masker_seed` (9090) and
+`protocol.offgrid_block_offset_hours` (1). It is the block holdout with its windows shifted off
+the 16-slot grid (see [Ext 1's attribution checks](#ext-1s-attribution-checks-m6-3)).
+
 The evaluation sampler is frozen the same way: `eval.EvalSampler` reads
 `protocol.eval_sampling_seed`, `protocol.eval_n_samples` and `protocol.eval_batch_size`
 (see [Random streams](#random-streams-seed-pairing)).
@@ -1145,6 +1150,91 @@ Tests:
   differ; a pairing block wandb flattened read the same; and real runs through `diffusion.run`,
   `diffusion.score` and `attach_to_wandb` stored, with one relabeled to another seed caught by
   its data-order hash.
+
+---
+
+## Ext 1's attribution checks (M6-3)
+
+PROJECT_PLAN §4.1 fixed two checks on Ext 1 before any result. They run in M8-4 only if M7-2 finds
+that Ext 1's block-aware contrast with base separates from zero. Going from base to Ext 1 adds the
+mask information, but it also adds 106,305 weights and a learned vector for each (hour, feature)
+in the denoiser input. On top of that, `BlockEvalMasker` and the `mix` strategy put every block on
+the same 16 fixed 3-hour slots, which the encoder's hour embedding can learn. The two checks are
+built here so that a triggered M8-4 only costs compute.
+
+**Ext 1-blind** (`ext1blind`) is Ext 1 with `model.mask_embedding_blind: true`. Its encoder is given
+an all-ones mask in place of the conditioning mask, on the training, validation and sampler paths
+alike. Its `mask_emb` is therefore the same for every mask. It keeps every weight (the hour and
+feature embeddings included) and loses only the mask information. Upstream's side information
+still carries the conditioning mask, as it does in every variant.
+
+| Variant | `--variant` | Toggle flags | Toggles on | Run name |
+| --- | --- | --- | --- | --- |
+| `ext1blind` | `--variant ext1blind` | `--use_mask_embedding --mask_embedding_blind` | `use_mask_embedding`, `mask_embedding_blind` | `ext1blind_<regime>_seed<seed>` |
+
+- The toggle is read once, by `models.build_model`, which passes `blind` to `MissingnessEncoder`.
+  It is valid only with `use_mask_embedding`: on its own it is refused by `build_model`,
+  `variant_name` and `diffusion.run`'s command line, before anything runs.
+- `blind` adds no weight and draws nothing from the RNG, so at any run seed Ext 1-blind starts
+  from exactly Ext 1's weights and its encoder hashes the same. That is the pairing
+  `diffusion.results` checks.
+- A config saved before M6-3 has no `mask_embedding_blind` key, and reads as not blind.
+- With the toggle off, Ext 1 is unchanged. Ext 1 at seed 42 on the fake patients gives bit-identical
+  losses, gradient norms, weights, samples and MAE at `6b8a298` (before M6-3) and on this branch.
+  A test pins them, as M6-1's test pins base.
+- `ext1blind` is in `VARIANTS`, which lists every variant a run can be, not the sweep. The M7 sweep
+  does not train it: M8-4 trains it in the block-aware regime at seeds 42–44, only if triggered.
+
+**The off-grid block holdout** (`diffusion.score --holdout offgrid`, scored as `offgrid/0.1`)
+is `eval.OffGridBlockEvalMasker`. It has `BlockEvalMasker`'s per-patient count (the 10% that
+`EvalMasker` takes) and its 3-hour windows, but the windows are shifted
+`protocol.offgrid_block_offset_hours` (1) later:
+
+- There are 15 windows, at hours 1–3, 4–6, …, 43–45, so none starts on a multiple of 3. Hours 0,
+  46 and 47 are never hidden.
+- It is seeded and frozen like `BlockEvalMasker`, from a seed of its own
+  (`protocol.offgrid_block_eval_masker_seed`, 9090), with one generator per patient from
+  `(seed, record_id)`.
+- The walk is `block_targets(..., offset=1)`. At the default offset of 0, `block_targets` is the
+  grid, draw for draw, so `BlockEvalMasker`'s targets and its golden fingerprint are unchanged.
+- On Set A every patient fits: each keeps at least 61% of their observed values inside hours
+  1–45, against the 10% hidden. 93% lose at least one whole window (94% on the grid).
+- It is for scoring only. M8-4 scores M7's block-aware base and Ext 1 runs at seeds 42–44 on it,
+  with no retraining. No baseline is scored on it: the check is Ext 1 against base, paired.
+
+```text
+uv run python -m diffusion.run --seed 42 --variant ext1blind --paired
+uv run python -m diffusion.score outputs/ext1_<regime>_seed42 --holdout offgrid --paired
+```
+
+The short run (M6-3) trained Ext 1-blind at seed 42 for 1 epoch on Set A through `diffusion.run`
+(MPS), then scored it through `diffusion.score` on the val split's block and off-grid holdouts,
+with 2 draws instead of the frozen 100 (a scratch config). Training took 175 steps, all finite,
+with no spikes. The loss fell from 0.68 in the first tenth to 0.32 in the last. Both holdouts hid
+the same 12,886 values on the 400 val patients, as they should: the block holdout's MAE was 0.795
+and the off-grid holdout's 0.799. Each pass took about 4.7 minutes. One epoch is a plumbing check,
+not a result: the MAE is far above forward fill's 0.437.
+
+Tests:
+
+- `tests/test_ext1_blind.py`: the variant's toggles, name, run name and flags; blind without
+  Ext 1 refused; an older saved config not blind; on each of the training, validation and sampler
+  paths, `mask_emb` identical for five different conditioning masks and equal to Ext 1's for an
+  all-ones mask, while Ext 1's changes; mask_emb reaching the denoiser once per call; starting
+  weights and weight hashes equal to Ext 1's at seeds 42 and 43; the same first two losses as
+  Ext 1 and different ones after the gate opens; Ext 1 with the toggle off pinned to the
+  fingerprint from `6b8a298`; and a tiny run through `diffusion.run --variant ext1blind`, scored
+  through `diffusion.score` on the block and off-grid holdouts.
+- `tests/test_offgrid_block_eval_masker.py`: the frozen keys; `block_targets` at offset 0 equal
+  to the grid, draw for draw; a hand-checked toy; per-patient counts equal to `BlockEvalMasker`'s;
+  no target at hours 0, 46 or 47, and every window hidden whole or not at all apart from one
+  trimmed window, with every window starting off a multiple of 3; the targets straddling the
+  grid's slots; identical targets across run seeds, patient order and subsets; a golden
+  fingerprint; and Set A.
+- `tests/test_score.py`: `--holdout offgrid` scores the off-grid targets under their own file
+  names and settings, and only at 10%.
+- `tests/test_variants.py`: `ext1blind` is in `VARIANTS`, trains through its flags and
+  `--variant`, and runs forward, backward and sampling on Set A like the other four.
 
 ---
 
