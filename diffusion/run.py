@@ -215,8 +215,11 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
     tracked unless told otherwise. ``tags`` are added to the wandb run's variant, regime and seed.
     Nothing is written to ``out_dir`` until wandb has started, so a run that cannot start (no
     wandb login) can simply be run again. With ``paired`` (a sweep run, M6-2) it refuses to start,
-    before writing or sending anything, on any GPU but ``protocol.paired_gpu``.
+    before writing or sending anything, on any GPU but ``protocol.paired_gpu``. A config whose
+    toggles are none of the ``VARIANTS`` (``mask_embedding_blind`` without Ext 1, M6-3) is refused
+    first, before ``overwrite`` deletes anything.
     """
+    variant = variant_name(config)                  # raises ValueError for toggles that are no variant
     if paired:
         require_paired_gpu(config["protocol"], device)
     config = {key: value for key, value in config.items() if key != "tracking"}     # see TRACKING
@@ -236,7 +239,6 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
     # Pairing hashes (M6-2): the starting weights, then what each paired stream gives every epoch as
     # training draws it, so diffusion.results can check a seed's variants were given the same.
     init, epoch_streams = {}, {}
-    variant = variant_name(config)
     tracker = wandb.init(entity=TRACKING["wandb_entity"], project=TRACKING["wandb_project"],
                          mode=wandb_mode, name=run_name(config, seed), job_type="train",
                          tags=[variant, REGIME, f"seed{seed}", *tags],

@@ -158,11 +158,23 @@ class OffGridBlockEvalMasker(BlockEvalMasker):
     can learn. Hours 0, 46 and 47 are never hidden. Seeded and frozen like ``BlockEvalMasker``, from
     a seed of its own, one generator per patient from ``(seed, record_id)``. Scoring only: no
     training regime hides off the grid.
+
+    Because hours 0, 46 and 47 are never hidden, and hour 0 is base's hardest hour to impute,
+    §4.1's grid check sets its Δ beside the block holdout's over the same hours, ``hours``
+    (``diffusion.score.span_mae``), not only beside the block holdout's Δ over all 48.
     """
 
     def __init__(self, seed, fraction, window, offset, grid=(48, 35)):
+        if not 0 < offset < window:
+            raise ValueError(f"an off-grid offset must be more than 0 and less than the window, {window}, "
+                             f"not {offset}: at 0 the windows are the grid's")
         super().__init__(seed, fraction, window, grid)
         self.offset = offset
+
+    @property
+    def hours(self):
+        """The hours its windows cover, the only ones it can hide: ``range(1, 46)`` in the frozen protocol."""
+        return range(self.offset, self.offset + (self.grid[0] // self.window - 1) * self.window)
 
     @classmethod
     def from_config(cls, path=CONFIG_PATH):

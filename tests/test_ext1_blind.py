@@ -9,7 +9,7 @@ from conftest import CONFIG
 from data.physionet import save_dataset
 from diffusion import score as scoring
 from diffusion.data import to_batch
-from diffusion.run import VARIANT_FLAGS, main, run_name, variant_name, weight_hashes, with_variant
+from diffusion.run import RUN_FILES, VARIANT_FLAGS, main, run, run_name, variant_name, weight_hashes, with_variant
 from diffusion.streams import RunStreams
 from diffusion.train import train
 from eval import EvalMasker, EvalSampler, OffGridBlockEvalMasker, TrainMasker, masked_mae, median_imputation
@@ -62,7 +62,8 @@ def mask_embs(model, inputs, cond_masks, path):
     return seen
 
 def other_masks(inputs):
-    """Four conditioning masks unlike each other: the real one, none, every observed value, another draw."""
+    """Five conditioning masks unlike each other: the real one, none, every observed value, another
+    draw, and the real one with one bit flipped."""
     flipped = inputs["cond_mask"].clone()
     flipped[0, 0, 0] = 1 - flipped[0, 0, 0]
     return [inputs["cond_mask"], torch.zeros_like(inputs["mask"]), inputs["mask"],
@@ -92,6 +93,19 @@ def test_blind_without_ext1_is_refused(small_dataset, tmp_path):
               "--out", str(tmp_path / "run"), "--mask_embedding_blind"])
     assert not (tmp_path / "run").exists()                          # refused before anything ran
 
+def test_run_refuses_a_config_that_is_no_variant_before_touching_its_folder(small_dataset, tmp_path):
+    # Before M6-3 every toggle combination was a variant; blind without Ext 1 is not. run() must
+    # refuse it before --overwrite deletes an earlier run's files, not after.
+    config = with_variant(CONFIG, "base")
+    config["model"]["mask_embedding_blind"] = True
+    out = tmp_path / "base_random_seed42"
+    out.mkdir()
+    for name in RUN_FILES:
+        (out / name).write_text("an earlier run's file")
+    with pytest.raises(ValueError, match="none of the variants"):
+        run(config, small_dataset, 42, "cpu", out, overwrite=True, wandb_mode="disabled")
+    assert all((out / name).read_text() == "an earlier run's file" for name in RUN_FILES)
+
 def test_a_config_saved_before_the_toggle_is_not_blind():
     config = with_variant(CONFIG, "ext1")
     del config["model"]["mask_embedding_blind"]
@@ -111,6 +125,42 @@ def test_blind_mask_emb_is_identical_for_any_two_conditioning_masks(inputs, path
     assert torch.equal(embs[0], mask_embs(ext1, inputs, [torch.ones_like(inputs["mask"])], path)[0])
     seen = mask_embs(ext1, inputs, other_masks(inputs), path)
     assert all(not torch.equal(seen[0], emb) for emb in seen[1:])
+
+def dropout_on_mask_embs(model, inputs, cond_masks, seed=0):
+    """The mask_emb of a training-path call in training mode (dropout on), the global RNG re-seeded
+    to ``seed`` before each call, so each call's encoder draws the same dropout masks."""
+    seen = []
+    model.mask_encoder.register_forward_hook(lambda module, args, output: seen.append(output.detach().clone()))
+    model.train()
+    for cond_mask in cond_masks:
+        torch.manual_seed(seed)
+        model(batch_of(inputs, cond_mask=cond_mask), generator=generator())
+    return seen
+
+def test_blind_mask_emb_ignores_the_mask_with_dropout_on(inputs):
+    # The training path as training runs it, dropout on (the test above turns it off).
+    blind = open_gate(built("ext1blind", num_steps=3))
+    embs = dropout_on_mask_embs(blind, inputs, other_masks(inputs))
+    assert all(torch.equal(embs[0], emb) for emb in embs[1:])
+    # Not vacuous: dropout is on (another seed, another mask_emb), and Ext 1's does change.
+    assert not torch.equal(embs[0], dropout_on_mask_embs(blind, inputs, other_masks(inputs)[:1], seed=1)[0])
+    seen = dropout_on_mask_embs(open_gate(built("ext1", num_steps=3)), inputs, other_masks(inputs))
+    assert all(not torch.equal(seen[0], emb) for emb in seen[1:])
+
+def test_blind_draws_ext1s_dropout_masks_at_every_step(small_dataset):
+    # Ext 1-blind has Ext 1's layers, so it draws from the global RNG exactly as Ext 1 does: the
+    # same dropout masks at every step, so the two are paired in every stream, dropout included.
+    # Base and Ext 1 are not (PROJECT_PLAN §3.3): Ext 1's encoder has dropout layers base lacks.
+    def rng_states(name):
+        config = with_variant(CONFIG, name)
+        config["diffusion"].update(channels=16, layers=2, num_steps=10)
+        config["train"].update(epochs=2, batch_size=8)
+        states = []
+        train(config, small_dataset, 42, "cpu", on_step_end=lambda record: states.append(torch.get_rng_state()))
+        return states
+    ext1, blind, base = rng_states("ext1"), rng_states("ext1blind"), rng_states("base")
+    assert len(ext1) == len(blind) == 8 and all(torch.equal(a, b) for a, b in zip(ext1, blind))
+    assert not all(torch.equal(a, b) for a, b in zip(ext1, base))
 
 def test_blind_reaches_the_denoiser_once_per_call_on_every_path(inputs):
     model = open_gate(built("ext1blind", num_steps=3)).eval()

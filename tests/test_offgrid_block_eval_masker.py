@@ -78,6 +78,19 @@ def test_offset_outside_the_window_is_refused(offset):
     with pytest.raises(ValueError, match="offset"):
         block_targets(random_mask(1)[0], 1, np.random.default_rng(0), WINDOW, offset)
 
+@pytest.mark.parametrize("offset", [0, -1, WINDOW])
+def test_an_offgrid_masker_on_the_grid_or_past_it_is_refused(offset):
+    # Offset 0 would be BlockEvalMasker's grid under another seed: not off the grid at all.
+    with pytest.raises(ValueError, match="off-grid offset"):
+        OffGridBlockEvalMasker(9090, 0.1, WINDOW, offset)
+
+def test_hours_are_the_span_its_windows_cover(masker):
+    assert masker.hours == range(1, 46) == range(SLOTS[0], SLOTS[-1] + WINDOW)
+    assert OffGridBlockEvalMasker(9090, 0.1, 3, 2).hours == range(2, 47)
+    _, target = masker(random_mask(), np.arange(50))
+    hidden_hours = np.flatnonzero(target.sum(axis=(0, 2)))
+    assert set(hidden_hours) <= set(masker.hours) and {1, 45} <= set(hidden_hours)
+
 # --- the off-grid holdout --------------------------------------------------------------
 
 def test_each_patient_loses_block_eval_maskers_count(masker):

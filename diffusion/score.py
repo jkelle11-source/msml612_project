@@ -11,7 +11,8 @@ from ``configs/config.yaml``:
 - the holdout: ``EvalMasker``'s random holdout at 10% (``--fraction 0.5`` or ``0.9`` for CSDI's
   robustness rates), ``BlockEvalMasker``'s block holdout (``--holdout block``, 10% only), or
   ``OffGridBlockEvalMasker``'s, the block holdout off its grid (``--holdout offgrid``, 10% only;
-  §4.1's grid check, M6-3);
+  §4.1's grid check, M6-3, which also reads the block holdout's MAE over the off-grid holdout's
+  hours from a saved scoring, ``span_mae``);
 - the sampler: ``EvalSampler.from_config()``, 100 draws per patient with the frozen
   ``eval_sampling_seed``, 16 patients at a time.
 
@@ -166,6 +167,40 @@ def score(run_dir, dataset, device, holdout="random", fraction=None, split="test
     np.save(run_dir / f"median_{name}.npy", median)
     (run_dir / f"scores_{name}.json").write_text(json.dumps(scores, indent=1) + "\n")
     return scores
+
+def span_mae(run_dir, dataset, holdout, hours, fraction=None, split="test", config_path=CONFIG_PATH):
+    """MAE of ``run_dir``'s ``holdout`` scoring over the targets in ``hours`` alone; no new sampling.
+
+    For PROJECT_PLAN §4.1's grid check (M6-3, run in M8-4): the off-grid holdout never hides hours
+    0, 46 and 47, and hour 0 is base's hardest hour, so its Δ is set beside the block holdout's over
+    the same hours, ``OffGridBlockEvalMasker.from_config().hours`` (1-45). Reads the median imputation
+    ``score`` saved beside the run (``median_<split>_<holdout>_<fraction>.npy``), rebuilds the frozen
+    holdout's targets, keeps those in ``hours`` and returns ``{"mae", "n_targets"}``, standardized.
+    Refused if that scoring did not use ``config_path``'s frozen holdout and sampler (a quick
+    scoring's draws are not the protocol's), or if ``model.pt`` is no longer the weights it scored.
+    """
+    run_dir = Path(run_dir)
+    protocol = yaml.safe_load(Path(config_path).read_text())["protocol"]
+    fraction = protocol["eval_holdout_fraction"] if fraction is None else fraction
+    name = scores_name(split, holdout, fraction)
+    scores = json.loads((run_dir / f"scores_{name}.json").read_text())
+    run_config = yaml.safe_load((run_dir / "config.yaml").read_text())
+    grid = (run_config["data"]["n_timesteps"], run_config["data"]["n_features"])
+    masker, settings = holdout_masker(protocol, grid, holdout, fraction)
+    sampler = {key: protocol[key] for key in ("eval_sampling_seed", "eval_n_samples", "eval_batch_size")}
+    if scores["holdout_settings"] != settings or scores["sampler"] != sampler:
+        raise ValueError(f"{run_dir.name}'s {name} scoring did not use the frozen holdout and sampler of {config_path}")
+    if scores["model_sha256"] != hashlib.sha256((run_dir / "model.pt").read_bytes()).hexdigest():
+        raise ValueError(f"{run_dir.name}'s model.pt is not the weights its {name} scoring imputed with")
+
+    idx = dataset[f"{split}_idx"]
+    values, mask = dataset["values"][idx], dataset["mask"][idx]
+    _, target = masker(mask, dataset["record_ids"][idx])
+    in_span = np.zeros(grid[0], dtype=target.dtype)
+    in_span[list(hours)] = 1
+    target = target * in_span[None, :, None]
+    median = np.load(run_dir / f"median_{name}.npy")
+    return {"mae": masked_mae(median, values, target), "n_targets": int(target.sum())}
 
 def attach_to_wandb(scores, mode=None):
     """Add ``scores`` to its run's wandb summary; returns whether it did.

@@ -361,8 +361,9 @@ Rules:
   global RNG, and a variant with extra dropout layers consumes more of it. Ext 1's encoder has
   dropout layers, so dropout is not paired between base and Ext 1 (or Ext 2 and Ext 1+2). Ext 2's
   encoder has none, and `start_epoch` re-seeds the global RNG, so base and Ext 2 (and Ext 1 and
-  Ext 1+2) draw identical dropout masks (M5-2, tested). Shuffling, masks, timesteps and noise
-  stay identical regardless.
+  Ext 1+2) draw identical dropout masks (M5-2, tested). Ext 1-blind (M6-3) has exactly Ext 1's
+  layers, so Ext 1 and Ext 1-blind draw identical dropout masks too, and are paired in every
+  stream (tested). Shuffling, masks, timesteps and noise stay identical regardless.
 - **Resuming needs no RNG state.** Because every stream is a function of the run seed and the
   epoch, a checkpoint taken at an epoch boundary needs only the model, the optimizer (plus
   the learning-rate scheduler) and the epoch number; the resumed run then ends
@@ -1174,10 +1175,14 @@ still carries the conditioning mask, as it does in every variant.
 
 - The toggle is read once, by `models.build_model`, which passes `blind` to `MissingnessEncoder`.
   It is valid only with `use_mask_embedding`: on its own it is refused by `build_model`,
-  `variant_name` and `diffusion.run`'s command line, before anything runs.
+  `variant_name`, `diffusion.run`'s command line and `run()`, before anything runs (`run()` refuses
+  it before `overwrite` deletes an earlier run's files).
 - `blind` adds no weight and draws nothing from the RNG, so at any run seed Ext 1-blind starts
   from exactly Ext 1's weights and its encoder hashes the same. That is the pairing
   `diffusion.results` checks.
+- It also has exactly Ext 1's dropout layers, so at a seed the two draw identical dropout masks:
+  Ext 1 and Ext 1-blind are paired in every stream, dropout included, which base and Ext 1 are not
+  ([Random streams](#random-streams-seed-pairing)). Their paired Δ carries no dropout noise.
 - A config saved before M6-3 has no `mask_embedding_blind` key, and reads as not blind.
 - With the toggle off, Ext 1 is unchanged. Ext 1 at seed 42 on the fake patients gives bit-identical
   losses, gradient norms, weights, samples and MAE at `6b8a298` (before M6-3) and on this branch.
@@ -1201,11 +1206,47 @@ is `eval.OffGridBlockEvalMasker`. It has `BlockEvalMasker`'s per-patient count (
   1–45, against the 10% hidden. 93% lose at least one whole window (94% on the grid).
 - It is for scoring only. M8-4 scores M7's block-aware base and Ext 1 runs at seeds 42–44 on it,
   with no retraining. No baseline is scored on it: the check is Ext 1 against base, paired.
+- It cannot hide hours 0, 46 or 47 (a window over hour 0 would start on the grid), and hour 0 is
+  base's hardest hour: on the gate runs' random holdout its MAE is about 0.40, against about 0.20
+  for a typical hour (seeds 42–44; hours 46 and 47 are about average). The block holdout puts 1.5%
+  of its test targets at hour 0 and 3.5% at hours 46–47. So the off-grid Δ is compared with the
+  block holdout's Δ over the same hours, 1–45 (`OffGridBlockEvalMasker.hours`), as well as with its
+  Δ over all 48. A gain that holds on the grid over hours 1–45 and vanishes off it is specific to
+  the grid; one that is smaller over hours 1–45 than over all 48 sits partly at the record's edges.
+- `diffusion.score.span_mae(run_dir, dataset, holdout, hours)` gives a holdout's MAE over some hours
+  alone, from the median imputation `diffusion.score` saved beside the run
+  (`median_test_block_0.1.npy`), so it costs no scoring pass. It refuses a scoring that did not use
+  the frozen holdout and sampler, and a `model.pt` that is no longer the weights scored.
+
+M8-4 trains Ext 1-blind through M6-2's harness in the block-aware regime. Until M6-2 reads the
+regime from the config, `diffusion.run` trains every variant in the random regime, so the first
+line below trains the right model in the wrong regime: a plumbing check, not M8-4's run. The second
+scores a finished run off the grid, and the Python gives the block holdout's MAE over hours 1–45:
 
 ```text
-uv run python -m diffusion.run --seed 42 --variant ext1blind --paired
+uv run python -m diffusion.run --seed 42 --variant ext1blind --paired       # random regime until M6-2
 uv run python -m diffusion.score outputs/ext1_<regime>_seed42 --holdout offgrid --paired
 ```
+
+```python
+from data.physionet import load_dataset
+from diffusion.run import DATASET_PATH
+from diffusion.score import span_mae
+from eval import OffGridBlockEvalMasker
+
+span_mae("outputs/ext1_<regime>_seed42", load_dataset(DATASET_PATH), "block", OffGridBlockEvalMasker.from_config().hours)
+```
+
+What a triggered M8-4 needs besides compute, because of how `diffusion.results` pairs runs:
+
+- **The same commit as M7's block-aware runs.** The store refuses a regime whose runs come from
+  different commits, so Ext 1-blind is trained from the commit M7's runs were (check it out), or
+  the whole block-aware regime is refused.
+- **A tag the store collects with them.** The store reads runs by wandb tag: give Ext 1-blind the
+  sweep's tag, or add M8-4's tag to M7's block-aware runs at seeds 42–44. Ext 1-blind is scored on
+  the block holdout only, so the store lists its `random/0.1` as unscored: expected, not a refusal.
+- **M7's block-aware run folders at seeds 42–44, kept.** Off-grid scoring needs their `model.pt`, and
+  `span_mae` their `median_test_block_0.1.npy`; the store holds neither.
 
 The short run (M6-3) trained Ext 1-blind at seed 42 for 1 epoch on Set A through `diffusion.run`
 (MPS), then scored it through `diffusion.score` on the val split's block and off-grid holdouts,
@@ -1218,11 +1259,13 @@ not a result: the MAE is far above forward fill's 0.437.
 Tests:
 
 - `tests/test_ext1_blind.py`: the variant's toggles, name, run name and flags; blind without
-  Ext 1 refused; an older saved config not blind; on each of the training, validation and sampler
-  paths, `mask_emb` identical for five different conditioning masks and equal to Ext 1's for an
-  all-ones mask, while Ext 1's changes; mask_emb reaching the denoiser once per call; starting
-  weights and weight hashes equal to Ext 1's at seeds 42 and 43; the same first two losses as
-  Ext 1 and different ones after the gate opens; Ext 1 with the toggle off pinned to the
+  Ext 1 refused, by `run()` before it deletes anything; an older saved config not blind; on each
+  of the training, validation and sampler paths, `mask_emb` identical for five different
+  conditioning masks and equal to Ext 1's for an all-ones mask, while Ext 1's changes, and the same
+  on the training path with dropout on; the global RNG state, so the dropout masks, equal to
+  Ext 1's after every training step (and not base's); mask_emb reaching the denoiser once per call;
+  starting weights and weight hashes equal to Ext 1's at seeds 42 and 43; the same first two losses
+  as Ext 1 and different ones after the gate opens; Ext 1 with the toggle off pinned to the
   fingerprint from `6b8a298`; and a tiny run through `diffusion.run --variant ext1blind`, scored
   through `diffusion.score` on the block and off-grid holdouts.
 - `tests/test_offgrid_block_eval_masker.py`: the frozen keys; `block_targets` at offset 0 equal
@@ -1230,9 +1273,12 @@ Tests:
   no target at hours 0, 46 or 47, and every window hidden whole or not at all apart from one
   trimmed window, with every window starting off a multiple of 3; the targets straddling the
   grid's slots; identical targets across run seeds, patient order and subsets; a golden
-  fingerprint; and Set A.
+  fingerprint; an offset of 0 (the grid) refused; `hours` the span its windows cover; and Set A.
 - `tests/test_score.py`: `--holdout offgrid` scores the off-grid targets under their own file
-  names and settings, and only at 10%.
+  names and settings, and only at 10%; `span_mae` over all hours equal to the scoring's MAE, over
+  hours 1–45 equal to a hand computation (each box missing by its hour), the off-grid holdout's
+  over its own hours equal to all of it, and a scoring with another holdout or sampler, or
+  weights changed since, refused.
 - `tests/test_variants.py`: `ext1blind` is in `VARIANTS`, trains through its flags and
   `--variant`, and runs forward, backward and sampling on Set A like the other four.
 

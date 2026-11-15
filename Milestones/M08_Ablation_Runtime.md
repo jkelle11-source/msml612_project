@@ -111,10 +111,15 @@
 **Deliverables**
 - If triggered: Ext 1-blind trained in the block-aware regime at seeds 42–44 through the paired harness, final weights scored on `BlockEvalMasker` (about 2.1 h of training and a 3.4 h scoring pass a run, timed on an M4 Pro, which runs as fast as a T4: about 16.5 h on a T4). It trains and is scored on the sweep's GPU, like the Ext 1 runs it is paired with (§3.3).
 - If triggered: the block-aware base and Ext 1 runs at seeds 42–44 from `M7-1` scored on the off-grid holdout, no retraining (6 passes, about 20 h).
-- Paired Δ ± SE over seeds 42–44 for Ext 1 vs. Ext 1-blind on the block holdout, and for Ext 1 vs. base on the off-grid holdout, with `M7-2`'s paired-Δ code, written into the results store.
+- Paired Δ ± SE over seeds 42–44 for Ext 1 vs. Ext 1-blind on the block holdout, and for Ext 1 vs. base on the off-grid holdout, set beside Ext 1 vs. base on the block holdout over the same hours, 1–45, and over all hours, with `M7-2`'s paired-Δ code, written into the results store. The off-grid holdout never hides hour 0, base's hardest hour, nor hours 46–47 (§4.1), so the like-for-like comparison is the block holdout over hours 1–45: `diffusion.score.span_mae` reads it from each run's saved block scoring, with no new pass.
 - If not triggered: a one-line record of the `M7-2` Δ and SE that decided it.
+
+**Notes for the runs** (from the review of #56, M6-3's checks; README, Ext 1's attribution checks)
+- Train Ext 1-blind from the commit M7's block-aware runs were trained from: the results store refuses a regime whose runs come from different commits.
+- Give it a tag the store collects with M7's block-aware runs (the sweep's tag, or M8-4's added to M7's block-aware runs at seeds 42–44). It is scored on the block holdout only, so the store lists its `random/0.1` as unscored, as expected.
+- Keep M7's block-aware run folders at seeds 42–44: off-grid scoring needs their `model.pt`, and `span_mae` their `median_test_block_0.1.npy`. The store holds neither.
 
 **Definition of Done**
 - [ ] Trigger decision recorded from `M7-2`'s numbers.
 - [ ] If triggered: both contrasts reported as paired Δ ± SE; overlapping bars stated as no significant effect.
-- [ ] Ext 1's claim worded per §4.1: "adds signal beyond the raw mask channel" only if Ext 1 beats Ext 1-blind, and "block missingness" in general only if the gain holds off the grid.
+- [ ] Ext 1's claim worded per §4.1: "adds signal beyond the raw mask channel" only if Ext 1 beats Ext 1-blind, and "block missingness" in general only if the gain holds off the grid, judged against the block holdout's Δ over the same hours (1–45).

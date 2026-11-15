@@ -69,6 +69,7 @@
 - Score every run with the frozen sampler and holdouts of `configs/config.yaml`: the store refuses any other scoring, so a dry-run scoring pass costs as much as a sweep one.
 - For an in-harness check, `diffusion.results.problems()` takes runs as wandb holds them (a config with `seed`, `variant` and `regime`; a summary with the `<holdout>/<fraction>/test/*` keys). Running `diffusion.results --tag dry-run` at the end of the dry run is simpler.
 - The block-aware regime's name (today's `REGIME` constant, read from the config once `mix` lands) becomes the store's key and part of every run name; the store's tests call it `block-aware`.
+- From the review of #56 (M6-3): the driver must also train `ext1blind` when asked, in the block-aware regime at seeds it is given, for `M8-4`; it is in `VARIANTS` but never swept. Once the regime is read from the config, update the README's M6-3 example (`diffusion.run --variant ext1blind`, which trains in the random regime until then). `run()` refuses a config whose toggles are no variant before it touches the run's folder.
 
 **Definition of Done**
 - [ ] Within a seed and regime, the variants demonstrably share data order and RNG (asserted in-harness or logged and diffed).
