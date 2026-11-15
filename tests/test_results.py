@@ -21,6 +21,7 @@ HOLDOUT_SETTINGS = {"random": {"eval_masker_seed": PROTOCOL["eval_masker_seed"]}
                     "block": {"block_eval_masker_seed": PROTOCOL["block_eval_masker_seed"],
                               "block_window_hours": PROTOCOL["block_window_hours"]}}
 PER_VARIABLE = {"HR": 0.15, "SysABP": 0.25, "SaO2": None}          # three of the 35; None: nothing held out
+TF32 = PROTOCOL["tf32"]                         # a paired scoring's setting, whichever the protocol picked
 
 def config_of(variant, seed, regime="random"):
     """A run's wandb config, as ``diffusion.run`` sends it, on a T4 picked by the timing test."""
@@ -43,7 +44,7 @@ def score_keys(holdout, mae, settings=None):
     """What ``diffusion.score.attach_to_wandb`` adds to a run's summary for one frozen scoring on a T4."""
     settings = HOLDOUT_SETTINGS[holdout.split("/")[0]] if settings is None else settings
     return ({f"{holdout}/test/mae": mae, f"{holdout}/test/rmse": 0.5, f"{holdout}/test/gpu": T4,
-             f"{holdout}/test/tf32": False}
+             f"{holdout}/test/tf32": TF32}
             | {f"{holdout}/test/sampler.{key}": value for key, value in SAMPLER.items()}
             | {f"{holdout}/test/holdout_settings.{key}": value for key, value in settings.items()}
             | {f"{holdout}/test/per_variable_mae.{key}": value for key, value in PER_VARIABLE.items()})
@@ -186,12 +187,14 @@ UNPAIRED = {
     "scored on a holdout diffusion.score does not know": (
         changed("ext2", 43, lambda run: run["summary"].update(score_keys("offgrid/0.1", 0.3, {}))),
         "ext2_random_seed43 was scored on offgrid/0.1, a holdout diffusion.score does not know"),
-    "scored with TF32 on": (changed("ext1", 43, lambda run: run["summary"].update({"block/0.1/test/tf32": True})),
-                            "ext1_random_seed43's block/0.1 was scored with tf32 True, not the protocol's False"),
+    "scored with the other TF32 setting": (
+        changed("ext1", 43, lambda run: run["summary"].update({"block/0.1/test/tf32": not TF32})),
+        f"ext1_random_seed43's block/0.1 was scored with tf32 {not TF32}, not the protocol's {TF32}"),
     "scored before TF32 was recorded": (changed("base", 42, lambda run: run["summary"].pop("random/0.1/test/tf32")),
                                         "base_random_seed42's random/0.1 was scored with tf32 None"),
-    "trained with TF32 on": (changed("ext2", 43, lambda run: run["config"]["protocol"].update(tf32=True)),
-                             "differ in more than their toggles: ['protocol.tf32']"),
+    "trained with the other TF32 setting": (
+        changed("ext2", 43, lambda run: run["config"]["protocol"].update(tf32=not TF32)),
+        "differ in more than their toggles: ['protocol.tf32']"),
     "trained from another commit": (changed("ext1", 43, lambda run: run["metadata"]["git"].update(commit="def5678")),
                                     "the random regime's runs come from different commits"),
     "no commit recorded": (changed("base", 42, lambda run: run.update(metadata={})),

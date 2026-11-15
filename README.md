@@ -97,13 +97,14 @@ The evaluation sampler is frozen the same way: `eval.EvalSampler` reads
 (see [Random streams](#random-streams-seed-pairing)).
 
 `protocol.paired_gpu` (M6-2) names the one GPU model every paired run trains and is scored on
-(PROJECT_PLAN §3.3). It is `null` until M6-2's timing test picks it, and no paired run starts
-before then (see [Paired sweep checks](#paired-sweep-checks-m6-2)).
+(PROJECT_PLAN §3.3): `NVIDIA A100-SXM4-80GB`, Colab's G4 runtime, picked by M6-2's timing test
+([The timing test](#the-timing-test-m6-2)). A paired run refuses to start on any other GPU (see
+[Paired sweep checks](#paired-sweep-checks-m6-2)).
 
 `protocol.tf32` (M6-2) says whether CUDA computes float32 convolutions and matrix multiplies in
-TF32. It is `false`: float32 throughout, as on the T4, which has no TF32. Training and scoring
-both apply it, so it is the same for every run, and the timing test decides whether a TF32 GPU
-is worth turning it on for ([The timing test](#the-timing-test-m6-2)).
+TF32. It is `true`, as the timing test chose: on the paired GPU it takes nearly a quarter off the
+Week-7 sweep (88.0 h to 67.5 h). Training and scoring both apply it, so it is the same for every
+run. On a T4, MPS or the CPU, which have no TF32, it changes nothing.
 
 The model and training settings live in the same file, under upstream's key names (M2-1):
 `diffusion` (the reused noise schedule and denoiser size), the side-information keys in
@@ -1090,8 +1091,8 @@ pairing: it loads the checkpoint after `on_start` has hashed the weights as buil
 each stream's chain from the per-epoch hashes in its `curve.json`.
 
 **The paired GPU.** `protocol.paired_gpu` names the one GPU model every paired run trains and
-is scored on, as `torch.cuda.get_device_name()` names it (`Tesla T4`). It is `null` until M6-2's
-timing test picks it ([Environment](#environment)). `run(..., paired=True)` and
+is scored on, as `torch.cuda.get_device_name()` names it: `NVIDIA A100-SXM4-80GB`, picked by
+M6-2's timing test ([Environment](#environment)). `run(..., paired=True)` and
 `score(..., paired=True)` (`--paired` on the command line) refuse to start on any other GPU, before
 writing or sending anything,
 and refuse to start at all while it is `null`. Every run records the GPU it trained on (`gpu`
@@ -1169,30 +1170,25 @@ with `pytest` in the dev group.
 there. macOS and Windows resolve the plain PyPI wheel (CPU/MPS), so local tests still run with
 no extra config.
 
-**Every run in a paired comparison trains and is scored on one GPU model: a Colab T4, unless
-the M6 timing test picks a faster one** (PROJECT_PLAN §3.3). The rule was settled at the M5-3
-review; the GPU itself stays open until that test. The rule covers the M6 dry run, the Week-7
-sweep, and the Week-8 ablation and attribution checks: every variant, regime and seed.
-Deterministic kernels ([Training](#training)) make reruns bit-identical only on one kind of GPU.
-On another, float rounding differs from the first optimizer step: base at seed 42, with the same
-code and learning rate, gave the same loss on a T4 and on an M4 Pro at step 0, and losses 0.002
-apart by step 10. So a seed whose base ran on one GPU and whose Ext 1 ran on another is not
-paired. When the chosen GPU is not free, wait for one; never take another GPU.
+**Every run in a paired comparison trains and is scored on one GPU model: Colab's G4 runtime,
+an `NVIDIA A100-SXM4-80GB`, with TF32 on** (PROJECT_PLAN §3.3), picked by M6-2's timing test
+([below](#the-timing-test-m6-2)). The rule was settled at the M5-3 review. It covers the M6 dry
+run, the Week-7 sweep, and the Week-8 ablation and attribution checks: every variant, regime and
+seed. Deterministic kernels ([Training](#training)) make reruns bit-identical only on one kind of
+GPU. On another, float rounding differs from the first optimizer step: base at seed 42, with the
+same code and learning rate, gave the same loss on a T4 and on an M4 Pro at step 0, and losses
+0.002 apart by step 10. So a seed whose base ran on one GPU and whose Ext 1 ran on another is not
+paired. When the chosen GPU is not free, wait for one; never take another GPU. That includes
+Colab's A100 runtime: its 40 GB card is the same chip, but nothing has checked that it rounds the
+same, so the guard treats it as another GPU.
 
-Why the T4 is the default:
-
-- It is the one GPU on every Colab tier, so all three of us can get it.
-- The plan's budget is timed on it (PROJECT_PLAN §8).
-- It has no TF32, so it computes in float32 throughout. An A100, L4 or H100 runs the denoiser's
-  convolutions in TF32 unless told not to (PyTorch's default: `torch.backends.cudnn.conv.fp32_precision`
-  is `"tf32"` in torch 2.14.1). `protocol.tf32` tells it, the same for every run: off, so float32
-  throughout on every GPU, unless the timing test finds TF32 worth turning on.
-
-It is also Colab's slowest GPU, and Week 7 is about 270 T4-hours. So before the dry run, M6-2's
-timing test ([below](#the-timing-test-m6-2)) times training and scoring on each GPU everyone who
-runs a paired run can get (T4, L4 and A100 on Colab Pro), with TF32 off and, where the GPU has
-it, on. It picks the one that finishes the sweep soonest, counting how often it is free and its
-compute units. The pick and its timings are recorded here.
+Until the test, the T4 was the default: it is on every Colab tier, the plan's budget was timed on
+it, and it has no TF32. It is also Colab's slowest GPU: the test puts the Week-7 sweep at 322 h
+on it, against 67.5 h on the pick. An A100, L4 or H100 runs the denoiser's convolutions in TF32
+unless told not to (PyTorch's default: `torch.backends.cudnn.conv.fp32_precision` is `"tf32"` in
+torch 2.14.1). `protocol.tf32` tells it, the same for every run, in training and scoring; the
+pick turns it on ([The timing test](#the-timing-test-m6-2) says why). Josh, without student Colab
+Pro, can get only the T4, so M8-4's runs need an account with Colab Pro.
 
 Check the GPU before launching:
 
@@ -1200,7 +1196,8 @@ Check the GPU before launching:
 !nvidia-smi --query-gpu=name --format=csv,noheader
 ```
 
-It should print the chosen GPU's name (`Tesla T4` for the T4). wandb records each run's GPU in
+It should print `NVIDIA A100-SXM4-80GB`, the name the guard compares, not the runtime menu's
+"G4". wandb records each run's GPU in
 its metadata, and `diffusion.health` copies it into its record. Since M6-2 every run and every
 scoring also records its GPU itself, and a paired run refuses to start on any GPU but
 `protocol.paired_gpu` ([Paired sweep checks](#paired-sweep-checks-m6-2)). Health checks and debugging can run on any machine, but their
@@ -1257,19 +1254,48 @@ To pick:
   the rate.
 - Keep the T4 unless another is clearly faster, reliably free and affordable in units.
 - Write the pick into `protocol.paired_gpu` exactly as its record's `gpu` says (`Tesla T4`,
-  `NVIDIA L4`, `NVIDIA A100-SXM4-40GB`). The guard compares the string, so an 80 GB A100
-  (`NVIDIA A100-SXM4-80GB`) is another GPU to it. Set `protocol.tf32` to the setting the pick
-  was chosen with.
+  `NVIDIA L4`, `NVIDIA A100-SXM4-80GB`), not as Colab's runtime menu names it. The guard
+  compares the string, so the 40 GB and 80 GB A100s are two GPUs to it. Set `protocol.tf32` to
+  the setting the pick was chosen with.
 - Fill in the table below, commit the records in `results/timing/`, and write the pick into
   PROJECT_PLAN §3.3, all before the dry run.
 
-| GPU (its record's `gpu`) | TF32 | Sweep h | Dry run h | Compute units / h | How often free |
+The records in `results/timing/`, timed on Colab Pro in November 2026 (the sweep's hours split
+into the scoring part and the rest):
+
+| GPU (its record's `gpu`) | Colab runtime | TF32 | Sweep h | of which scoring h | Dry run h |
 | --- | --- | --- | --- | --- | --- |
-| `Tesla T4` | none | — | — | — | — |
-| `NVIDIA L4` | off | — | — | — | — |
-| `NVIDIA L4` | on | — | — | — | — |
-| A100, as recorded | off | — | — | — | — |
-| A100, as recorded | on | — | — | — | — |
+| `Tesla T4` | T4 | none | 321.9 | 222.7 | 80.4 |
+| `NVIDIA L4` | L4 | off | 136.5 | 87.7 | 32.0 |
+| `NVIDIA L4` | L4 | on | 116.9 | 71.2 | 26.3 |
+| `NVIDIA A100-SXM4-40GB` | A100 | off | 88.5 | 49.7 | 18.6 |
+| `NVIDIA A100-SXM4-40GB` | A100 | on | 65.9 | 44.1 | 16.0 |
+| `NVIDIA A100-SXM4-80GB` | G4 | off | 88.0 | 49.7 | 18.6 |
+| **`NVIDIA A100-SXM4-80GB`** | **G4** | **on** | **67.5** | **45.3** | **16.4** |
+
+Compute units: the hourly rates were not read from the Resources panel. Each runtime's
+session, both timing runs plus setup, cost about 3 units for the T4 and L4 together, 5 for the
+A100 runtime, and 2.5 for G4. The A100 and G4 runtimes were each free on the first try.
+
+**The pick: Colab's G4 runtime, `NVIDIA A100-SXM4-80GB`, with TF32 on**
+(`protocol.paired_gpu: "NVIDIA A100-SXM4-80GB"`, `protocol.tf32: true`).
+
+- The A100s are the fastest. The 40 GB and 80 GB cards are the same chip and ran the sweep in the
+  same time (88.5 h and 88.0 h with TF32 off): the extra memory does nothing for this model.
+  G4's session cost half the A100 runtime's units for the same timed work (about 12 minutes of
+  timing each).
+- TF32 takes another 20.5 h off (88.0 h to 67.5 h). It roughly halves training (28.7 h to
+  15.2 h) but takes only about a tenth off scoring (49.7 h to 45.3 h). Scoring is two-thirds of
+  the sweep on this GPU, and a bigger GPU barely speeds it up: the scorer runs each patient's 100
+  draws one after another at batch 16, calls too small to fill an A100.
+- Runs stay paired with TF32 on: every run computes the same way on the same GPU with
+  deterministic kernels, and M6-2's rerun check (a rerun cell reproduces its numbers) runs with
+  TF32 on. The cost
+  is precision: TF32 rounds the inputs of convolutions and matrix multiplies to a 10-bit
+  mantissa, as PyTorch already does by default for convolutions on these GPUs. Every Δ is taken
+  against the sweep's own base, trained the same way.
+- The T4 would take 322 h, more than the plan's estimate of about 270 h, which came from scoring
+  timed at batch 64.
 
 Tests:
 
