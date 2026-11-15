@@ -9,9 +9,9 @@ import yaml
 from conftest import CONFIG
 from data.physionet import save_dataset
 from diffusion.run import run
-from diffusion.score import attach_to_wandb, main, score
+from diffusion.score import attach_to_wandb, main, score, span_mae
 from diffusion.train import use_tf32
-from eval import BlockEvalMasker, EvalMasker, EvalSampler, masked_mae, median_imputation
+from eval import BlockEvalMasker, EvalMasker, EvalSampler, OffGridBlockEvalMasker, masked_mae, median_imputation
 from models.build import build_model
 import torch
 
@@ -100,7 +100,7 @@ def test_the_robustness_rates_hold_out_their_own_fraction(run_dir, small_dataset
                                                                        small_dataset["record_ids"][idx])
     assert np.array_equal(fake_sampler[0]["cond_mask"], cond) and scores["fraction"] == 0.5
 
-@pytest.mark.parametrize("holdout, fraction", [("random", 0.3), ("block", 0.5), ("blocks", 0.1)])
+@pytest.mark.parametrize("holdout, fraction", [("random", 0.3), ("block", 0.5), ("offgrid", 0.5), ("blocks", 0.1)])
 def test_holdouts_outside_the_frozen_protocol_are_refused(run_dir, small_dataset, holdout, fraction):
     with pytest.raises(ValueError):
         score(run_dir, small_dataset, "cpu", holdout=holdout, fraction=fraction, log=quiet)
@@ -172,6 +172,67 @@ def test_both_files_are_written_named_for_what_was_scored(run_dir, small_dataset
     median = np.load(run_dir / "median_test_block_0.1.npy")
     assert median.shape == (len(small_dataset["test_idx"]), 48, 35) and median.dtype == np.float32
     assert scores["holdout_settings"] == {"block_eval_masker_seed": 8080, "block_window_hours": 3}
+
+def test_the_offgrid_holdout_is_scored_under_a_name_of_its_own(run_dir, small_dataset, fake_sampler):
+    # §4.1's grid check (M6-3): base's and Ext 1's runs scored, without retraining, off the grid.
+    scores = score(run_dir, small_dataset, "cpu", holdout="offgrid", log=quiet)
+    idx = small_dataset["test_idx"]
+    cond, target = OffGridBlockEvalMasker.from_config()(small_dataset["mask"][idx], small_dataset["record_ids"][idx])
+    assert np.array_equal(fake_sampler[0]["cond_mask"], cond) and scores["n_targets"] == int(target.sum())
+    assert json.loads((run_dir / "scores_test_offgrid_0.1.json").read_text()) == scores
+    assert (run_dir / "median_test_offgrid_0.1.npy").exists() and not (run_dir / "scores_test_block_0.1.json").exists()
+    assert scores["holdout_settings"] == {"offgrid_block_eval_masker_seed": 9090, "block_window_hours": 3,
+                                          "offgrid_block_offset_hours": 1}
+
+# --- span_mae: a holdout's MAE over some hours, from a saved scoring (§4.1's grid check, M6-3) ------
+
+def miss_by_the_hour(run_dir, small_dataset, name):
+    """Overwrite a scoring's saved median so every box misses by its hour (0, 1, ..., 47): the MAE over
+    any set of targets is then their mean hour, which a test can work out without span_mae."""
+    values = small_dataset["values"][small_dataset["test_idx"]]
+    np.save(run_dir / f"median_{name}.npy", values + np.arange(values.shape[1], dtype=np.float32)[None, :, None])
+
+def test_span_mae_is_the_holdouts_mae_over_those_hours_alone(run_dir, small_dataset, fake_sampler):
+    scores = score(run_dir, small_dataset, "cpu", holdout="block", log=quiet)
+    assert span_mae(run_dir, small_dataset, "block", range(48)) == {      # every hour: the score itself
+        "mae": pytest.approx(scores["mae"]), "n_targets": scores["n_targets"]}
+    miss_by_the_hour(run_dir, small_dataset, "test_block_0.1")
+    idx = small_dataset["test_idx"]
+    _, target = BlockEvalMasker.from_config()(small_dataset["mask"][idx], small_dataset["record_ids"][idx])
+    hour = np.nonzero(target)[1]                                    # each block target's hour
+    inside = hour[(hour >= 1) & (hour <= 45)]
+    assert 0 < len(inside) < len(hour)                              # the fake patients lose hours 0, 46 or 47 too
+    span = span_mae(run_dir, small_dataset, "block", OffGridBlockEvalMasker.from_config().hours)
+    assert span == {"mae": pytest.approx(inside.mean()), "n_targets": len(inside)}
+
+def test_the_offgrid_holdout_over_its_own_hours_is_all_of_it(run_dir, small_dataset, fake_sampler):
+    score(run_dir, small_dataset, "cpu", holdout="offgrid", log=quiet)
+    miss_by_the_hour(run_dir, small_dataset, "test_offgrid_0.1")
+    hours = OffGridBlockEvalMasker.from_config().hours
+    assert span_mae(run_dir, small_dataset, "offgrid", hours) == span_mae(run_dir, small_dataset, "offgrid", range(48))
+
+def test_span_mae_refuses_a_scoring_with_another_holdout_or_sampler(run_dir, small_dataset, fake_sampler, tmp_path):
+    quick = quick_protocol(tmp_path)                                # 2 draws: not the frozen 100
+    score(run_dir, small_dataset, "cpu", holdout="block", config_path=quick, log=quiet)
+    with pytest.raises(ValueError, match="frozen holdout and sampler"):
+        span_mae(run_dir, small_dataset, "block", range(1, 46))
+    assert span_mae(run_dir, small_dataset, "block", range(1, 46), config_path=quick)["n_targets"] > 0
+
+def test_span_mae_refuses_weights_that_are_not_the_ones_scored(run_dir, small_dataset, fake_sampler):
+    score(run_dir, small_dataset, "cpu", holdout="block", log=quiet)
+    weights = torch.load(run_dir / "model.pt")
+    key = next(k for k, v in weights.items() if v.is_floating_point())
+    weights[key] = weights[key] + 1
+    torch.save(weights, run_dir / "model.pt")
+    with pytest.raises(ValueError, match="not the weights"):
+        span_mae(run_dir, small_dataset, "block", range(1, 46))
+
+def test_span_mae_needs_a_scoring_of_that_holdout_and_a_target_in_the_span(run_dir, small_dataset, fake_sampler):
+    score(run_dir, small_dataset, "cpu", holdout="block", log=quiet)
+    with pytest.raises(FileNotFoundError):
+        span_mae(run_dir, small_dataset, "offgrid", range(1, 46))   # never scored off the grid
+    with pytest.raises(ValueError, match="no hidden boxes"):
+        span_mae(run_dir, small_dataset, "block", range(0))
 
 def test_the_scores_name_the_run_and_its_seed(run_dir, small_dataset, fake_sampler):
     scores = score(run_dir, small_dataset, "cpu", log=quiet)
