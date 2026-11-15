@@ -9,7 +9,10 @@ is an earlier epoch's, and it is refused. The holdout and the sampler are the fr
 from ``configs/config.yaml``:
 
 - the holdout: ``EvalMasker``'s random holdout at 10% (``--fraction 0.5`` or ``0.9`` for CSDI's
-  robustness rates), or ``BlockEvalMasker``'s block holdout (``--holdout block``, 10% only);
+  robustness rates), ``BlockEvalMasker``'s block holdout (``--holdout block``, 10% only), or
+  ``OffGridBlockEvalMasker``'s, the block holdout off its grid (``--holdout offgrid``, 10% only;
+  §4.1's grid check, M6-3, which also reads the block holdout's MAE over the off-grid holdout's
+  hours from a saved scoring, ``span_mae``);
 - the sampler: ``EvalSampler.from_config()``, 100 draws per patient with the frozen
   ``eval_sampling_seed``, 16 patients at a time.
 
@@ -53,9 +56,11 @@ import yaml
 from data.physionet import load_dataset
 from diffusion.run import CONFIG_PATH, DATASET_PATH, gpu_name, pick_device, require_paired_gpu
 from diffusion.train import use_deterministic_kernels
-from eval import BlockEvalMasker, EvalMasker, EvalSampler, masked_errors, masked_mae, masked_rmse, \
-    median_imputation, per_variable_mae
+from eval import BlockEvalMasker, EvalMasker, EvalSampler, OffGridBlockEvalMasker, masked_errors, masked_mae, \
+    masked_rmse, median_imputation, per_variable_mae
 from models.build import build_model
+
+HOLDOUTS = ("random", "block", "offgrid")
 
 def scores_name(split, holdout, fraction):
     """``test_random_0.1``: how a scoring's files are named."""
@@ -71,7 +76,11 @@ def holdout_settings(protocol, holdout):
     if holdout == "block":
         return {"block_eval_masker_seed": protocol["block_eval_masker_seed"],
                 "block_window_hours": protocol["block_window_hours"]}
-    raise ValueError(f"holdout must be 'random' or 'block', not {holdout!r}")
+    if holdout == "offgrid":
+        return {"offgrid_block_eval_masker_seed": protocol["offgrid_block_eval_masker_seed"],
+                "block_window_hours": protocol["block_window_hours"],
+                "offgrid_block_offset_hours": protocol["offgrid_block_offset_hours"]}
+    raise ValueError(f"holdout must be one of {HOLDOUTS}, not {holdout!r}")
 
 def holdout_masker(protocol, grid, holdout, fraction):
     """The frozen holdout to score, and its settings as ``results/baselines.json`` records them."""
@@ -82,7 +91,10 @@ def holdout_masker(protocol, grid, holdout, fraction):
             raise ValueError(f"the random holdout is frozen at {rates}, not {fraction}")
         return EvalMasker(protocol["eval_masker_seed"], fraction, grid), settings
     if fraction != protocol["eval_holdout_fraction"]:
-        raise ValueError(f"the block holdout is frozen at {protocol['eval_holdout_fraction']}, not {fraction}")
+        raise ValueError(f"the {holdout} holdout is frozen at {protocol['eval_holdout_fraction']}, not {fraction}")
+    if holdout == "offgrid":
+        return OffGridBlockEvalMasker(protocol["offgrid_block_eval_masker_seed"], fraction, protocol["block_window_hours"],
+                                      protocol["offgrid_block_offset_hours"], grid), settings
     return BlockEvalMasker(protocol["block_eval_masker_seed"], fraction, protocol["block_window_hours"], grid), settings
 
 def score(run_dir, dataset, device, holdout="random", fraction=None, split="test",
@@ -156,6 +168,40 @@ def score(run_dir, dataset, device, holdout="random", fraction=None, split="test
     (run_dir / f"scores_{name}.json").write_text(json.dumps(scores, indent=1) + "\n")
     return scores
 
+def span_mae(run_dir, dataset, holdout, hours, fraction=None, split="test", config_path=CONFIG_PATH):
+    """MAE of ``run_dir``'s ``holdout`` scoring over the targets in ``hours`` alone; no new sampling.
+
+    For PROJECT_PLAN §4.1's grid check (M6-3, run in M8-4): the off-grid holdout never hides hours
+    0, 46 and 47, and hour 0 is base's hardest hour, so its Δ is set beside the block holdout's over
+    the same hours, ``OffGridBlockEvalMasker.from_config().hours`` (1-45). Reads the median imputation
+    ``score`` saved beside the run (``median_<split>_<holdout>_<fraction>.npy``), rebuilds the frozen
+    holdout's targets, keeps those in ``hours`` and returns ``{"mae", "n_targets"}``, standardized.
+    Refused if that scoring did not use ``config_path``'s frozen holdout and sampler (a quick
+    scoring's draws are not the protocol's), or if ``model.pt`` is no longer the weights it scored.
+    """
+    run_dir = Path(run_dir)
+    protocol = yaml.safe_load(Path(config_path).read_text())["protocol"]
+    fraction = protocol["eval_holdout_fraction"] if fraction is None else fraction
+    name = scores_name(split, holdout, fraction)
+    scores = json.loads((run_dir / f"scores_{name}.json").read_text())
+    run_config = yaml.safe_load((run_dir / "config.yaml").read_text())
+    grid = (run_config["data"]["n_timesteps"], run_config["data"]["n_features"])
+    masker, settings = holdout_masker(protocol, grid, holdout, fraction)
+    sampler = {key: protocol[key] for key in ("eval_sampling_seed", "eval_n_samples", "eval_batch_size")}
+    if scores["holdout_settings"] != settings or scores["sampler"] != sampler:
+        raise ValueError(f"{run_dir.name}'s {name} scoring did not use the frozen holdout and sampler of {config_path}")
+    if scores["model_sha256"] != hashlib.sha256((run_dir / "model.pt").read_bytes()).hexdigest():
+        raise ValueError(f"{run_dir.name}'s model.pt is not the weights its {name} scoring imputed with")
+
+    idx = dataset[f"{split}_idx"]
+    values, mask = dataset["values"][idx], dataset["mask"][idx]
+    _, target = masker(mask, dataset["record_ids"][idx])
+    in_span = np.zeros(grid[0], dtype=target.dtype)
+    in_span[list(hours)] = 1
+    target = target * in_span[None, :, None]
+    median = np.load(run_dir / f"median_{name}.npy")
+    return {"mae": masked_mae(median, values, target), "n_targets": int(target.sum())}
+
 def attach_to_wandb(scores, mode=None):
     """Add ``scores`` to its run's wandb summary; returns whether it did.
 
@@ -179,7 +225,7 @@ def attach_to_wandb(scores, mode=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Score a finished run's final weights with the frozen sampler (M4-1).")
     parser.add_argument("run_dir", type=Path, help="the run's output folder, e.g. outputs/base_random_seed42")
-    parser.add_argument("--holdout", choices=("random", "block"), default="random")
+    parser.add_argument("--holdout", choices=HOLDOUTS, default="random")
     parser.add_argument("--fraction", type=float,
                         help="the random holdout's rate: 0.1 (default), or 0.5 or 0.9, the robustness rates")
     parser.add_argument("--split", choices=("test", "val"), default="test")

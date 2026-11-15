@@ -56,9 +56,11 @@ def fake_run(variant, seed, regime="random", scored=("random/0.1", "block/0.1"))
             "config": config_of(variant, seed, regime), "summary": summary,
             "metadata": {"git": {"commit": "abc1234"}}}
 
+SWEPT = ("base", "ext1", "ext2", "ext1+2")      # not ext1blind (M6-3): M8-4 trains it, only if triggered
+
 def dry_run():
     """The M6-2 dry run: four variants at two seeds, and base and Ext 1 block-aware at both."""
-    return ([fake_run(variant, seed) for variant in VARIANTS for seed in (42, 43)]
+    return ([fake_run(variant, seed) for variant in SWEPT for seed in (42, 43)]
             + [fake_run(variant, seed, "block-aware") for variant in ("base", "ext1") for seed in (42, 43)])
 
 def find(runs, variant, seed, regime="random"):
@@ -70,7 +72,7 @@ def find(runs, variant, seed, regime="random"):
 def test_the_store_holds_each_runs_scores_by_regime_variant_and_seed():
     store = record(dry_run(), "dry-run")
     assert list(store["runs"]) == ["block-aware", "random"]
-    assert list(store["runs"]["random"]) == list(VARIANTS) and list(store["runs"]["block-aware"]) == ["base", "ext1"]
+    assert list(store["runs"]["random"]) == list(SWEPT) and list(store["runs"]["block-aware"]) == ["base", "ext1"]
     assert list(store["runs"]["random"]["ext1+2"]) == ["42", "43"]
     entry = store["runs"]["random"]["ext1+2"]["43"]
     assert entry == {"run": "ext1+2_random_seed43", "wandb_run": "DATA612/msml612-csdi/ext1+2-random-43",
@@ -183,8 +185,8 @@ UNPAIRED = {
     "scored before the settings were sent": (changed("ext2", 42, without_settings),
                                              "ext2_random_seed42's random/0.1 was scored with sampler None"),
     "scored on a holdout diffusion.score does not know": (
-        changed("ext2", 43, lambda run: run["summary"].update(score_keys("offgrid/0.1", 0.3, {}))),
-        "ext2_random_seed43 was scored on offgrid/0.1, a holdout diffusion.score does not know"),
+        changed("ext2", 43, lambda run: run["summary"].update(score_keys("shifted/0.1", 0.3, {}))),
+        "ext2_random_seed43 was scored on shifted/0.1, a holdout diffusion.score does not know"),
     "trained from another commit": (changed("ext1", 43, lambda run: run["metadata"]["git"].update(commit="def5678")),
                                     "the random regime's runs come from different commits"),
     "no commit recorded": (changed("base", 42, lambda run: run.update(metadata={})),

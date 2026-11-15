@@ -11,6 +11,9 @@ The subtle heart of the frozen protocol (PROJECT_PLAN §3.1, §4.1):
   features, apart from one trimmed window. ``EvalMasker``'s targets are untouched by it. The
   slot walk is ``block_targets(mask, count, generator, window)``, which ``TrainMasker``'s
   block-aware ``mix`` strategy reuses (M6-2).
+- ``OffGridBlockEvalMasker`` (M6-3) — ``BlockEvalMasker`` with its windows shifted off the 16-slot
+  grid by ``offgrid_block_offset_hours``, from a frozen seed of its own
+  (``offgrid_block_eval_masker_seed``): §4.1's grid check for Ext 1, scoring only.
 - ``TrainMasker`` — draws a *fresh* conditioning/target split each iteration, reproducible
   from the per-run seed but deliberately **not** pinned to one pattern.
 
@@ -25,7 +28,7 @@ with the same metrics. It is deliberately not imported here, the way ``data`` le
 importing it with the package first would make Python run it twice and warn.
 """
 
-from .masking import BlockEvalMasker, EvalMasker, TrainMasker, block_targets
+from .masking import BlockEvalMasker, EvalMasker, OffGridBlockEvalMasker, TrainMasker, block_targets
 from .metrics import masked_errors, masked_mae, masked_rmse, median_imputation, per_variable_mae
 from .sampling import EvalSampler
 
@@ -33,6 +36,7 @@ __all__ = [
     "BlockEvalMasker",
     "EvalMasker",
     "EvalSampler",
+    "OffGridBlockEvalMasker",
     "TrainMasker",
     "block_targets",
     "masked_errors",

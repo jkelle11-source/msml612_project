@@ -21,10 +21,17 @@ class MissingnessEncoder(nn.Module):
     which the model adds to the denoiser input (README, input-hook contract). It must only
     ever be given the conditioning mask, never ``observed_mask``: that one still marks the
     held-out targets (PROJECT_PLAN §3.1).
+
+    With ``blind`` (Ext 1-blind, PROJECT_PLAN §4.1's control, M6-3) it is given an all-ones mask
+    in place of the one passed, on every path the model calls it from (training, validation, the
+    sampler), so its output is the same for every mask. It keeps every weight, the learned
+    per-(hour, feature) vector included, and loses only the mask information. ``blind`` adds no
+    weight and draws nothing, so a blind encoder starts from an Ext 1 encoder's weights.
     """
 
-    def __init__(self, n_features, n_timesteps, d_model, n_heads=2, n_layers=2):
+    def __init__(self, n_features, n_timesteps, d_model, n_heads=2, n_layers=2, blind=False):
         super().__init__()
+        self.blind = blind
         self.input_proj = nn.Linear(1, d_model)                 # one token per (hour, feature)
         self.feature_emb = nn.Embedding(n_features, d_model)    # which feature a token is
         self.time_emb = nn.Embedding(n_timesteps, d_model)      # which hour it is
@@ -38,6 +45,8 @@ class MissingnessEncoder(nn.Module):
 
     def forward(self, mask):                    # mask: (B, T, D) float
         B, T, D = mask.shape
+        if self.blind:
+            mask = torch.ones_like(mask)        # Ext 1-blind: no mask information gets in
         x = (self.input_proj(mask.unsqueeze(-1))        # (B, T, D, d_model)
              + self.feature_emb.weight                  # (D, d_model)
              + self.time_emb.weight[:, None])           # (T, 1, d_model)

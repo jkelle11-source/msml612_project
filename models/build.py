@@ -15,6 +15,11 @@ def config_to_dict(config):
 
 def build_model(conf, device):
 
+    # Ext 1-blind (M6-3). A config saved before M6-3 has no such key, and is not blind.
+    blind = conf["model"].get("mask_embedding_blind", False)
+    if blind and not conf["model"]["use_mask_embedding"]:
+        raise ValueError("model.mask_embedding_blind blinds Extension 1's encoder: it needs model.use_mask_embedding")
+
     model = CSDI_Physio(config_to_dict(conf),
                         device,
                         target_dim = conf["data"]["n_features"]
@@ -30,7 +35,8 @@ def build_model(conf, device):
         torch.set_rng_state(state)
         model.mask_encoder = MissingnessEncoder(n_features = conf["data"]["n_features"],
                                                 n_timesteps = conf["data"]["n_timesteps"],
-                                                d_model = conf["diffusion"]["channels"]
+                                                d_model = conf["diffusion"]["channels"],
+                                                blind = blind
                                                 )
 
     if conf["model"]["use_time_encoding"]:
