@@ -1,0 +1,77 @@
+{
+ "gpu": "NVIDIA A100-SXM4-40GB",
+ "device": "cuda",
+ "tf32": false,
+ "torch": "2.14.1+cu130",
+ "timed": {
+  "variants": [
+   "base",
+   "ext1+2"
+  ],
+  "seed": 42,
+  "epochs": 2,
+  "scoring_batches": 2,
+  "validation": {
+   "n_samples": 5,
+   "batch_size": 64
+  },
+  "sampler": {
+   "eval_sampling_seed": 2021,
+   "eval_n_samples": 100,
+   "eval_batch_size": 16
+  }
+ },
+ "timings": {
+  "base": {
+   "epoch_seconds": 16.0,
+   "first_epoch_seconds": 17.0,
+   "validation_seconds": 60.4,
+   "scoring_batch_seconds": 50.88,
+   "first_scoring_batch_seconds": 51.09
+  },
+  "ext1+2": {
+   "epoch_seconds": 18.5,
+   "first_epoch_seconds": 18.5,
+   "validation_seconds": 60.3,
+   "scoring_batch_seconds": 51.49,
+   "first_scoring_batch_seconds": 51.45
+  }
+ },
+ "estimate_hours": {
+  "sweep": 88.5,
+  "dry_run": 18.6
+ },
+ "assumes": {
+  "sweep_cells": {
+   "random": [
+    "base",
+    "ext1",
+    "ext2",
+    "ext1+2"
+   ],
+   "block-aware": [
+    "base",
+    "ext1"
+   ]
+  },
+  "cost_of": {
+   "base": "base",
+   "ext1": "ext1+2",
+   "ext2": "base",
+   "ext1+2": "ext1+2"
+  },
+  "train_epochs": 200,
+  "validate_every": 10,
+  "seeds": 5,
+  "holdouts": [
+   "random/0.1",
+   "block/0.1"
+  ],
+  "scoring_batches_per_pass": 50,
+  "robustness_passes": 10,
+  "dry_run": {
+   "epochs": 20,
+   "seeds": 2
+  }
+ }
+}
