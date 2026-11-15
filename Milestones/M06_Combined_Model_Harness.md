@@ -72,7 +72,7 @@
 
 **Definition of Done**
 - [ ] Within a seed and regime, the variants demonstrably share data order and RNG (asserted in-harness or logged and diffed).
-- [ ] Timing test recorded for every candidate GPU; the pick, with its TF32 setting, written into the README and PROJECT_PLAN §3.3 before the dry run.
+- [x] Timing test recorded for every candidate GPU; the pick, with its TF32 setting, written into the README and PROJECT_PLAN §3.3 before the dry run.
 - [ ] Every run records the GPU it trained and was scored on, and the harness refuses to start a paired run on any GPU but the one the timing test picked (§3.3).
 - [ ] `TrainMasker`'s `random` output is byte-identical to before `mix` was added; `mix`'s block samples are whole 3-hour all-feature slots apart from one trimmed slot (tests green).
 - [ ] Dry-run completes for all four variants and the block-aware pair at ≥2 seeds; results under both holdouts land in the structured log.
