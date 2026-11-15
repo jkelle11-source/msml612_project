@@ -25,7 +25,8 @@ ext1 and ext1+2, Ext 2's in ext2 and ext1+2). Every run of a regime must have th
 for the toggles (how a run is validated aside: it does not touch training) and come from the same
 git commit, and every run must have trained, and every holdout been scored, on
 ``protocol.paired_gpu``, the same for all. Every scoring must have used the frozen sampler and
-holdout of ``configs/config.yaml``, as the gate requires of its runs. Refused besides: two runs in
+holdout of ``configs/config.yaml``, as the gate requires of its runs, and its ``protocol.tf32``
+(a run's training TF32 is part of its config, so is checked with it). Refused besides: two runs in
 one cell, which wandb allows (a rerun gets the same name). Untag the one to leave out.
 """
 
@@ -136,6 +137,9 @@ def problems(runs, protocol=None):
             if scores.get("holdout_settings") != settings:
                 found.append(f"{run['name']}'s {holdout} was scored on holdout {scores.get('holdout_settings')}, "
                              f"not the frozen {settings}")
+            if scores.get("tf32") != protocol.get("tf32", False):
+                found.append(f"{run['name']}'s {holdout} was scored with tf32 {scores.get('tf32')}, "
+                             f"not the protocol's {protocol.get('tf32', False)}")
 
     for regime, group in regimes.items():
         configs = [flatten(shared_config(run["config"])) for run in group]

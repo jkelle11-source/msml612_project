@@ -20,10 +20,22 @@ def use_deterministic_kernels():
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     torch.use_deterministic_algorithms(True)
 
+def use_tf32(on):
+    """Let CUDA compute float32 matrix multiplies and cuDNN convolutions in TF32, or not (M6-2).
+
+    ``protocol.tf32`` decides it, the same for every run (PROJECT_PLAN §3.3). Off, both are full
+    float32 ("ieee"), overriding PyTorch's default of TF32 convolutions on an A100, L4 or H100. A T4,
+    MPS and the CPU have no TF32, so there it changes nothing. Process-wide, like the kernels switch.
+    """
+    precision = "tf32" if on else "ieee"
+    torch.backends.cuda.matmul.fp32_precision = precision
+    torch.backends.cudnn.conv.fp32_precision = precision
+
 def train(config, dataset, run_seed, device, on_epoch_end = None, on_step_end = None, on_batch = None,
           on_start = None):
 
     use_deterministic_kernels()
+    use_tf32(config["protocol"].get("tf32", False))     # a config from before M6-2 has none: float32
 
     streams = RunStreams(run_seed)
     streams.seed_model_init()

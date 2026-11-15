@@ -42,6 +42,7 @@ diffusion/     # training data feed, loop and random streams around the
                #   Single-seed health record from wandb (health.py).        [M5-3]
                #   Pairing hashes, paired-GPU guard (run.py, score.py).     [M6-2]
                #   The sweep's checked results store (results.py).          [M6-2]
+               #   The GPU timing test (timing.py).                         [M6-2]
 eval/          # EvalMasker / TrainMasker + masked, standardized metrics;
                #   EvalSampler (frozen-noise evaluation pass).              [M1-3]
                #   Mean and forward-fill baselines.                         [M2-3]
@@ -98,6 +99,11 @@ The evaluation sampler is frozen the same way: `eval.EvalSampler` reads
 `protocol.paired_gpu` (M6-2) names the one GPU model every paired run trains and is scored on
 (PROJECT_PLAN §3.3). It is `null` until M6-2's timing test picks it, and no paired run starts
 before then (see [Paired sweep checks](#paired-sweep-checks-m6-2)).
+
+`protocol.tf32` (M6-2) says whether CUDA computes float32 convolutions and matrix multiplies in
+TF32. It is `false`: float32 throughout, as on the T4, which has no TF32. Training and scoring
+both apply it, so it is the same for every run, and the timing test decides whether a TF32 GPU
+is worth turning it on for ([The timing test](#the-timing-test-m6-2)).
 
 The model and training settings live in the same file, under upstream's key names (M2-1):
 `diffusion` (the reused noise schedule and denoiser size), the side-information keys in
@@ -590,7 +596,8 @@ Two files go into the run folder, named for what was scored:
 The MAE and RMSE are also added to the run's wandb summary (its `wandb_run`) under the baselines'
 keys, e.g. `random/0.1/test/mae`, so CSDI runs line up with the baselines in the runs table.
 Beside them go what the sweep's results store collects and checks (M6-2,
-[Paired sweep checks](#paired-sweep-checks-m6-2)): the GPU (`random/0.1/test/gpu`), the sampler's
+[Paired sweep checks](#paired-sweep-checks-m6-2)): the GPU (`random/0.1/test/gpu`), whether the pass
+ran in TF32 (`.../tf32`, from the frozen `protocol.tf32`, which the pass applies), the sampler's
 and holdout's settings (`.../sampler.eval_n_samples`, `.../holdout_settings.eval_masker_seed`, ...)
 and the per-variable MAE (`.../per_variable_mae.HR`, ...).
 That needs wandb online: `--wandb disabled`, or `WANDB_MODE` set to anything but `online`, skips
@@ -1120,7 +1127,8 @@ unless:
 - every run trained, and every holdout was scored, on `protocol.paired_gpu`, one GPU for all;
 - every holdout was scored with the frozen sampler and holdout of `configs/config.yaml`
   (`eval_sampling_seed`, `eval_n_samples`, `eval_batch_size`, and the holdout's seed and window),
-  as the gate requires of its runs; a holdout `diffusion.score` does not know is refused too;
+  as the gate requires of its runs, and with its `protocol.tf32` (training's is part of the
+  config, so is checked with it); a holdout `diffusion.score` does not know is refused too;
 - no cell has two runs. A rerun gets the same name on wandb; untag the one to leave out, or tag
   a rerun apart (`rerun`) when checking that a cell reproduces.
 
@@ -1140,7 +1148,7 @@ Tests:
   before it scores, from Python and from the command line, and runs on the picked GPU.
 - `tests/test_results.py`: the store's layout, configs, per-variable MAE, unscored holdouts,
   robustness rates and a holdout of another name; each way runs can be unpaired refused on its
-  own (diffusion draws, a sampler or holdout other than the frozen one, a second commit in a
+  own (diffusion draws, a sampler, holdout or TF32 setting other than the protocol's, a second commit in a
   regime among them); validation settings, output folders and each regime's commit allowed to
   differ; a pairing block wandb flattened read the same; and real runs through `diffusion.run`,
   `diffusion.score` and `attach_to_wandb` stored, with one relabeled to another seed caught by
@@ -1176,14 +1184,15 @@ Why the T4 is the default:
 - It is the one GPU on every Colab tier, so all three of us can get it.
 - The plan's budget is timed on it (PROJECT_PLAN §8).
 - It has no TF32, so it computes in float32 throughout. An A100, L4 or H100 runs the denoiser's
-  convolutions in TF32 by default (`torch.backends.cudnn.allow_tf32` is `True` in torch
-  2.14.1), and nothing here turns that off.
+  convolutions in TF32 unless told not to (PyTorch's default: `torch.backends.cudnn.conv.fp32_precision`
+  is `"tf32"` in torch 2.14.1). `protocol.tf32` tells it, the same for every run: off, so float32
+  throughout on every GPU, unless the timing test finds TF32 worth turning on.
 
-It is also Colab's slowest GPU, and Week 7 is about 270 T4-hours. So before the dry run, M6-2
-times training and scoring on each GPU everyone who runs a paired run can get (T4, L4 and A100
-on Colab Pro). It picks the one that finishes the sweep soonest, counting how often it is free
-and its compute units. If the pick has TF32, the setting is made explicit and is the same for
-every run. The pick and its timings are recorded here.
+It is also Colab's slowest GPU, and Week 7 is about 270 T4-hours. So before the dry run, M6-2's
+timing test ([below](#the-timing-test-m6-2)) times training and scoring on each GPU everyone who
+runs a paired run can get (T4, L4 and A100 on Colab Pro), with TF32 off and, where the GPU has
+it, on. It picks the one that finishes the sweep soonest, counting how often it is free and its
+compute units. The pick and its timings are recorded here.
 
 Check the GPU before launching:
 
@@ -1211,6 +1220,65 @@ with `uv run` from a shell cell:
 The last line should print `2.14.1+cu130 13.0 True`. Run the tests anywhere with
 `uv run pytest`; the tests that need the raw Set A files skip themselves when the data has
 not been downloaded.
+
+### The timing test (M6-2)
+
+On each GPU everyone who runs a paired run can get, after the setup above:
+
+```text
+!uv run python -m diffusion.timing           # results/timing/<GPU>.json, e.g. tesla_t4.json
+!uv run python -m diffusion.timing --tf32    # an L4 or A100 only: the same with TF32 on
+```
+
+`diffusion/timing.py` trains base and Ext 1+2 for 2 epochs at seed 42 through `diffusion.run`, as
+a sweep run trains (deterministic kernels, pairing hashes, validation), with wandb off, into
+`outputs/timing/`. It reads each run's second epoch and its validation pass from `curve.json`,
+then times the first 2 of the test split's 50 batches of a frozen scoring pass (100 draws, batch
+16) on that run's weights. The second epoch and the second batch are the clean ones: the first
+epoch also builds the model, and the first batch warms the GPU up. The validation pass counts
+because a 200-epoch run makes 20 of them. Nothing is scored or sent to wandb.
+
+Base and Ext 1+2 are the sweep's cheapest and dearest variants. Ext 2's encoder adds about
+nothing to base, and Ext 1's is most of what Ext 1+2 adds, so the estimates cost ext2's runs at
+base's timings and ext1's at Ext 1+2's (a slight overestimate). The record holds the GPU's exact
+name, the TF32 setting, the timings, and two estimates, with the counts they assume:
+
+- the Week-7 sweep: 30 runs of 200 epochs with 20 validation passes each, every run scored under
+  both holdouts, and base's 50% and 90% passes at 5 seeds: 70 scoring passes in all;
+- the dry run: the same 12 cells at 20 epochs and 2 seeds, scored as the sweep is, since the
+  results store refuses any scoring but the frozen one, so its 24 passes cost a sweep pass each.
+
+To pick:
+
+- Compare the candidates' sweep hours, with TF32 off and, on an L4 or A100, on.
+- Note how often Colab gave you each GPU, and its compute units per hour (Colab's Resources
+  panel). Colab Pro's compute units are a monthly allowance per account, so compare the sweep's
+  total units (hours × units per hour) with what the accounts running it have left, not only
+  the rate.
+- Keep the T4 unless another is clearly faster, reliably free and affordable in units.
+- Write the pick into `protocol.paired_gpu` exactly as its record's `gpu` says (`Tesla T4`,
+  `NVIDIA L4`, `NVIDIA A100-SXM4-40GB`). The guard compares the string, so an 80 GB A100
+  (`NVIDIA A100-SXM4-80GB`) is another GPU to it. Set `protocol.tf32` to the setting the pick
+  was chosen with.
+- Fill in the table below, commit the records in `results/timing/`, and write the pick into
+  PROJECT_PLAN §3.3, all before the dry run.
+
+| GPU (its record's `gpu`) | TF32 | Sweep h | Dry run h | Compute units / h | How often free |
+| --- | --- | --- | --- | --- | --- |
+| `Tesla T4` | none | — | — | — | — |
+| `NVIDIA L4` | off | — | — | — | — |
+| `NVIDIA L4` | on | — | — | — | — |
+| A100, as recorded | off | — | — | — | — |
+| A100, as recorded | on | — | — | — | — |
+
+Tests:
+
+- `tests/test_timing.py`: both estimates against a hand count; a timing run trains 2 epochs of
+  each variant, draws exactly 2 batches of each one's scoring pass, writes no scores, and
+  records its timings from the runs' `curve.json`; with `--tf32` the runs and the scoring
+  batches compute in TF32; a record is named for its GPU and TF32 setting.
+- `tests/test_train.py` and `tests/test_score.py`: training and scoring compute float32 as
+  `protocol.tf32` says (a config without it: float32), and a scoring records it.
 
 ---
 

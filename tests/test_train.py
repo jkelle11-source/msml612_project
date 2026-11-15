@@ -10,7 +10,7 @@ from conftest import CONFIG
 from data.physionet import load_dataset
 from diffusion.data import to_batch, train_loader
 from diffusion.streams import RunStreams
-from diffusion.train import train
+from diffusion.train import train, use_tf32
 from models.build import build_model
 from models.csdi import CSDI_base
 
@@ -118,6 +118,19 @@ def test_training_switches_on_deterministic_kernels(small_dataset, monkeypatch):
     run(small_dataset, epochs=1)
     assert torch.are_deterministic_algorithms_enabled()
     assert os.environ["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"    # needed by cuBLAS for deterministic CUDA
+
+@pytest.mark.parametrize("tf32, precision", [(True, "tf32"), (False, "ieee"), (None, "ieee")])
+def test_training_computes_float32_as_protocol_tf32_says(tf32, precision, small_dataset):
+    config = tiny_config(epochs=1)
+    if tf32 is None:
+        del config["protocol"]["tf32"]                                   # a config from before M6-2: float32
+    else:
+        config["protocol"]["tf32"] = tf32
+    try:
+        train(config, small_dataset, 42, "cpu")
+        assert torch.backends.cuda.matmul.fp32_precision == torch.backends.cudnn.conv.fp32_precision == precision
+    finally:
+        use_tf32(False)
 
 def test_a_cublas_workspace_that_is_already_set_is_kept(small_dataset, monkeypatch):
     monkeypatch.setenv("CUBLAS_WORKSPACE_CONFIG", ":16:8")

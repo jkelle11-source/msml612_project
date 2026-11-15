@@ -10,6 +10,7 @@ from conftest import CONFIG
 from data.physionet import save_dataset
 from diffusion.run import run
 from diffusion.score import attach_to_wandb, main, score
+from diffusion.train import use_tf32
 from eval import BlockEvalMasker, EvalMasker, EvalSampler, masked_mae, median_imputation
 from models.build import build_model
 import torch
@@ -210,7 +211,7 @@ def fake_api(monkeypatch):
     monkeypatch.setattr("diffusion.score.wandb.Api", FakeApi)
     return FakeApi.updates
 
-SCORES = {"holdout": "random", "fraction": 0.1, "split": "test", "mae": 0.23, "rmse": 0.5, "gpu": "Tesla T4",
+SCORES = {"holdout": "random", "fraction": 0.1, "split": "test", "mae": 0.23, "rmse": 0.5, "gpu": "Tesla T4", "tf32": False,
           "sampler": {"eval_sampling_seed": 2021, "eval_n_samples": 100, "eval_batch_size": 16},
           "holdout_settings": {"eval_masker_seed": 7}, "per_variable_mae": {"HR": 0.1, "SysABP": None},
           "wandb_run": "DATA612/msml612-csdi/abc123"}
@@ -220,7 +221,7 @@ def test_scores_join_the_runs_wandb_summary_under_the_baselines_keys(fake_api):
     assert fake_api == [("DATA612/msml612-csdi/abc123", {
         "random/0.1/test/mae": 0.23, "random/0.1/test/rmse": 0.5,
         # M6-2: what diffusion.results collects and checks, flat as wandb keeps a block anyway
-        "random/0.1/test/gpu": "Tesla T4",
+        "random/0.1/test/gpu": "Tesla T4", "random/0.1/test/tf32": False,
         "random/0.1/test/sampler.eval_sampling_seed": 2021, "random/0.1/test/sampler.eval_n_samples": 100,
         "random/0.1/test/sampler.eval_batch_size": 16, "random/0.1/test/holdout_settings.eval_masker_seed": 7,
         "random/0.1/test/per_variable_mae.HR": 0.1, "random/0.1/test/per_variable_mae.SysABP": None})]
@@ -268,6 +269,19 @@ def test_a_paired_scoring_refuses_any_gpu_but_the_picked_one(gpu, refusal, run_d
     with pytest.raises(RuntimeError, match=refusal):
         score(run_dir, small_dataset, "cpu", config_path=picked(tmp_path, gpu), log=quiet, paired=True)
     assert not list(run_dir.glob("scores_*")) and fake_sampler == []       # refused before scoring
+
+@pytest.mark.parametrize("tf32, precision", [(True, "tf32"), (False, "ieee")])
+def test_a_scoring_runs_and_records_the_protocols_tf32(tf32, precision, run_dir, small_dataset, fake_sampler, tmp_path):
+    config = copy.deepcopy(CONFIG)
+    config["protocol"]["tf32"] = tf32
+    (tmp_path / "tf32_config.yaml").write_text(yaml.safe_dump(config))
+    try:
+        scores = score(run_dir, small_dataset, "cpu", config_path=tmp_path / "tf32_config.yaml", log=quiet)
+        assert torch.backends.cuda.matmul.fp32_precision == torch.backends.cudnn.conv.fp32_precision == precision
+    finally:
+        use_tf32(False)
+    assert scores["tf32"] is tf32
+    assert json.loads((run_dir / "scores_test_random_0.1.json").read_text())["tf32"] is tf32
 
 def test_the_command_line_scores_a_paired_run_only_on_the_picked_gpu(run_dir, small_dataset, fake_sampler, tmp_path):
     save_dataset(small_dataset, tmp_path / "data.npz")

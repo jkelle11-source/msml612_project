@@ -82,6 +82,15 @@ protocol:
   # start at all while this is null.
   paired_gpu: null
 
+  # Whether CUDA computes float32 convolutions and matrix multiplies in TF32
+  # (PROJECT_PLAN §3.3, M6-2). An A100, L4 or H100 runs cuDNN convolutions in
+  # TF32 unless told not to (PyTorch's default); this makes the setting explicit
+  # and the same for every run, training (diffusion.train) and scoring
+  # (diffusion.score). Off: float32 throughout, as on the T4, which has no TF32
+  # (nor have MPS and the CPU, where it changes nothing). Turned on only if the
+  # timing test picks a TF32 GPU and finds it worth it.
+  tf32: false
+
   # Reproduction gate: base CSDI must reach <= this MAE @10% averaged over >=3
   # seeds before any extension delta is trusted (PROJECT_PLAN §3.4).
   gate_mae_at_10pct: 0.24
