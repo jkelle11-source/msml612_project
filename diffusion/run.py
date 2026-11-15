@@ -9,13 +9,14 @@ Trains with ``diffusion.train.train``, scores the validation split every
 - ``config.yaml``: the resolved config the run used. ``--config`` on it reruns the run.
 - ``history.jsonl``: one record per training step, ``{"epoch", "loss", "grad_norm", "lr"}``.
 - ``curve.json``: one row per epoch: mean loss, largest gradient norm, seconds, the SHA-256 of
-  the epoch's batches and of its train masks (M6-2), and val MAE/RMSE on the epochs that were scored.
+  what each paired stream gave the epoch (M6-2: its batches, its train masks, and its diffusion
+  draws), and val MAE/RMSE on the epochs that were scored.
 - ``model.pt``: the weights after the latest scored epoch. The last epoch is always scored, so a
   finished run leaves its final weights here, the ones that are scored (PROJECT_PLAN §3.1).
 - ``summary.json``: the 500-step health report, the final val MAE, whether it is below
   forward fill's, the GPU it trained on, its pairing hashes (M6-2: the starting weights of each
-  part, the data order and the train masks), and the run's path on wandb (``entity/project/id``;
-  null if untracked).
+  part, and each paired stream over the whole run), and the run's path on wandb
+  (``entity/project/id``; null if untracked).
 
 The run refuses an output folder that is not empty, so two runs' files never mix; with
 ``--overwrite`` it first deletes the files a run writes (``RUN_FILES``), and nothing else.
@@ -27,8 +28,9 @@ norm and learning rate, every epoch's ``curve.json`` row, the config and output 
 without it wandb follows ``WANDB_MODE`` if that is set, else goes online, and so does ``run()``
 called from Python without ``wandb_mode``. ``--tag`` adds tags that say what a run is for.
 
-A paired run (``run(..., paired=True)``, the M6-2 harness's) starts only on the GPU the timing test
-picked, ``protocol.paired_gpu`` (PROJECT_PLAN §3.3), and not at all before one is picked.
+A paired run (``run(..., paired=True)`` or ``--paired``, the M6-2 harness's) starts only on the GPU
+the timing test picked, ``protocol.paired_gpu`` (PROJECT_PLAN §3.3), and not at all before one is
+picked.
 """
 
 import argparse
@@ -93,6 +95,9 @@ def require_paired_gpu(protocol, device):
 # Extension encoders, as models.build_model attaches them; every other weight is shared by all
 # four variants, so starts the same in each at a seed (README, Random streams).
 ENCODERS = ("mask_encoder", "time_encoder")
+# The streams a seed's variants share, each hashed as training draws from it (M6-2): the batches in
+# their order, the train masks, and the diffusion timesteps and noise (PROJECT_PLAN §3.3).
+PAIRED_STREAMS = ("data_order", "train_mask", "diffusion")
 
 def weight_hashes(state_dict):
     """``{"shared": ..., "mask_encoder": ...}``: a SHA-256 of each part's weights, for the parts the model has."""
@@ -221,8 +226,8 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
     sampler = EvalSampler(protocol["eval_sampling_seed"], validation["n_samples"], validation["batch_size"])
     epochs, bar = config["train"]["epochs"], forward_fill_val_mae()
     history, curve, clock = [], [], {"start": time.time()}
-    # Pairing hashes (M6-2): the starting weights, then each epoch's batches and train masks as
-    # training draws them, so diffusion.results can check a seed's variants were given the same.
+    # Pairing hashes (M6-2): the starting weights, then what each paired stream gives every epoch as
+    # training draws it, so diffusion.results can check a seed's variants were given the same.
     init, epoch_streams = {}, {}
     variant = variant_name(config)
     tracker = wandb.init(entity=TRACKING["wandb_entity"], project=TRACKING["wandb_project"],
@@ -231,14 +236,18 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
                          config={**config, "seed": seed, "variant": variant, "regime": REGIME, "device": device,
                                  "gpu": gpu_name(device), "out_dir": str(out_dir.resolve())})
 
-    def on_batch(epoch, model, values, mask, cond_mask):
-        if not init:                                            # the first step, before any update
-            init.update(weight_hashes(model.state_dict()))
+    def on_start(weights):                                      # as built, before any update
+        init.update(weight_hashes(weights))
+
+    def on_batch(epoch, values, mask, cond_mask, diffusion_state):
         if not epoch_streams:
-            epoch_streams.update(data_order=hashlib.sha256(), train_mask=hashlib.sha256())
+            epoch_streams.update({stream: hashlib.sha256() for stream in PAIRED_STREAMS})
         epoch_streams["data_order"].update(values.numpy().tobytes())
         epoch_streams["data_order"].update(mask.numpy().tobytes())
         epoch_streams["train_mask"].update(cond_mask.numpy().tobytes())
+        # The generator is re-seeded every epoch, so its state after each step says how far the
+        # step's timesteps and noise took it: equal at every step means the same draws.
+        epoch_streams["diffusion"].update(diffusion_state.numpy().tobytes())
 
     def on_step_end(record):
         history.append(record)
@@ -279,7 +288,7 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
         (out_dir / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
         (out_dir / "history.jsonl").write_text("")
         model, _ = train(config, dataset, seed, device, on_epoch_end=on_epoch_end, on_step_end=on_step_end,
-                         on_batch=on_batch)
+                         on_batch=on_batch, on_start=on_start)
 
         final = curve[-1]                                       # the last epoch is always scored
         summary = {
@@ -287,10 +296,10 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
             "seed": seed,
             "device": device,
             "gpu": gpu_name(device),
-            # one level deep, so wandb's summary keeps it whole (it flattens a nested block's keys)
+            # one level deep: wandb's summary flattens it to pairing.<key>, which summary_block reads back
             "pairing": {**{f"init_{part}": digest for part, digest in init.items()},
                         **{stream: chain_sha256(row[f"{stream}_sha256"] for row in curve)
-                           for stream in ("data_order", "train_mask")}},
+                           for stream in PAIRED_STREAMS}},
             "validation": {"split": "val", "n_samples": validation["n_samples"], "batch_size": validation["batch_size"]},
             "health": health_report(history),
             "final_val_mae": final["val_mae"],
@@ -327,6 +336,8 @@ def main(argv=None):
                         help="wandb mode (default: WANDB_MODE if set, else online)")
     parser.add_argument("--tag", action="append", default=[],
                         help="a wandb tag saying what the run is for, e.g. gate, sweep, dry-run, debug (repeatable)")
+    parser.add_argument("--paired", action="store_true",
+                        help="a paired run (M6-2): refuse to start on any GPU but protocol.paired_gpu")
     args = parser.parse_args(argv)
     if args.variant is not None and (args.use_mask_embedding or args.use_time_encoding):
         parser.error("--variant sets every extension toggle; give it or the toggle flags, not both")
@@ -347,7 +358,7 @@ def main(argv=None):
     print(f"{variant_name(config)} seed {args.seed} on {device}, {config['train']['epochs']} epochs -> {out_dir}", flush=True)
     _, summary = run(config, load_dataset(args.dataset), args.seed, device, out_dir,
                      log=lambda line: print(line, flush=True), overwrite=args.overwrite,
-                     wandb_mode=args.wandb, tags=args.tag)
+                     wandb_mode=args.wandb, tags=args.tag, paired=args.paired)
     print(json.dumps(summary, indent=1))
 
 if __name__ == "__main__":

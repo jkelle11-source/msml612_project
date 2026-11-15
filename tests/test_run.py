@@ -9,9 +9,9 @@ from conftest import CONFIG
 from data.physionet import save_dataset
 import torch
 import wandb
-from diffusion.run import (RUN_FILES, VARIANTS, chain_sha256, health_report, main, run, run_name, validate,
-                           variant_name, weight_hashes, with_variant)
-from diffusion.streams import RunStreams
+from diffusion.run import (PAIRED_STREAMS, RUN_FILES, VARIANTS, chain_sha256, health_report, main, run, run_name,
+                           validate, variant_name, weight_hashes, with_variant)
+from diffusion.streams import RunStreams, derive_seed
 from diffusion.train import train
 from eval import EvalMasker
 from models.build import build_model
@@ -395,21 +395,32 @@ def test_tracking_does_not_change_the_run(small_dataset, tmp_path, monkeypatch, 
 def test_the_stream_hashes_are_of_exactly_what_training_drew(small_dataset, tmp_path):
     drawn = {}
 
-    def capture(epoch, model, values, mask, cond_mask):
-        drawn.setdefault(epoch, []).append((values.clone(), mask.clone(), cond_mask.clone()))
+    def capture(epoch, values, mask, cond_mask, diffusion_state):
+        drawn.setdefault(epoch, []).append((values, mask, cond_mask))
 
-    train(tiny_config(), small_dataset, 42, "cpu", on_batch=capture)
-    _, summary = run(tiny_config(), small_dataset, 42, "cpu", tmp_path, log=quiet)
+    config = tiny_config()
+    train(config, small_dataset, 42, "cpu", on_batch=capture)
+    _, summary = run(config, small_dataset, 42, "cpu", tmp_path, log=quiet)
     curve = json.loads((tmp_path / "curve.json").read_text())
     for row in curve:
-        data, masks = hashlib.sha256(), hashlib.sha256()
+        data, masks, noise = hashlib.sha256(), hashlib.sha256(), hashlib.sha256()
+        # the model's own diffusion draws, replayed on the epoch's generator: each step's timesteps,
+        # then its noise, (B, K, L) as the model holds a batch (models/csdi/main_model.py)
+        generator = torch.Generator().manual_seed(derive_seed(42, "diffusion", row["epoch"]))
         for values, mask, cond_mask in drawn[row["epoch"]]:
             data.update(values.numpy().tobytes())
             data.update(mask.numpy().tobytes())
             masks.update(cond_mask.numpy().tobytes())
-        assert (row["data_order_sha256"], row["train_mask_sha256"]) == (data.hexdigest(), masks.hexdigest())
+            batch, hours, features = values.shape
+            torch.randint(0, config["diffusion"]["num_steps"], [batch], generator=generator)
+            torch.randn((batch, features, hours), generator=generator)
+            noise.update(generator.get_state().numpy().tobytes())
+        assert ((row["data_order_sha256"], row["train_mask_sha256"], row["diffusion_sha256"])
+                == (data.hexdigest(), masks.hexdigest(), noise.hexdigest()))
     assert curve[0]["data_order_sha256"] != curve[1]["data_order_sha256"]      # reshuffled every epoch
-    for stream in ("data_order", "train_mask"):
+    assert curve[0]["diffusion_sha256"] != curve[1]["diffusion_sha256"]        # re-seeded every epoch
+    assert PAIRED_STREAMS == ("data_order", "train_mask", "diffusion")
+    for stream in PAIRED_STREAMS:
         assert summary["pairing"][stream] == chain_sha256(row[f"{stream}_sha256"] for row in curve)
 
 def test_the_starting_weights_are_hashed_before_the_first_update(small_dataset, tmp_path):
@@ -425,12 +436,12 @@ def test_a_seeds_variants_hash_the_same_streams_and_starting_weights(small_datas
         _, summary = run(with_variant(tiny_config(), variant), small_dataset, seed, "cpu",
                          tmp_path / f"{variant}_{seed}", log=quiet)
         pairing[variant, seed] = summary["pairing"]
-    for key in ("data_order", "train_mask", "init_shared"):
+    for key in ("data_order", "train_mask", "diffusion", "init_shared"):
         assert len({pairing[v, 42][key] for v in VARIANTS}) == 1
         assert pairing["base", 43][key] != pairing["base", 42][key]
-    assert set(pairing["base", 42]) == {"init_shared", "data_order", "train_mask"}
+    assert set(pairing["base", 42]) == {"init_shared", "data_order", "train_mask", "diffusion"}
     assert set(pairing["ext1+2", 42]) == {"init_shared", "init_mask_encoder", "init_time_encoder",
-                                          "data_order", "train_mask"}
+                                          "data_order", "train_mask", "diffusion"}
     assert pairing["ext1", 42]["init_mask_encoder"] == pairing["ext1+2", 42]["init_mask_encoder"]
     assert pairing["ext2", 42]["init_time_encoder"] == pairing["ext1+2", 42]["init_time_encoder"]
 
@@ -456,6 +467,14 @@ def test_a_paired_run_on_the_picked_gpu_starts_and_records_it(small_dataset, tmp
                      paired=True)
     assert summary["gpu"] == fake_wandb[0].init["config"]["gpu"] == "Tesla T4"
     assert fake_wandb[0].summary["gpu"] == "Tesla T4"
+
+def test_the_command_line_starts_a_paired_run_only_on_the_picked_gpu(small_dataset, tmp_path, fake_wandb):
+    save_dataset(small_dataset, tmp_path / "data.npz")
+    (tmp_path / "config.yaml").write_text(yaml.safe_dump(picked("Tesla T4")))
+    with pytest.raises(RuntimeError, match="not on cpu"):
+        main(["--seed", "42", "--dataset", str(tmp_path / "data.npz"), "--device", "cpu", "--config",
+              str(tmp_path / "config.yaml"), "--out", str(tmp_path / "run"), "--wandb", "online", "--paired"])
+    assert not (tmp_path / "run").exists() and fake_wandb == []           # nothing written, nothing sent
 
 def test_an_unpaired_run_goes_anywhere_and_says_where(small_dataset, tmp_path):
     _, summary = run(picked("Tesla T4"), small_dataset, 42, "cpu", tmp_path, log=quiet)     # health, debugging

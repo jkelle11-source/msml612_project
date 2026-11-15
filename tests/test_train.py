@@ -173,3 +173,30 @@ def test_epoch_end_hook_gets_each_epoch_in_order_with_the_model(small_dataset):
                      on_epoch_end=lambda epoch, model: calls.append((epoch, model)))
     assert [epoch for epoch, _ in calls] == [0, 1, 2]
     assert all(seen is model for _, seen in calls)
+
+# --- the pairing hooks (M6-2) -----------------------------------------------------------
+
+def test_the_start_hook_gets_the_weights_as_built_once_before_any_step(small_dataset):
+    calls = []
+    train(tiny_config(), small_dataset, 42, "cpu", on_start=lambda weights: calls.append(weights),
+          on_batch=lambda epoch, *drawn: calls.append(epoch))
+    RunStreams(42).seed_model_init()
+    built = build_model(tiny_config(), "cpu").state_dict()             # what the run seed builds
+    start, *steps = calls
+    assert steps == [e for e in range(3) for _ in range(4)]           # one call per step, in order
+    assert start.keys() == built.keys() and all(torch.equal(start[key], built[key]) for key in built)
+
+def test_pairing_hooks_that_edit_what_they_are_given_leave_training_alone(small_dataset):
+    def careless_start(weights):
+        for value in weights.values():
+            value.zero_()
+
+    def careless_batch(epoch, values, mask, cond_mask, diffusion_state):
+        values.zero_()
+        mask.zero_()
+        cond_mask.fill_(1.0)
+        diffusion_state.zero_()
+
+    plain, history = run(small_dataset)
+    model, careless = train(tiny_config(), small_dataset, 42, "cpu", on_start=careless_start, on_batch=careless_batch)
+    assert torch.equal(weights(model), plain) and careless == history

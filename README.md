@@ -437,7 +437,8 @@ validation split as it goes, and writes to `outputs/<run name>/` (git-ignored), 
 default the first available), `--epochs` to override `train.epochs`, `--validate-every` to
 override `validation.every_n_epochs`, `--variant` to set the extension toggles
 ([The four variants](#the-four-variants-m6-1)), `--config`, `--dataset`, `--out`, `--overwrite`,
-`--wandb`, `--tag`. The output folder must be empty or new, so two runs' files never mix; `--overwrite`
+`--wandb`, `--tag`, `--paired` (a sweep run: refused on any GPU but `protocol.paired_gpu`,
+[Paired sweep checks](#paired-sweep-checks-m6-2)). The output folder must be empty or new, so two runs' files never mix; `--overwrite`
 first deletes the files listed below from it, and nothing else.
 Everything is written while the run is going, so a stopped run keeps what it has done:
 
@@ -445,7 +446,7 @@ Everything is written while the run is going, so a stopped run keeps what it has
 | --- | --- |
 | `config.yaml` | the resolved config, `--epochs` and `--validate-every` included, `tracking` left out (where a run is logged isn't part of it). `--config` on it reruns the run. |
 | `history.jsonl` | one line per training step: `epoch`, `loss`, `grad_norm`, `lr` |
-| `curve.json` | one row per epoch: mean loss, largest gradient norm, training seconds, the epoch's `data_order_sha256` and `train_mask_sha256` (M6-2), and `val_mae` / `val_rmse` / `val_seconds` when scored |
+| `curve.json` | one row per epoch: mean loss, largest gradient norm, training seconds, the epoch's `data_order_sha256`, `train_mask_sha256` and `diffusion_sha256` (M6-2), and `val_mae` / `val_rmse` / `val_seconds` when scored |
 | `model.pt` | weights after the latest scored epoch. The last epoch is always scored, so a finished run's are its final weights, the ones that are scored (no best-epoch checkpoint; PROJECT_PLAN §3.1). |
 | `summary.json` | the 500-step health report, the final val MAE, forward fill's val MAE, `below_forward_fill`, the `gpu` it trained on and its `pairing` hashes (M6-2, [Paired sweep checks](#paired-sweep-checks-m6-2)), and `wandb_run`, the run's path on wandb (`entity/project/id`; null when untracked) |
 
@@ -577,7 +578,8 @@ units exactly as the baselines are. A run without `summary.json` has not finishe
 The holdout is the frozen random one at 10% unless told otherwise: `--fraction 0.5` or `0.9` for
 CSDI's robustness rates, `--holdout block` for `BlockEvalMasker`'s (10% only), `--split val` for
 the validation split. Other options: `--device`, `--config` (where the frozen protocol is read
-from), `--dataset`, `--wandb`. After every batch it prints the running MAE and the time left.
+from), `--dataset`, `--wandb`, `--paired` (a sweep run's scoring: refused on any GPU but
+`protocol.paired_gpu`). After every batch it prints the running MAE and the time left.
 Two files go into the run folder, named for what was scored:
 
 | File | Contents |
@@ -587,6 +589,10 @@ Two files go into the run folder, named for what was scored:
 
 The MAE and RMSE are also added to the run's wandb summary (its `wandb_run`) under the baselines'
 keys, e.g. `random/0.1/test/mae`, so CSDI runs line up with the baselines in the runs table.
+Beside them go what the sweep's results store collects and checks (M6-2,
+[Paired sweep checks](#paired-sweep-checks-m6-2)): the GPU (`random/0.1/test/gpu`), the sampler's
+and holdout's settings (`.../sampler.eval_n_samples`, `.../holdout_settings.eval_masker_seed`, ...)
+and the per-variable MAE (`.../per_variable_mae.HR`, ...).
 That needs wandb online: `--wandb disabled`, or `WANDB_MODE` set to anything but `online`, skips
 it. Retraining a run with `--overwrite` leaves its score files behind; their `model_sha256` no
 longer matches `model.pt`, and the gate refuses them until the run is scored again.
@@ -1050,7 +1056,8 @@ Tests:
 
 The parts of M6-2's harness that show its runs are paired and keep their numbers: pairing
 hashes, the paired GPU, and the results store. The driver that loops over seeds and variants
-(Jake's part of M6-2) calls `run()` and `score()` with `paired=True`.
+(Jake's part of M6-2) calls `run()` and `score()` with `paired=True` (`--paired` on either command
+line), and `diffusion.score.attach_to_wandb` after every `score()`, since the store reads wandb.
 
 **Pairing hashes.** Every run hashes what its random streams gave it, as training draws it, so
 a seed's variants are shown to be paired rather than assumed to be (PROJECT_PLAN §3.3):
@@ -1059,21 +1066,27 @@ a seed's variants are shown to be paired rather than assumed to be (PROJECT_PLAN
 | --- | --- | --- |
 | `data_order_sha256` | the epoch's batches in order (values and observation mask) | each `curve.json` row |
 | `train_mask_sha256` | the epoch's train masks (`TrainMasker`'s conditioning masks) | each `curve.json` row |
-| `pairing.data_order`, `pairing.train_mask` | one SHA-256 over the run's per-epoch hashes, in order | `summary.json`, wandb summary |
+| `diffusion_sha256` | the diffusion generator's state after each step's timesteps and noise | each `curve.json` row |
+| `pairing.data_order`, `pairing.train_mask`, `pairing.diffusion` | one SHA-256 over the run's per-epoch hashes, in order | `summary.json`, wandb summary |
 | `pairing.init_shared` | the starting weights of the parts every variant shares | `summary.json`, wandb summary |
 | `pairing.init_mask_encoder`, `pairing.init_time_encoder` | each encoder's starting weights, in the variants that have it | `summary.json`, wandb summary |
 
-The training loop hands each batch to an `on_batch` hook before the model sees it, and the
-starting weights are hashed at the first one, before any update. Hashing only reads: a hashed
-run's history equals an unhashed one's (tested). The diffusion stream (timesteps, noise) is
-drawn inside the model and is not hashed; dropout is unpaired between some variants by design
-([Random streams](#random-streams-seed-pairing)). The per-epoch hashes in `curve.json` let a run
-resumed at an epoch boundary rebuild its chain.
+`train()` has two hooks for these, and hands both copies, so a hook cannot change training
+(tested): `on_start` gets the weights once, right after the model is built from the run seed,
+and `on_batch` gets each step's batch, mask and train mask, and the diffusion generator's state
+once the model has drawn that step's timesteps and noise. The generator is re-seeded every epoch,
+so equal states at every step mean equal draws; an extension that drew once more from it would
+change every hash after. A hashed run's history equals an unhashed one's (tested). Dropout is
+not hashed: it is unpaired between some variants by design
+([Random streams](#random-streams-seed-pairing)). A run resumed from a checkpoint keeps its
+pairing: it loads the checkpoint after `on_start` has hashed the weights as built, and rebuilds
+each stream's chain from the per-epoch hashes in its `curve.json`.
 
 **The paired GPU.** `protocol.paired_gpu` names the one GPU model every paired run trains and
 is scored on, as `torch.cuda.get_device_name()` names it (`Tesla T4`). It is `null` until M6-2's
 timing test picks it ([Environment](#environment)). `run(..., paired=True)` and
-`score(..., paired=True)` refuse to start on any other GPU, before writing or sending anything,
+`score(..., paired=True)` (`--paired` on the command line) refuse to start on any other GPU, before
+writing or sending anything,
 and refuse to start at all while it is `null`. Every run records the GPU it trained on (`gpu`
 in `summary.json` and in its wandb config and summary; null off CUDA), and every scoring the GPU
 it was scored on (`gpu` in its scores file, `<holdout>/<fraction>/test/gpu` in the run's wandb
@@ -1089,34 +1102,49 @@ uv run python -m diffusion.results --tag sweep        # results/sweep.json, as M
 
 It reads every finished run with the tag and writes `results/<tag>.json`:
 `runs[regime][variant][seed]` holds each run's wandb path, commit, training GPU, and the MAE,
-RMSE and scoring GPU of every holdout scored (`random/0.1`, `block/0.1`, and base's `random/0.5`
-and `random/0.9` once M7-1 scores them); `configs[regime]` the config the regime's runs share,
+RMSE, scoring GPU and per-variable MAE of every holdout scored (`random/0.1`, `block/0.1`, base's
+`random/0.5` and `random/0.9` once M7-1 scores them, and any other holdout `diffusion.score`
+knows, such as M6-3's off-grid one); `configs[regime]` the config the regime's runs share,
 toggles aside; `gpu` the paired GPU; and `unscored` the runs still missing a 10% holdout, whose
-scores are null meanwhile, so the store can be written while the sweep runs. It writes nothing,
-and lists every reason, unless:
+scores are null meanwhile, so the store can be written while the sweep runs. The per-variable
+MAE is there for Ext 2's high-autocorrelation variables (HR, SysABP; PROJECT_PLAN §4.2) and M9-2,
+so no run folder has to outlive its Colab session. It writes nothing, and lists every reason,
+unless:
 
-- within each regime and seed, every variant's data order, train masks and shared starting
-  weights hash the same, and each encoder's starting weights hash the same in every variant
-  that has it;
+- within each regime and seed, every variant's data order, train masks, diffusion draws and
+  shared starting weights hash the same, and each encoder's starting weights hash the same in
+  every variant that has it;
 - every run of a regime has the same config but for the toggles (validation settings aside:
-  they do not touch training);
+  they do not touch training), and comes from the same git commit (as wandb recorded it), so
+  run each regime from one pinned commit;
 - every run trained, and every holdout was scored, on `protocol.paired_gpu`, one GPU for all;
-- no cell has two runs. A rerun gets the same name on wandb; untag the one to leave out.
+- every holdout was scored with the frozen sampler and holdout of `configs/config.yaml`
+  (`eval_sampling_seed`, `eval_n_samples`, `eval_batch_size`, and the holdout's seed and window),
+  as the gate requires of its runs; a holdout `diffusion.score` does not know is refused too;
+- no cell has two runs. A rerun gets the same name on wandb; untag the one to leave out, or tag
+  a rerun apart (`rerun`) when checking that a cell reproduces.
 
 Tests:
 
+- `tests/test_train.py`: `on_start` gets the weights the run seed builds, once, before any step;
+  hooks that edit what they are given leave training unchanged.
 - `tests/test_run.py`: the per-epoch hashes are of exactly the batches and masks training drew,
-  and the summary's of their chain; the starting weights are hashed before the first update; at
-  one seed all four variants hash the same streams and shared weights, Ext 1's encoder the same
-  in ext1 and ext1+2 and Ext 2's in ext2 and ext1+2, and another seed hashes differently; hashing
-  leaves the history unchanged; a paired run is refused with no GPU picked and on the wrong GPU,
-  writing and sending nothing, and starts on the picked one, recording it.
-- `tests/test_score.py`: the scores record the GPU and send it to wandb (null for older scores);
-  a paired scoring is refused before it scores, and runs on the picked GPU.
-- `tests/test_results.py`: the store's layout, configs, unscored holdouts and robustness rates;
-  each way runs can be unpaired refused on its own; validation settings and output folders
-  allowed to differ; a pairing block wandb flattened read the same; and real runs through
-  `diffusion.run` stored, with one relabeled to another seed caught by its data-order hash.
+  and of the diffusion draws replayed independently on the epoch's generator, and the summary's
+  of their chain; the starting weights are hashed before the first update; at one seed all four
+  variants hash the same streams and shared weights, Ext 1's encoder the same in ext1 and ext1+2
+  and Ext 2's in ext2 and ext1+2, and another seed hashes differently; hashing leaves the history
+  unchanged; a paired run is refused with no GPU picked and on the wrong GPU, from Python and
+  from the command line, writing and sending nothing, and starts on the picked one, recording it.
+- `tests/test_score.py`: the scores record the GPU and send it to wandb (null for older scores),
+  with the sampler's and holdout's settings and every variable's MAE; a paired scoring is refused
+  before it scores, from Python and from the command line, and runs on the picked GPU.
+- `tests/test_results.py`: the store's layout, configs, per-variable MAE, unscored holdouts,
+  robustness rates and a holdout of another name; each way runs can be unpaired refused on its
+  own (diffusion draws, a sampler or holdout other than the frozen one, a second commit in a
+  regime among them); validation settings, output folders and each regime's commit allowed to
+  differ; a pairing block wandb flattened read the same; and real runs through `diffusion.run`,
+  `diffusion.score` and `attach_to_wandb` stored, with one relabeled to another seed caught by
+  its data-order hash.
 
 ---
 

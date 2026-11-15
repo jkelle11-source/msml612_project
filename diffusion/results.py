@@ -4,12 +4,14 @@
 
 Reads every finished run with the tag from the config's ``tracking`` project on wandb, where
 ``diffusion.run`` streams each training run and ``diffusion.score`` adds each test scoring to the
-run's summary (``random/0.1/test/mae``, ``.../rmse``, ``.../gpu``), so runs trained in different
-Colab sessions are collected without their output folders. Writes ``results/<tag>.json``:
+run's summary (``random/0.1/test/mae``, ``.../rmse``, ``.../gpu``, the sampler's and holdout's
+settings and the per-variable MAE), so runs trained in different Colab sessions are collected
+without their output folders. Writes ``results/<tag>.json``:
 
 - ``runs[regime][variant][seed]``: the run, its wandb path, commit and training GPU, and under
-  ``scores`` the MAE, RMSE and scoring GPU of each holdout scored (``random/0.1``, ``block/0.1``,
-  and base's ``random/0.5`` and ``random/0.9`` once M7-1 scores them). M7-2's table reads these;
+  ``scores`` the MAE, RMSE, scoring GPU and per-variable MAE of each holdout scored
+  (``random/0.1``, ``block/0.1``, base's ``random/0.5`` and ``random/0.9`` once M7-1 scores
+  them, and any other holdout ``diffusion.score`` knows). M7-2's table reads these;
 - ``configs[regime]``: the config every run of the regime trained with, extension toggles aside;
 - ``gpu``: the one GPU every run trained and was scored on (``protocol.paired_gpu``);
 - ``unscored``: the runs still missing a 10% holdout, whose score is null meanwhile, so the store
@@ -17,12 +19,14 @@ Colab sessions are collected without their output folders. Writes ``results/<tag
 
 The store is written only if the runs are paired (PROJECT_PLAN §3.3). Within a regime and seed,
 every variant's pairing hashes (``diffusion.run``, ``summary.pairing``) must be equal: the batches
-in their order, the train masks, and the shared parts' starting weights; and each encoder's
-starting weights must be equal in every variant that has it (Ext 1's in ext1 and ext1+2, Ext 2's
-in ext2 and ext1+2). Every run of a regime must have the same config but for the toggles (how a run
-is validated aside: it does not touch training), and every run must have trained, and every
-holdout been scored, on ``protocol.paired_gpu``, the same for all. Refused besides: two runs in one
-cell, which wandb allows (a rerun gets the same name). Untag the one to leave out.
+in their order, the train masks, the diffusion timesteps and noise, and the shared parts' starting
+weights; and each encoder's starting weights must be equal in every variant that has it (Ext 1's in
+ext1 and ext1+2, Ext 2's in ext2 and ext1+2). Every run of a regime must have the same config but
+for the toggles (how a run is validated aside: it does not touch training) and come from the same
+git commit, and every run must have trained, and every holdout been scored, on
+``protocol.paired_gpu``, the same for all. Every scoring must have used the frozen sampler and
+holdout of ``configs/config.yaml``, as the gate requires of its runs. Refused besides: two runs in
+one cell, which wandb allows (a rerun gets the same name). Untag the one to leave out.
 """
 
 import argparse
@@ -30,17 +34,23 @@ import json
 import re
 from pathlib import Path
 
+import yaml
+
 from diffusion.gate import TRACKING_ONLY, flatten
 from diffusion.health import summary_block
-from diffusion.run import ENCODERS, ROOT, TRACKING, VARIANTS
+from diffusion.run import CONFIG_PATH, ENCODERS, PAIRED_STREAMS, ROOT, TRACKING, VARIANTS
+from diffusion.score import holdout_settings
 
 RESULTS = ROOT / "results"
 UNITS = "standardized (train-split z-scores)"
 HEADLINE = ("random/0.1", "block/0.1")      # the two frozen holdouts every run is scored on (PROJECT_PLAN §3.1)
 TOGGLES = tuple(VARIANTS["base"])           # the only config a seed's variants may differ in
 LABELS = ("out_dir", "variant", "seed", "regime", "device", "gpu")     # which run, where: not what it trains
-SCORE_KEY = re.compile(r"(random|block)/([0-9.]+)/test/(mae|rmse|gpu)")
-STREAMS = ("data_order", "train_mask", "init_shared")
+# <holdout>/<fraction>/test/<field>, as diffusion.score.attach_to_wandb writes them, for any holdout;
+# a field with a dot is one key of a block: sampler.eval_n_samples, per_variable_mae.HR
+SCORE_KEY = re.compile(r"([A-Za-z0-9_-]+)/([0-9.]+)/test/(.+)")
+STREAMS = (*PAIRED_STREAMS, "init_shared")
+KEPT = ("mae", "rmse", "gpu", "per_variable_mae")     # what the store keeps of a scoring; the settings are checked
 
 def fetch(tag):
     """Every finished run tagged ``tag`` in the tracking project, as the plain dicts ``record`` reads."""
@@ -50,23 +60,45 @@ def fetch(tag):
     return [{"path": "/".join(run.path), "name": run.name, "config": dict(run.config),
              "summary": dict(run.summary._json_dict), "metadata": run.metadata or {}} for run in runs]
 
+def frozen_protocol(path=CONFIG_PATH):
+    """The frozen ``protocol`` block every scoring is checked against (``configs/config.yaml``)."""
+    return yaml.safe_load(Path(path).read_text())["protocol"]
+
+def frozen_sampler(protocol):
+    """The sampler settings a protocol scoring records (``diffusion.score``: 100 draws, batch 16)."""
+    return {key: protocol[key] for key in ("eval_sampling_seed", "eval_n_samples", "eval_batch_size")}
+
 def scored_holdouts(summary):
-    """``{"random/0.1": {"mae", "rmse", "gpu"}, ...}``: each test scoring ``diffusion.score`` added."""
+    """``{"random/0.1": {"mae", "rmse", "gpu", "sampler", "holdout_settings", "per_variable_mae"}, ...}``:
+    each test scoring ``diffusion.score`` added, with its blocks rebuilt from their flat keys."""
     found = {}
     for key, value in summary.items():
         match = SCORE_KEY.fullmatch(key)
         if match:
             holdout, fraction, field = match.groups()
-            found.setdefault(f"{holdout}/{fraction}", {})[field] = value
+            scores = found.setdefault(f"{holdout}/{fraction}", {})
+            block, dot, name = field.partition(".")
+            if dot:
+                scores.setdefault(block, {})[name] = value
+            else:
+                scores[field] = value
     return found
+
+def commit(run):
+    """The git commit wandb recorded for ``run``; None if it recorded none."""
+    return ((run.get("metadata") or {}).get("git") or {}).get("commit")
 
 def shared_config(config):
     """What a run trained with, but for the toggles: equal across a regime's runs if they are paired."""
     config = {key: value for key, value in config.items() if key not in LABELS + TRACKING_ONLY}
     return {**config, "model": {key: value for key, value in config["model"].items() if key not in TOGGLES}}
 
-def problems(runs):
-    """Everything that unpairs ``runs`` or keeps one out of the store; empty if the store may be written."""
+def problems(runs, protocol=None):
+    """Everything that unpairs ``runs`` or keeps one out of the store; empty if the store may be written.
+
+    Scorings are checked against ``protocol`` (default: ``configs/config.yaml``'s, ``frozen_protocol``).
+    """
+    protocol = frozen_protocol() if protocol is None else protocol
     found = []
     cells, regimes, seeds = {}, {}, {}
     for run in runs:
@@ -90,12 +122,34 @@ def problems(runs):
             found += [f"{run['name']}'s {holdout} was scored on {scores.get('gpu')}, not a {gpu}"
                       for holdout, scores in scored_holdouts(run["summary"]).items() if scores.get("gpu") != gpu]
 
+    sampler = frozen_sampler(protocol)
+    for run in runs:
+        for holdout, scores in scored_holdouts(run["summary"]).items():
+            try:
+                settings = holdout_settings(protocol, holdout.split("/")[0])
+            except ValueError:
+                found.append(f"{run['name']} was scored on {holdout}, a holdout diffusion.score does not know")
+                continue
+            if scores.get("sampler") != sampler:
+                found.append(f"{run['name']}'s {holdout} was scored with sampler {scores.get('sampler')}, "
+                             f"not the frozen {sampler}")
+            if scores.get("holdout_settings") != settings:
+                found.append(f"{run['name']}'s {holdout} was scored on holdout {scores.get('holdout_settings')}, "
+                             f"not the frozen {settings}")
+
     for regime, group in regimes.items():
         configs = [flatten(shared_config(run["config"])) for run in group]
         keys = sorted(set().union(*configs))
         differ = [key for key in keys if len({repr(config.get(key)) for config in configs}) > 1]
         if differ:
             found.append(f"the {regime} regime's runs differ in more than their toggles: {differ}")
+        commits = {}
+        for run in group:
+            commits.setdefault(commit(run), []).append(run["name"])
+        if None in commits:
+            found.append(f"no git commit was recorded for the {regime} regime's {sorted(commits.pop(None))}")
+        if len(commits) > 1:
+            found.append(f"the {regime} regime's runs come from different commits: {commits}")
 
     for (regime, seed), group in seeds.items():
         hashes = {run["config"]["variant"]: summary_block(run["summary"], "pairing") for run in group}
@@ -112,11 +166,11 @@ def problems(runs):
                              f"at seed {seed}: {have}")
     return found
 
-def record(runs, tag):
+def record(runs, tag, protocol=None):
     """The store of ``runs`` (``fetch``'s dicts); raises ``ValueError`` listing what unpairs them."""
     if not runs:
         raise ValueError(f"no finished run is tagged {tag!r}")
-    found = problems(runs)
+    found = problems(runs, protocol)
     if found:
         raise ValueError("; ".join(found))
     order = list(VARIANTS)
@@ -130,9 +184,10 @@ def record(runs, tag):
         store["runs"].setdefault(config["regime"], {}).setdefault(config["variant"], {})[str(config["seed"])] = {
             "run": run["name"],
             "wandb_run": run["path"],
-            "commit": (run["metadata"].get("git") or {}).get("commit"),
+            "commit": commit(run),
             "gpu": run["summary"]["gpu"],
-            "scores": {holdout: scores.get(holdout) for holdout in sorted(set(HEADLINE) | set(scores))},
+            "scores": {holdout: None if holdout not in scores else {key: scores[holdout].get(key) for key in KEPT}
+                       for holdout in sorted(set(HEADLINE) | set(scores))},
         }
         store["unscored"] += [f"{run['name']}: {holdout}" for holdout in HEADLINE if holdout not in scores]
     return store
