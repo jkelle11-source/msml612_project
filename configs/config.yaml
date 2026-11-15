@@ -74,6 +74,14 @@ protocol:
   # variant-vs-base comparison is a paired difference.
   run_seeds: [42, 43, 44, 45, 46]
 
+  # The one GPU model every paired run trains and is scored on (PROJECT_PLAN
+  # §3.3, M6-2), as torch.cuda.get_device_name() names it, e.g. "Tesla T4". On
+  # another GPU float rounding differs from the first step, so its runs are not
+  # paired. null until M6-2's timing test picks it: a paired run (run() and
+  # score() with paired=True) refuses to start on any other GPU, and refuses to
+  # start at all while this is null.
+  paired_gpu: null
+
   # Reproduction gate: base CSDI must reach <= this MAE @10% averaged over >=3
   # seeds before any extension delta is trusted (PROJECT_PLAN §3.4).
   gate_mae_at_10pct: 0.24

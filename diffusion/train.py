@@ -20,15 +20,21 @@ def use_deterministic_kernels():
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     torch.use_deterministic_algorithms(True)
 
-def train(config, dataset, run_seed, device, on_epoch_end = None, on_step_end = None):
+def train(config, dataset, run_seed, device, on_epoch_end = None, on_step_end = None, on_batch = None,
+          on_start = None):
 
     use_deterministic_kernels()
 
     streams = RunStreams(run_seed)
     streams.seed_model_init()
-    
+
     model = build_model(config, device)
-    
+
+    # Pairing checks (M6-2): the starting weights, as built from the run seed, once. A copy, so the
+    # hook cannot change them; a run resumed from a checkpoint loads it after this, never before.
+    if on_start is not None:
+        on_start({key: value.detach().clone() for key, value in model.state_dict().items()})
+
     train_config = config["train"]
     
     optimizer = Adam(model.parameters(), 
@@ -61,12 +67,22 @@ def train(config, dataset, run_seed, device, on_epoch_end = None, on_step_end = 
         for values, mask in loader:
         
             cond_mask, _ = streams.train_masker(mask)
-            
+
+            if on_batch is not None:
+                drawn = (values.clone(), mask.clone(), cond_mask.clone())
+
             optimizer.zero_grad()
-            
-            loss = model(to_batch(values, mask, cond_mask), 
+
+            loss = model(to_batch(values, mask, cond_mask),
                          generator = streams.diffusion)
-            
+
+            # Pairing checks (M6-2): what this step drew from the data-order and train-mask streams,
+            # as copies taken before the model saw them, and the diffusion generator's state once the
+            # step's timesteps and noise are drawn. Called after the forward pass, so nothing the hook
+            # does to what it is given can reach training.
+            if on_batch is not None:
+                on_batch(epoch, *drawn, streams.diffusion.get_state())
+
             loss.backward()
             
             grad_norm = clip_grad_norm_(model.parameters(), max_norm)

@@ -210,12 +210,33 @@ def fake_api(monkeypatch):
     monkeypatch.setattr("diffusion.score.wandb.Api", FakeApi)
     return FakeApi.updates
 
-SCORES = {"holdout": "random", "fraction": 0.1, "split": "test", "mae": 0.23, "rmse": 0.5,
+SCORES = {"holdout": "random", "fraction": 0.1, "split": "test", "mae": 0.23, "rmse": 0.5, "gpu": "Tesla T4",
+          "sampler": {"eval_sampling_seed": 2021, "eval_n_samples": 100, "eval_batch_size": 16},
+          "holdout_settings": {"eval_masker_seed": 7}, "per_variable_mae": {"HR": 0.1, "SysABP": None},
           "wandb_run": "DATA612/msml612-csdi/abc123"}
 
 def test_scores_join_the_runs_wandb_summary_under_the_baselines_keys(fake_api):
     assert attach_to_wandb(SCORES, "online")
-    assert fake_api == [("DATA612/msml612-csdi/abc123", {"random/0.1/test/mae": 0.23, "random/0.1/test/rmse": 0.5})]
+    assert fake_api == [("DATA612/msml612-csdi/abc123", {
+        "random/0.1/test/mae": 0.23, "random/0.1/test/rmse": 0.5,
+        # M6-2: what diffusion.results collects and checks, flat as wandb keeps a block anyway
+        "random/0.1/test/gpu": "Tesla T4",
+        "random/0.1/test/sampler.eval_sampling_seed": 2021, "random/0.1/test/sampler.eval_n_samples": 100,
+        "random/0.1/test/sampler.eval_batch_size": 16, "random/0.1/test/holdout_settings.eval_masker_seed": 7,
+        "random/0.1/test/per_variable_mae.HR": 0.1, "random/0.1/test/per_variable_mae.SysABP": None})]
+
+def test_scores_from_before_the_gpu_was_recorded_send_none_for_it(fake_api):
+    assert attach_to_wandb({k: v for k, v in SCORES.items() if k != "gpu"}, "online")
+    assert fake_api[0][1]["random/0.1/test/gpu"] is None
+
+def test_a_real_scoring_sends_its_settings_and_every_variables_mae(run_dir, small_dataset, fake_sampler, fake_api):
+    scores = score(run_dir, small_dataset, "cpu", holdout="block", log=quiet)
+    attach_to_wandb({**scores, "wandb_run": "DATA612/msml612-csdi/abc123"}, "online")
+    sent = fake_api[0][1]
+    assert sent["block/0.1/test/sampler.eval_n_samples"] == CONFIG["protocol"]["eval_n_samples"]
+    assert sent["block/0.1/test/holdout_settings.block_window_hours"] == CONFIG["protocol"]["block_window_hours"]
+    assert {key for key in sent if "/per_variable_mae." in key} == {
+        f"block/0.1/test/per_variable_mae.{name}" for name in small_dataset["features"]}
 
 def test_nothing_is_sent_unless_online_or_for_an_untracked_run(fake_api, monkeypatch):
     assert not attach_to_wandb(SCORES, "disabled")
@@ -225,3 +246,38 @@ def test_nothing_is_sent_unless_online_or_for_an_untracked_run(fake_api, monkeyp
     monkeypatch.delenv("WANDB_MODE")
     assert attach_to_wandb(SCORES)                              # unset: online, as diffusion.run
     assert len(fake_api) == 1
+
+# --- the paired GPU (M6-2) --------------------------------------------------------------
+
+def picked(tmp_path, gpu):
+    """The repo's config with ``protocol.paired_gpu`` set to ``gpu``."""
+    config = copy.deepcopy(CONFIG)
+    config["protocol"]["paired_gpu"] = gpu
+    path = tmp_path / "picked_config.yaml"
+    path.write_text(yaml.safe_dump(config))
+    return path
+
+def test_the_scores_record_the_gpu_they_were_scored_on(run_dir, small_dataset, fake_sampler, monkeypatch):
+    assert score(run_dir, small_dataset, "cpu", log=quiet)["gpu"] is None
+    monkeypatch.setattr("diffusion.score.gpu_name", lambda device: "Tesla T4")      # as on a Colab T4
+    assert score(run_dir, small_dataset, "cpu", log=quiet)["gpu"] == "Tesla T4"
+    assert json.loads((run_dir / "scores_test_random_0.1.json").read_text())["gpu"] == "Tesla T4"
+
+@pytest.mark.parametrize("gpu, refusal", [(None, "timing test"), ("Tesla T4", "not on cpu")])
+def test_a_paired_scoring_refuses_any_gpu_but_the_picked_one(gpu, refusal, run_dir, small_dataset, fake_sampler, tmp_path):
+    with pytest.raises(RuntimeError, match=refusal):
+        score(run_dir, small_dataset, "cpu", config_path=picked(tmp_path, gpu), log=quiet, paired=True)
+    assert not list(run_dir.glob("scores_*")) and fake_sampler == []       # refused before scoring
+
+def test_the_command_line_scores_a_paired_run_only_on_the_picked_gpu(run_dir, small_dataset, fake_sampler, tmp_path):
+    save_dataset(small_dataset, tmp_path / "data.npz")
+    with pytest.raises(RuntimeError, match="not on cpu"):
+        main([str(run_dir), "--dataset", str(tmp_path / "data.npz"), "--device", "cpu",
+              "--config", str(picked(tmp_path, "Tesla T4")), "--wandb", "disabled", "--paired"])
+    assert not list(run_dir.glob("scores_*")) and fake_sampler == []       # refused before scoring
+
+def test_a_paired_scoring_on_the_picked_gpu_runs(run_dir, small_dataset, fake_sampler, tmp_path, monkeypatch):
+    monkeypatch.setattr("diffusion.run.gpu_name", lambda device: "Tesla T4")
+    monkeypatch.setattr("diffusion.score.gpu_name", lambda device: "Tesla T4")
+    scores = score(run_dir, small_dataset, "cpu", config_path=picked(tmp_path, "Tesla T4"), log=quiet, paired=True)
+    assert scores["gpu"] == "Tesla T4" and scores["mae"] == pytest.approx(0.5)
