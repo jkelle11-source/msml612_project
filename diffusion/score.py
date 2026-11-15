@@ -106,7 +106,7 @@ def score(run_dir, dataset, device, holdout="random", fraction=None, split="test
                                 "so its model.pt is not its final weights")
     summary = json.loads((run_dir / "summary.json").read_text())
     run_config = yaml.safe_load((run_dir / "config.yaml").read_text())
-    fraction =protocol["eval_holdout_fraction"] if fraction is None else fraction
+    fraction = protocol["eval_holdout_fraction"] if fraction is None else fraction
     grid = (run_config["data"]["n_timesteps"], run_config["data"]["n_features"])
     masker, holdout_settings = holdout_masker(protocol, grid, holdout, fraction)
     sampler = EvalSampler(protocol["eval_sampling_seed"], protocol["eval_n_samples"], protocol["eval_batch_size"])

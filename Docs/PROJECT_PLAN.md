@@ -238,7 +238,7 @@ Three **one-factor sensitivity studies** on the **best** variant, plus mask-enco
 
 \*If compute is tight, sweep `T` at a single `d_model` and state it. Total ≈ 35–40 runs, not 180. †Block-aware, plus 6 off-grid scoring passes of Week 7's block-aware runs (no retraining). Cells whose paired-Δ error bars overlap are reported **null**, not dropped.
 - **A:** Inference-latency profile per variant × `d_model`; **MAE-vs-inference-time plot** (the runtime contribution — see §7).
-- **Ext 1 track, only if Week 7's block-aware Ext 1 contrast separated:** §4.1's control (Ext 1-blind, block-aware, seeds 42–44) and grid check (off-grid scoring of the block-aware base and Ext 1 runs, seeds 42–44), about 37 h of compute in parallel with the ablation; otherwise recorded as not triggered.
+- **Ext 1 track, only if Week 7's block-aware Ext 1 contrast separated:** §4.1's control (Ext 1-blind, block-aware, seeds 42–44) and grid check (off-grid scoring of the block-aware base and Ext 1 runs, seeds 42–44), about 8.5 h of compute on the sweep's GPU (§8) in parallel with the ablation; otherwise recorded as not triggered.
 - ⚠️ **Conformal gate check** at end of week (§4.3).
 
 ### Phase 5 — Stretch, Presentation, Final Report (Weeks 9–10)
