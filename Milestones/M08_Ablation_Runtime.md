@@ -118,6 +118,8 @@
 - Train Ext 1-blind from the commit M7's block-aware runs were trained from: the results store refuses a regime whose runs come from different commits.
 - Give it a tag the store collects with M7's block-aware runs (the sweep's tag, or M8-4's added to M7's block-aware runs at seeds 42–44). It is scored on the block holdout only, so the store lists its `random/0.1` as unscored, as expected.
 - Keep M7's block-aware run folders at seeds 42–44: off-grid scoring needs their `model.pt`, and `span_mae` their `median_test_block_0.1.npy`. The store holds neither.
+- From the review of #57 (M6-2's driver): run both checks with `diffusion.sweep` in the sweep's folder, under the sweep's tag and from its commit. `--regime block-aware --variants ext1blind --seeds 42 43 44 --holdouts block` trains and scores Ext 1-blind; `--regime block-aware --variants base ext1 --seeds 42 43 44 --holdouts offgrid` scores M7's runs off the grid, training nothing (README, Ext 1's attribution checks).
+- The sweep's folder is on the Google Drive of whoever ran M7: they share it as an editor with whoever runs M8-4, who adds it to their own Drive as a shortcut in My Drive and passes that path as `--out`. In a folder of its own, Ext 1-blind would be checked against nothing until the store is written.
 
 **Definition of Done**
 - [ ] Trigger decision recorded from `M7-2`'s numbers.

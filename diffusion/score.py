@@ -5,7 +5,9 @@
 This is the protocol's number for a run; validation while training (5 draws) is tracking only.
 The model is rebuilt from the run's saved ``config.yaml`` and given its ``model.pt``, its final
 weights (PROJECT_PLAN §3.1). A run without ``summary.json`` has not finished, so its ``model.pt``
-is an earlier epoch's, and it is refused. The holdout and the sampler are the frozen protocol's,
+is an earlier epoch's, and it is refused; so is a ``model.pt`` that is not the final weights its
+``summary.json`` records (``model_sha256``, M6-2; a run from before has none, and is not checked).
+The holdout and the sampler are the frozen protocol's,
 from ``configs/config.yaml``:
 
 - the holdout: ``EvalMasker``'s random holdout at 10% (``--fraction 0.5`` or ``0.9`` for CSDI's
@@ -124,6 +126,10 @@ def score(run_dir, dataset, device, holdout="random", fraction=None, split="test
     sampler = EvalSampler(protocol["eval_sampling_seed"], protocol["eval_n_samples"], protocol["eval_batch_size"])
 
     weights = (run_dir / "model.pt").read_bytes()
+    model_sha256 = hashlib.sha256(weights).hexdigest()
+    if summary.get("model_sha256", model_sha256) != model_sha256:       # none: a run from before M6-2's review
+        raise ValueError(f"{run_dir}'s model.pt is not the final weights its summary.json records (an earlier "
+                         "epoch's, kept by Google Drive when a session was lost?): train the run again")
     model = build_model(run_config, device)
     model.load_state_dict(torch.load(io.BytesIO(weights), map_location=device))
 
@@ -164,7 +170,7 @@ def score(run_dir, dataset, device, holdout="random", fraction=None, split="test
         "gpu": gpu_name(device),
         "tf32": tf32,
         "seconds": round(time.time() - started, 1),
-        "model_sha256": hashlib.sha256(weights).hexdigest(),
+        "model_sha256": model_sha256,
         "wandb_run": summary.get("wandb_run"),
     }
     name = scores_name(split, holdout, fraction)

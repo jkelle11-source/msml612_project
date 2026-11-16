@@ -133,6 +133,9 @@ def test_the_runs_own_weights_are_scored(run_dir, small_dataset, tmp_path):
         for p in model.parameters():
             p.add_(torch.randn(p.shape) * 0.1)
     torch.save(model.state_dict(), run_dir / "model.pt")
+    summary = json.loads((run_dir / "summary.json").read_text())
+    summary["model_sha256"] = hashlib.sha256((run_dir / "model.pt").read_bytes()).hexdigest()   # as the run's own
+    (run_dir / "summary.json").write_text(json.dumps(summary))
     assert score(run_dir, small_dataset, "cpu", config_path=config, log=quiet)["mae"] != scores["mae"]
 
 def test_the_scores_record_the_hash_of_the_weights_scored(run_dir, small_dataset, fake_sampler):
@@ -143,6 +146,24 @@ def test_an_unfinished_run_is_refused(run_dir, small_dataset, fake_sampler):
     (run_dir / "summary.json").unlink()             # model.pt alone may be an earlier epoch's weights
     with pytest.raises(FileNotFoundError, match="not finished"):
         score(run_dir, small_dataset, "cpu", log=quiet)
+
+def test_weights_that_are_not_the_runs_final_ones_are_refused(run_dir, small_dataset, fake_sampler, tmp_path):
+    # As Google Drive can leave a folder after a lost session: the run's summary.json, but the model.pt of
+    # an earlier epoch (here, a 1-epoch run at another seed stands in for one).
+    summary = json.loads((run_dir / "summary.json").read_text())
+    assert summary["model_sha256"] == hashlib.sha256((run_dir / "model.pt").read_bytes()).hexdigest()
+    other = tmp_path / "other"
+    run(tiny_config(), small_dataset, 43, "cpu", other, log=quiet, wandb_mode="disabled")
+    shutil.copy(other / "model.pt", run_dir / "model.pt")
+    passes = len(fake_sampler)                      # the other run's validation passes drew from it too
+    with pytest.raises(ValueError, match="not the final weights its summary.json records"):
+        score(run_dir, small_dataset, "cpu", log=quiet)
+    assert not list(run_dir.glob("scores_*")) and not list(run_dir.glob("median_*"))
+    assert len(fake_sampler) == passes              # refused before any draw
+    del summary["model_sha256"]                     # a run from before the summary recorded them: not checked
+    (run_dir / "summary.json").write_text(json.dumps(summary))
+    assert score(run_dir, small_dataset, "cpu", log=quiet)["model_sha256"] == \
+        hashlib.sha256((other / "model.pt").read_bytes()).hexdigest()
 
 def test_held_out_values_cannot_reach_the_guess(run_dir, small_dataset, tmp_path):
     config = quick_protocol(tmp_path)

@@ -377,8 +377,9 @@ Rules:
 - **Resuming needs no RNG state.** Because every stream is a function of the run seed and the
   epoch, a checkpoint taken at an epoch boundary needs only the model, the optimizer (plus
   the learning-rate scheduler) and the epoch number; the resumed run then ends
-  with the same weights as an uninterrupted one. A run stopped mid-epoch is resumed from the start
-  of that epoch. `run(..., resume=True)` does this (M6-2,
+  with the same weights as an uninterrupted one. A run is resumed from its last checkpoint,
+  taken after its last validated epoch, and redoes the epochs since. `run(..., resume=True)` does
+  this (M6-2,
   [Launching a run](#launching-a-run-m3-1)).
 - **Evaluation noise is frozen.** `eval.EvalSampler` runs one evaluation pass of the reused
   sampler: `samples = EvalSampler.from_config()(model, values, mask, cond_mask)`, shape
@@ -441,7 +442,8 @@ scoring script must call it before any CUDA work. With it, CUDA reruns match bit
 2-epoch runs on a Colab T4 did ([`Docs/M3_debug_log.md`](Docs/M3_debug_log.md)). `on_step_end(record)`, if
 given, is called with a copy of each history record as it is made (M3-1); the run log uses it,
 and wandb (M3-2) does. `on_checkpoint(state)` is called at the end of every epoch with the epoch
-and the model's, optimizer's and schedule's states, and `resume=state` goes on from one (M6-2,
+and the model's, optimizer's and schedule's states (`diffusion.run` writes one to disk after each
+validated epoch but the last), and `resume=state` goes on from one (M6-2,
 [Launching a run](#launching-a-run-m3-1)).
 
 ### Training regimes (M6-2)
@@ -522,20 +524,35 @@ Everything is written while the run is going, so a stopped run keeps what it has
 | `history.jsonl` | one line per training step: `epoch`, `loss`, `grad_norm`, `lr` |
 | `curve.json` | one row per epoch: mean loss, largest gradient norm, training seconds, the epoch's `data_order_sha256`, `train_mask_sha256` and `diffusion_sha256` (M6-2), and `val_mae` / `val_rmse` / `val_seconds` when scored |
 | `model.pt` | weights after the latest scored epoch. The last epoch is always scored, so a finished run's are its final weights, the ones that are scored (no best-epoch checkpoint; PROJECT_PLAN §3.1). |
-| `summary.json` | the 500-step health report, the final val MAE, forward fill's val MAE, `below_forward_fill`, the `validation` settings (split, holdout, draws, batch size), the `gpu` it trained on and its `pairing` hashes (M6-2, [Paired sweep checks](#paired-sweep-checks-m6-2)), and `wandb_run`, the run's path on wandb (`entity/project/id`; null when untracked) |
-| `checkpoint.pt` | the model, optimizer and learning-rate schedule after the latest epoch, the epoch, and the run's wandb path (M6-2), rewritten whole at the end of every epoch |
+| `summary.json` | the 500-step health report, the final val MAE, forward fill's val MAE, `below_forward_fill`, the `validation` settings (split, holdout, draws, batch size), the `gpu` it trained on and its `pairing` hashes (M6-2, [Paired sweep checks](#paired-sweep-checks-m6-2)), `model_sha256`, the SHA-256 of the final `model.pt` (M6-2, checked by [`diffusion.score`](#scoring-a-run-m4-1)), and `wandb_run`, the run's path on wandb (`entity/project/id`; null when untracked) |
+| `checkpoint.pt` | the model, optimizer and learning-rate schedule, the epoch, the number of steps so far, and the run's wandb path (M6-2), rewritten whole after every validated epoch but the last |
 
 **Resuming a run (M6-2).** `checkpoint.pt` is written beside itself and then renamed, so a
-session lost mid-save leaves the last one whole. `--resume` (`run(..., resume=True)`) continues
-the unfinished run in the output folder from it. The model is still built from the run seed and
-hashed as built (`on_start`), then given the checkpoint; the steps and epochs after the checkpoint
-are dropped and redone; and the run goes on as the same wandb run. Every stream is a function of
-the run seed and the epoch ([Random streams](#random-streams-seed-pairing)), so a resumed run ends
-with the same files, numbers and weights as one never stopped. The tests check that for a session
-lost right after a checkpoint, between an epoch's files and its checkpoint, and in the middle of an
-epoch. A folder with no checkpoint (a run stopped in its first epoch) is started again. A finished
-run is refused, and so is a run started with another config: give `--resume` the flags the run
-started with. [`diffusion.sweep`](#running-the-paired-sweep-m6-2) resumes every run it finds
+session lost mid-save leaves the last one whole. It is written after every validated epoch (every
+`validation.every_n_epochs`, 10, when `model.pt` is saved too), a tenth of the Google Drive uploads
+of one every epoch, so a lost session redoes at most 10 epochs, about 1–2 minutes on the G4. It is
+not written after the last epoch: the summary follows that one, so a run stopped between the two
+redoes its last 10 epochs, and the final `model.pt` whose hash the summary records is always written
+in the same session as the summary.
+
+`--resume` (`run(..., resume=True)`) continues the unfinished run in the output folder from its
+checkpoint. The model is still built from the run seed and hashed as built (`on_start`), then given
+the checkpoint; the steps and epochs after the checkpoint are dropped and redone; and the run goes
+on as the same wandb run. Every stream is a function of the run seed and the epoch
+([Random streams](#random-streams-seed-pairing)), so a resumed run ends with the same files,
+numbers and weights as one never stopped. The tests check that for a session lost right after a
+checkpoint, between an epoch's files and its checkpoint, and in the middle of an epoch.
+
+A folder with no usable checkpoint is started again, which is always correct: one with no checkpoint
+yet, and one whose `history.jsonl` and `curve.json` do not reach its checkpoint's epoch. Google
+Drive uploads each file in the background, so a session lost on it can leave a newer
+`checkpoint.pt` than those two, and a run resumed from it would lack the steps and epochs in
+between. A last `history.jsonl` line cut short (a session lost while writing it) is ignored. The
+tests check the checkpoints' epochs and step counts, and that a `curve.json` a row short, missing or
+cut short, or a `history.jsonl` an epoch short, each start the run again and end as one never
+stopped, while a line cut short after the checkpoint resumes. A
+finished run is refused, and so is a run started with another config: give `--resume` the flags the
+run started with. [`diffusion.sweep`](#running-the-paired-sweep-m6-2) resumes every run it finds
 unfinished.
 
 **Validation while training is for tracking, not reporting.** Every `validation.every_n_epochs`
@@ -663,7 +680,10 @@ training (5 draws) is only for watching it. It rebuilds the model from the run's
 split's held-out values with `eval.EvalSampler.from_config()`: 100 draws per patient with the
 frozen `eval_sampling_seed`, 16 patients at a time, the median of the draws scored in standardized
 units exactly as the baselines are. A run without `summary.json` has not finished, so its
-`model.pt` is an earlier epoch's, and it is refused.
+`model.pt` is an earlier epoch's, and it is refused. So is a `model.pt` that is not the final
+weights `summary.json` records (`model_sha256`, M6-2): on Google Drive, a session lost just after a
+run finished can leave its summary beside an earlier epoch's weights, which would otherwise be
+scored as the final ones. A run from before the summary recorded them is not checked.
 
 The holdout is the frozen random one at 10% unless told otherwise: `--fraction 0.5` or `0.9` for
 CSDI's robustness rates, `--holdout block` for `BlockEvalMasker`'s (10% only), `--split val` for
@@ -1165,30 +1185,44 @@ block-aware runs come after the 20 headline ones (PROJECT_PLAN §8). For each ce
 `<out>/<run name>`, the driver:
 
 1. trains it with `run(..., paired=True, resume=True)`, tagged with `--tag`. A run a lost session
-   stopped goes on from its last epoch ([Resuming a run](#launching-a-run-m3-1)); a finished one is
-   kept, once its saved config is checked to be the cell's;
+   stopped goes on from its last checkpoint ([Resuming a run](#launching-a-run-m3-1)); a finished
+   one is kept, once its saved config is checked to be the cell's;
 2. checks its pairing hashes against those of the regime's other variants at its seed already in
    `<out>`, with the store's own check (`diffusion.results.unpaired`), and stops at the first cell
    that unpairs, not when the store is written after the last;
 3. scores its final weights on test under both holdouts with `score(..., paired=True)`, unless
-   `<out>` already holds a scoring of those weights, and adds every scoring to the run's wandb
-   summary (`attach_to_wandb`), where the store reads it.
+   `<out>` already holds a scoring of those weights with its median imputation beside it
+   (`span_mae` reads it), and adds every scoring to the run's wandb summary (`attach_to_wandb`),
+   where the store reads it.
 
 So the same command, run again in a new session, finishes what the last one started, redoing at
-most the epoch or the scoring pass a session was lost in. `<out>/sweep.json` records the tag and
+most 10 epochs or the scoring pass a session was lost in. `<out>/sweep.json` records the tag and
 git commit the folder was started with, and another is refused: the store refuses a regime trained
-from two commits, so a `git pull` between sessions is caught before it costs a run. The driver
-refuses to start on any GPU but `protocol.paired_gpu`; `--unpaired` lifts that, for a check on
-another machine, whose runs the store refuses.
+from two commits, so a `git pull` between sessions is caught before it costs a run. The commit is
+all the store checks, so a paired sweep also refuses code with changes the commit does not hold
+(tracked files edited, deleted or staged; untracked files such as data and outputs are fine):
+commit them or undo them first. The driver refuses to start on any GPU but `protocol.paired_gpu`;
+`--unpaired` lifts that and the commit check, for a check on another machine, whose runs the store
+refuses.
 
 On Colab's G4 runtime, after the setup in [Environment](#environment), put `<out>` on Google
-Drive, since a session's own disk goes with it:
+Drive, since a session's own disk goes with it. The setup clones `main`, so a later session checks
+out the commit the folder was started from (`sweep.json`) before it goes on; otherwise a merge into
+`main` between sessions has the driver refuse to start. Drive uploads files in the background, so
+flush it before you end a session on purpose (a session that is lost cannot, and the driver redoes
+what it lost):
 
 ```text
 from google.colab import drive, userdata
+import json, os, pathlib, subprocess
 drive.mount("/content/drive")
-import os; os.environ["WANDB_API_KEY"] = userdata.get("WANDB_API_KEY")
-!uv run python -m diffusion.sweep --tag dry-run --epochs 20 --seeds 42 43 --out /content/drive/MyDrive/msml612/dry-run
+os.environ["WANDB_API_KEY"] = userdata.get("WANDB_API_KEY")
+OUT = "/content/drive/MyDrive/msml612/dry-run"
+started = pathlib.Path(OUT) / "sweep.json"
+if started.exists():        # a later session: the folder's commit, not main's newest
+    subprocess.run(["git", "checkout", json.loads(started.read_text())["commit"]], check=True)
+!uv run python -m diffusion.sweep --tag dry-run --epochs 20 --seeds 42 43 --out {OUT}
+drive.flush_and_unmount()   # before ending the session yourself
 ```
 
 | What | `uv run python -m diffusion.sweep ...` | Cells | Hours on the G4 |
@@ -1197,6 +1231,7 @@ import os; os.environ["WANDB_API_KEY"] = userdata.get("WANDB_API_KEY")
 | its rerun check | `--tag rerun --epochs 20 --regime random --variants base --seeds 42 --out <Drive>/rerun` | 1 | about 1.4 |
 | the sweep (M7-1) | `--tag sweep --out <Drive>/sweep` | 30 | about 67.5 |
 | M8-4's control, if triggered | `--tag sweep --out <Drive>/sweep --regime block-aware --variants ext1blind --seeds 42 43 44 --holdouts block` | 3 | about 4.5 |
+| M8-4's grid check, if triggered | `--tag sweep --out <Drive>/sweep --regime block-aware --variants base ext1 --seeds 42 43 44 --holdouts offgrid` | 6 scorings, no training | about 3.9 |
 
 The hours are the timing test's ([The timing test](#the-timing-test-m6-2)). Then
 `uv run python -m diffusion.results --tag dry-run` collects and checks the runs (below), and
@@ -1216,9 +1251,11 @@ Tests (`tests/test_sweep.py`): the cells and their order (30 for the sweep, 12 f
 for M8-4); every cell trained, scored under both holdouts with the final weights and attached, and
 tagged; the same command again training and scoring nothing more; a sweep a lost session stopped,
 in training or in scoring, ending with the same numbers as one never stopped; a cell that unpairs
-its seed stopping the sweep before it is scored; a scoring of other weights done again; a finished
-run with another config, another tag or another commit refused; a paired sweep only on the picked
-GPU, scoring paired; and `--compare` naming what differs.
+its seed stopping the sweep before it is scored; a scoring of other weights done again, and one
+whose median imputation is missing; a finished run with another config, another tag or another
+commit refused; a paired sweep only on the picked GPU, scoring paired, and never from code with
+uncommitted changes (`uncommitted` against a scratch git repository: changed and deleted tracked
+files named, untracked ones not); and `--compare` naming what differs.
 
 ## Paired sweep checks (M6-2)
 
@@ -1307,7 +1344,9 @@ Tests:
   from the command line, writing and sending nothing, and starts on the picked one, recording it.
 - `tests/test_score.py`: the scores record the GPU and send it to wandb (null for older scores),
   with the sampler's and holdout's settings and every variable's MAE; a paired scoring is refused
-  before it scores, from Python and from the command line, and runs on the picked GPU.
+  before it scores, from Python and from the command line, and runs on the picked GPU; a `model.pt`
+  that is not the final weights its `summary.json` records is refused before any draw, writing
+  nothing, and a run from before the summary recorded them is scored unchecked.
 - `tests/test_results.py`: the store's layout, configs, per-variable MAE, unscored holdouts,
   robustness rates and a holdout of another name; each way runs can be unpaired refused on its
   own (diffusion draws, a sampler, holdout or TF32 setting other than the protocol's, a second commit in a
@@ -1382,14 +1421,16 @@ is `eval.OffGridBlockEvalMasker`. It has `BlockEvalMasker`'s per-patient count (
   (`median_test_block_0.1.npy`), so it costs no scoring pass. It refuses a scoring that did not use
   the frozen holdout and sampler, and a `model.pt` that is no longer the weights scored.
 
-M8-4 trains Ext 1-blind through M6-2's harness in the block-aware regime. The first line below
-trains it at seeds 42–44 into the sweep's folder, under the sweep's tag
-([Running the paired sweep](#running-the-paired-sweep-m6-2)), the second scores M7's block-aware
-Ext 1 run off the grid, and the Python gives the block holdout's MAE over hours 1–45:
+M8-4 runs both checks through M6-2's driver, in the sweep's folder under the sweep's tag
+([Running the paired sweep](#running-the-paired-sweep-m6-2)). The first line below trains Ext
+1-blind in the block-aware regime at seeds 42–44 and scores it on the block holdout; the second
+scores M7's block-aware base and Ext 1 runs at those seeds off the grid, training nothing (6
+passes, each checked against its run's final weights, resumable and added to wandb); and the Python
+gives the block holdout's MAE over hours 1–45 for one run:
 
 ```text
 uv run python -m diffusion.sweep --tag sweep --out <sweep folder> --regime block-aware --variants ext1blind --seeds 42 43 44 --holdouts block
-uv run python -m diffusion.score <sweep folder>/ext1_block-aware_seed42 --holdout offgrid --paired
+uv run python -m diffusion.sweep --tag sweep --out <sweep folder> --regime block-aware --variants base ext1 --seeds 42 43 44 --holdouts offgrid
 ```
 
 ```python
@@ -1413,6 +1454,12 @@ What a triggered M8-4 needs besides compute, because of how `diffusion.results` 
   lists its `random/0.1` as unscored: expected, not a refusal.
 - **M7's block-aware run folders at seeds 42–44, kept.** Off-grid scoring needs their `model.pt`, and
   `span_mae` their `median_test_block_0.1.npy`; the store holds neither.
+- **The sweep's folder itself, shared.** Ext 1-blind trains into it beside M7's block-aware runs,
+  so the driver checks its pairing against Ext 1's and base's as each cell ends, and the off-grid
+  pass reads their weights from it. In a folder of its own, Ext 1-blind would be checked against
+  nothing until the store is written. The folder is on the Google Drive of whoever ran M7: share
+  it with whoever runs M8-4 as an editor, who adds it to their own Drive as a shortcut in My Drive
+  so that Colab's `drive.mount` shows it, and passes that path as `--out`.
 
 The short run (M6-3) trained Ext 1-blind at seed 42 for 1 epoch on Set A through `diffusion.run`
 (MPS), then scored it through `diffusion.score` on the val split's block and off-grid holdouts,
@@ -1530,8 +1577,10 @@ because a 200-epoch run makes 20 of them. Nothing is scored or sent to wandb.
 
 Base and Ext 1+2 are the sweep's cheapest and dearest variants. Ext 2's encoder adds about
 nothing to base, and Ext 1's is most of what Ext 1+2 adds, so the estimates cost ext2's runs at
-base's timings and ext1's at Ext 1+2's (a slight overestimate). The record holds the GPU's exact
-name, the TF32 setting, the timings, and two estimates, with the counts they assume:
+base's timings and ext1's (and ext1blind's) at Ext 1+2's (a slight overestimate). The cells costed
+are the config's `sweep.regimes`, the driver's ([Running the paired sweep](#running-the-paired-sweep-m6-2)).
+The record holds the GPU's exact name, the TF32 setting, the timings, and two estimates, with the
+counts they assume:
 
 - the Week-7 sweep: 30 runs of 200 epochs with 20 validation passes each, every run scored under
   both holdouts, and base's 50% and 90% passes at 5 seeds: 70 scoring passes in all;

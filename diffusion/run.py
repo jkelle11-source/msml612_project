@@ -16,16 +16,18 @@ Trains with ``diffusion.train.train``, scores the validation split every
   finished run leaves its final weights here, the ones that are scored (PROJECT_PLAN §3.1).
 - ``summary.json``: the 500-step health report, the final val MAE, whether it is below
   forward fill's, the GPU it trained on, its pairing hashes (M6-2: the starting weights of each
-  part, and each paired stream over the whole run), and the run's path on wandb
+  part, and each paired stream over the whole run), the SHA-256 of its final ``model.pt``
+  (``model_sha256``, which ``diffusion.score`` checks), and the run's path on wandb
   (``entity/project/id``; null if untracked).
-- ``checkpoint.pt`` (M6-2): the model, optimizer and learning-rate schedule after the latest
-  epoch, and the run's wandb path, rewritten whole at the end of every epoch.
+- ``checkpoint.pt`` (M6-2): the model, optimizer and learning-rate schedule, the epoch, the number
+  of steps so far and the run's wandb path, rewritten whole after every validated epoch but the
+  last (see ``run``).
 
 The run refuses an output folder that is not empty, so two runs' files never mix; with
 ``--overwrite`` it first deletes the files a run writes (``RUN_FILES``), and nothing else. With
 ``--resume`` (M6-2) it continues the run in the folder from its checkpoint, on the same wandb run,
-and ends with the same files and numbers as a run that was never stopped; a folder with no
-checkpoint (a run that stopped before finishing an epoch) is started again.
+and ends with the same files and numbers as a run that was never stopped; a folder with no usable
+checkpoint (none yet, or one its ``history.jsonl`` and ``curve.json`` do not reach) is started again.
 
 The same numbers stream to wandb as the run goes (M3-2), to the team and project in the
 config's ``tracking`` block, under the name ``run_name()`` gives: every step's loss, gradient
@@ -224,11 +226,26 @@ def health_report(history, n_steps=500):
                          and report["complete"])
     return report
 
-def checkpoint_of(out_dir, config):
-    """The checkpoint of the unfinished run in ``out_dir`` (``checkpoint.pt``), or None if it has none.
+def history_records(path):
+    """The records of a ``history.jsonl``, up to a line cut short by a session lost while writing it."""
+    records = []
+    for line in path.read_text().splitlines() if path.exists() else ():
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            break
+    return records
 
-    Refuses a finished run (nothing to resume) and a run whose saved config is not ``config``:
-    resuming with another config would end as neither run.
+def resume_point(out_dir, config, log=print):
+    """``(checkpoint, history, curve)`` to resume the unfinished run in ``out_dir`` from; None to start it again.
+
+    ``history`` and ``curve`` are its ``history.jsonl`` records and ``curve.json`` rows up to the
+    checkpoint's epoch; anything later is redone. None if it has no checkpoint yet, or if those files
+    do not reach the checkpoint: Google Drive uploads each file in the background, so a session lost
+    on it can leave a newer ``checkpoint.pt`` than them, and a run resumed from it would lack the steps
+    and epochs in between (review of #57). Starting again is always right. Refuses a finished run
+    (nothing to resume) and a run whose saved config is not ``config``: resuming with another config
+    would end as neither run.
     """
     if (out_dir / "summary.json").exists():
         raise FileExistsError(f"{out_dir} holds a finished run: there is nothing to resume")
@@ -237,7 +254,18 @@ def checkpoint_of(out_dir, config):
     if yaml.safe_load((out_dir / "config.yaml").read_text()) != config:
         raise ValueError(f"the run in {out_dir} was started with another config: resume it with its own "
                          "(--config on its config.yaml)")
-    return torch.load(out_dir / "checkpoint.pt", map_location="cpu")
+    checkpoint = torch.load(out_dir / "checkpoint.pt", map_location="cpu")
+    done = checkpoint["epoch"]
+    history = [record for record in history_records(out_dir / "history.jsonl") if record["epoch"] <= done]
+    try:
+        curve = [row for row in json.loads((out_dir / "curve.json").read_text()) if row["epoch"] <= done]
+    except (FileNotFoundError, json.JSONDecodeError):
+        curve = []
+    if len(history) != checkpoint.get("steps") or [row["epoch"] for row in curve] != list(range(done + 1)):
+        log(f"{out_dir.name}'s history.jsonl and curve.json do not reach its checkpoint at epoch {done + 1}: "
+            "starting it again")
+        return None
+    return checkpoint, history, curve
 
 def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wandb_mode=None, tags=(), paired=False,
         resume=False):
@@ -247,7 +275,11 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
     so a run that stops early cannot leave them next to its own. With ``resume`` (M6-2) the
     unfinished run in ``out_dir`` goes on from its checkpoint, on the same wandb run, keeping its
     earlier steps and epochs (each stream's hash chain is rebuilt from them), and ends with the same
-    files and numbers as a run that was never stopped; with no checkpoint, the run starts again. ``wandb_mode`` is passed to
+    files and numbers as a run that was never stopped; with no usable checkpoint (``resume_point``),
+    the run starts again. The checkpoint is written after every validated epoch, when ``model.pt``
+    is too, but not after the last: the summary follows the last, so a run stopped between the two
+    redoes its last ``validation.every_n_epochs`` epochs, and the final ``model.pt`` whose hash the
+    summary records is always one written in the same session (review of #57). ``wandb_mode`` is passed to
     ``wandb.init``: ``"online"``, ``"offline"``, ``"disabled"``, or ``None`` (the default) to let
     ``WANDB_MODE`` decide, as the command line does, so a harness looping over ``run()`` is
     tracked unless told otherwise. ``tags`` are added to the wandb run's variant, regime and seed.
@@ -263,7 +295,8 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
         require_paired_gpu(config["protocol"], device)
     config = {key: value for key, value in config.items() if key not in NOT_A_RUN}
     out_dir = Path(out_dir)
-    checkpoint = checkpoint_of(out_dir, config) if resume else None
+    point = resume_point(out_dir, config, log) if resume else None
+    checkpoint, history, curve = (None, [], []) if point is None else point
     if checkpoint is None and out_dir.exists() and any(out_dir.iterdir()):
         if not (overwrite or resume):
             raise FileExistsError(f"{out_dir} is not empty; pass --overwrite to replace the run in it")
@@ -274,12 +307,11 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
     masker = validation_masker(config)
     sampler = EvalSampler(protocol["eval_sampling_seed"], validation["n_samples"], validation["batch_size"])
     epochs, bar = config["train"]["epochs"], forward_fill_val_mae()
-    history, curve, clock = [], [], {"start": time.time()}
-    if checkpoint is not None:          # what the run did up to its checkpoint; anything later is redone
-        done = checkpoint["epoch"]
-        history = [record for line in (out_dir / "history.jsonl").read_text().splitlines()
-                   if (record := json.loads(line))["epoch"] <= done]
-        curve = [row for row in json.loads((out_dir / "curve.json").read_text()) if row["epoch"] <= done]
+    clock = {"start": time.time()}
+
+    def validated(epoch):                       # every every_n_epochs epochs, and the last
+        return (epoch + 1) % validation["every_n_epochs"] == 0 or epoch + 1 == epochs
+
     # Pairing hashes (M6-2): the starting weights, then what each paired stream gives every epoch as
     # training draws it, so diffusion.results can check a seed's variants were given the same.
     init, epoch_streams = {}, {}
@@ -322,7 +354,7 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
                **{f"{stream}_sha256": digest.hexdigest() for stream, digest in epoch_streams.items()}}
         epoch_streams.clear()
         line = f"epoch {epoch + 1}/{epochs}  loss {row['loss']:.4f}  max grad norm {row['grad_norm_max']:.2f}"
-        if (epoch + 1) % validation["every_n_epochs"] == 0 or epoch + 1 == epochs:
+        if validated(epoch):
             started = time.time()
             row.update({f"val_{k}": v for k, v in validate(model, dataset, sampler, masker).items()})
             row["val_seconds"] = round(time.time() - started, 1)
@@ -340,7 +372,12 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
         clock["start"] = time.time()
 
     def on_checkpoint(state):                       # after on_epoch_end, so the files hold the epoch too
-        torch.save({**state, "wandb_run": None if tracker.disabled else tracker.path}, out_dir / CHECKPOINT_TEMP)
+        # Only after a validated epoch, with model.pt (a tenth of the Drive uploads of every epoch), and
+        # never after the last (see the docstring). steps: how far history.jsonl must reach to resume.
+        if not validated(state["epoch"]) or state["epoch"] + 1 == epochs:
+            return
+        torch.save({**state, "steps": len(history), "wandb_run": None if tracker.disabled else tracker.path},
+                   out_dir / CHECKPOINT_TEMP)
         os.replace(out_dir / CHECKPOINT_TEMP, out_dir / "checkpoint.pt")
 
     with tracker:                                   # a run that raises is closed on wandb as failed
@@ -369,6 +406,9 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
                            "n_samples": validation["n_samples"], "batch_size": validation["batch_size"]},
             "health": health_report(history),
             "final_val_mae": final["val_mae"],
+            # The final weights, as this session wrote them: diffusion.score refuses a model.pt that is not
+            # them, e.g. an earlier epoch's that Google Drive kept when a session was lost (review of #57).
+            "model_sha256": hashlib.sha256((out_dir / "model.pt").read_bytes()).hexdigest(),
             "forward_fill_val_mae": bar,
             "below_forward_fill": None if bar is None else final["val_mae"] < bar,
             # entity/project/id on wandb, so a later step (the gate's test scoring, M4-1) can find the run

@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import json
+import subprocess
 
 import pytest
 import torch
@@ -9,7 +10,7 @@ from conftest import CONFIG
 from data.physionet import save_dataset
 from diffusion.run import train, variant_name
 from diffusion.score import score
-from diffusion.sweep import cells, compare, current_commit, main, reproduces, sweep
+from diffusion.sweep import cells, compare, current_commit, main, reproduces, sweep, uncommitted
 
 SOME = [("random", "base", 42), ("random", "ext1", 42), ("block-aware", "base", 42)]
 NAMES = ["base_random_seed42", "ext1_random_seed42", "base_block-aware_seed42"]
@@ -191,6 +192,7 @@ def test_a_paired_sweep_runs_only_on_the_picked_gpu(config_path, small_dataset, 
     with pytest.raises(RuntimeError, match="not on cpu"):
         sweep(config, small_dataset, tmp_path / "out", "test", "cpu", SOME[:1], ["random"], **paired)
     assert not (tmp_path / "out").exists()                                 # refused before anything is written
+    monkeypatch.setattr("diffusion.sweep.uncommitted", lambda: [])         # as a fresh clone, whatever this one holds
     for module in ("diffusion.run", "diffusion.score"):
         monkeypatch.setattr(f"{module}.gpu_name", lambda device: "Tesla T4")        # as on a Colab T4
     scored_paired = []
@@ -204,6 +206,47 @@ def test_a_paired_sweep_runs_only_on_the_picked_gpu(config_path, small_dataset, 
     assert json.loads((run_dir / "summary.json").read_text())["gpu"] == "Tesla T4"
     assert json.loads((run_dir / "scores_test_random_0.1.json").read_text())["gpu"] == "Tesla T4"
     assert scored_paired == [True]
+
+def test_a_paired_sweep_refuses_code_its_commit_does_not_hold(config_path, small_dataset, tmp_path, monkeypatch):
+    config = yaml.safe_load(config_path.read_text())
+    config["protocol"]["paired_gpu"] = "Tesla T4"
+    monkeypatch.setattr("diffusion.run.gpu_name", lambda device: "Tesla T4")
+    monkeypatch.setattr("diffusion.sweep.uncommitted", lambda: ["diffusion/train.py"])
+    with pytest.raises(RuntimeError, match=r"changes its commit .* does not hold: \['diffusion/train.py'\]"):
+        sweep(config, small_dataset, tmp_path / "out", "test", "cpu", SOME[:1], ["random"], paired=True,
+              wandb_mode="disabled", config_path=config_path, log=quiet)
+    assert not (tmp_path / "out").exists()                                 # refused before anything is written
+    [run_dir] = go(config_path, small_dataset, tmp_path / "out", SOME[:1])  # unpaired, a check of the driver: runs
+    assert (run_dir / "summary.json").exists()
+
+def test_uncommitted_names_the_changed_tracked_files_alone(tmp_path):
+    def git(*args):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", *args],
+                       cwd=tmp_path, check=True, capture_output=True)
+
+    git("init")
+    (tmp_path / "train.py").write_text("a\n")
+    (tmp_path / "score.py").write_text("a\n")
+    git("add", "train.py", "score.py")
+    git("commit", "-m", "first")
+    assert uncommitted(tmp_path) == []
+    (tmp_path / "train.py").write_text("b\n")                              # changed
+    (tmp_path / "notes.txt").write_text("not tracked\n")                   # untracked: not counted
+    assert uncommitted(tmp_path) == ["train.py"]
+    (tmp_path / "score.py").unlink()                                       # deleted
+    assert sorted(uncommitted(tmp_path)) == ["score.py", "train.py"]
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / ".git").write_text("not a repository\n")                    # git fails here: nothing to report
+    assert uncommitted(outside) == []
+
+def test_a_scoring_without_its_median_beside_it_is_done_again(config_path, small_dataset, tmp_path):
+    [run_dir] = go(config_path, small_dataset, tmp_path / "out", SOME[:1])
+    (run_dir / "median_test_block_0.1.npy").unlink()                       # Drive kept the scores, not the median
+    before = (run_dir / "scores_test_random_0.1.json").read_bytes()
+    go(config_path, small_dataset, tmp_path / "out", SOME[:1])
+    assert (run_dir / "median_test_block_0.1.npy").exists()
+    assert (run_dir / "scores_test_random_0.1.json").read_bytes() == before   # the other holdout's kept
 
 # --- the rerun check --------------------------------------------------------------------
 

@@ -704,3 +704,72 @@ def test_the_command_line_resumes_a_run(small_dataset, tmp_path, monkeypatch):
         main([*common, "--out", str(tmp_path / "stopped"), "--resume", "--overwrite"])
     main([*common, "--out", str(tmp_path / "stopped"), "--resume"])
     assert same_files(run_files(tmp_path / "stopped"), run_files(tmp_path / "whole"))
+
+def test_a_run_checkpoints_after_each_validated_epoch_but_the_last(small_dataset, tmp_path, monkeypatch):
+    config = tiny_config(epochs=5)
+    config["validation"]["every_n_epochs"] = 2               # validated after epochs 2, 4 and 5 (from 1)
+    seen, real_train = [], train
+
+    def watching(*args, on_checkpoint, **kwargs):
+        def checkpoint(state):
+            on_checkpoint(state)
+            path = tmp_path / "run" / "checkpoint.pt"
+            seen.append(torch.load(path)["epoch"] if path.exists() else None)
+        return real_train(*args, on_checkpoint=checkpoint, **kwargs)
+
+    monkeypatch.setattr("diffusion.run.train", watching)
+    run(config, small_dataset, 42, "cpu", tmp_path / "run", log=quiet)
+    assert seen == [None, 1, 1, 3, 3]                       # from 0: after epochs 1 and 3, not after 4, the last
+    records = [json.loads(line) for line in (tmp_path / "run" / "history.jsonl").read_text().splitlines()]
+    assert torch.load(tmp_path / "run" / "checkpoint.pt")["steps"] == sum(r["epoch"] <= 3 for r in records)
+
+def test_the_summary_records_the_hash_of_the_final_weights(small_dataset, tmp_path):
+    model, summary = run(tiny_config(epochs=2), small_dataset, 42, "cpu", tmp_path, log=quiet)
+    saved = torch.load(tmp_path / "model.pt")
+    assert all(torch.equal(saved[key], value) for key, value in model.state_dict().items())   # the final weights
+    assert summary["model_sha256"] == hashlib.sha256((tmp_path / "model.pt").read_bytes()).hexdigest()
+
+def behind(out_dir, what):
+    """``out_dir`` as Google Drive can leave it after a lost session: ``what`` older than ``checkpoint.pt``."""
+    if what == "curve.json a row short":
+        curve = json.loads((out_dir / "curve.json").read_text())
+        (out_dir / "curve.json").write_text(json.dumps(curve[:-1]))
+    elif what == "history.jsonl an epoch short":
+        lines = (out_dir / "history.jsonl").read_text().splitlines()
+        (out_dir / "history.jsonl").write_text("".join(line + "\n" for line in lines if json.loads(line)["epoch"] < 1))
+    elif what == "no curve.json":
+        (out_dir / "curve.json").unlink()
+    elif what == "curve.json cut short":
+        text = (out_dir / "curve.json").read_text()
+        (out_dir / "curve.json").write_text(text[:len(text) // 2])
+
+@pytest.mark.parametrize("what", ["curve.json a row short", "history.jsonl an epoch short", "no curve.json",
+                                  "curve.json cut short"])
+def test_a_run_whose_files_do_not_reach_its_checkpoint_is_started_again(what, small_dataset, tmp_path, monkeypatch):
+    config = tiny_config(epochs=4)
+    run(config, small_dataset, 42, "cpu", tmp_path / "whole", log=quiet)
+    with monkeypatch.context() as patch:
+        dies(patch, "after epoch 1's checkpoint")
+        with pytest.raises(SessionLost):
+            run(config, small_dataset, 42, "cpu", tmp_path / "stopped", log=quiet)
+    behind(tmp_path / "stopped", what)
+    lines = []
+    run(config, small_dataset, 42, "cpu", tmp_path / "stopped", log=lines.append, resume=True)
+    assert lines[0] == ("stopped's history.jsonl and curve.json do not reach its checkpoint at epoch 2: "
+                        "starting it again")
+    assert len(lines) == 1 + 4                              # then every epoch, from the first
+    assert same_files(run_files(tmp_path / "stopped"), run_files(tmp_path / "whole"))
+
+def test_a_history_line_cut_short_after_the_checkpoint_does_not_stop_a_resume(small_dataset, tmp_path, monkeypatch):
+    config = tiny_config(epochs=4)
+    run(config, small_dataset, 42, "cpu", tmp_path / "whole", log=quiet)
+    with monkeypatch.context() as patch:
+        dies(patch, "before epoch 2's checkpoint")          # epoch 2's lines written, its checkpoint not
+        with pytest.raises(SessionLost):
+            run(config, small_dataset, 42, "cpu", tmp_path / "stopped", log=quiet)
+    text = (tmp_path / "stopped" / "history.jsonl").read_text()
+    (tmp_path / "stopped" / "history.jsonl").write_text(text[:-10])       # lost in the middle of its last line
+    lines = []
+    run(config, small_dataset, 42, "cpu", tmp_path / "stopped", log=lines.append, resume=True)
+    assert lines[0] == "resuming stopped at epoch 3/4, from its checkpoint"
+    assert same_files(run_files(tmp_path / "stopped"), run_files(tmp_path / "whole"))

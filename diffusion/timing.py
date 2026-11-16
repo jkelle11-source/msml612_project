@@ -15,9 +15,10 @@ pass on the trained weights (``EvalSampler.batches`` with the protocol's draws a
 the random holdout); the second is the clean one, as the first also warms the GPU up. Nothing is
 scored: no scores file is written and nothing goes to wandb.
 
-The estimates cost each run at its variant's rate. Ext 2's encoder (1,121 weights) adds about
+The estimates cost each run at its variant's rate, for the cells the config's ``sweep`` block
+names (``diffusion.sweep``'s). Ext 2's encoder (1,121 weights) adds about
 nothing to base, and Ext 1's encoder is most of what Ext 1+2 adds, so base stands for ext2 and
-Ext 1+2 for ext1 (a slight overestimate for ext1). The record, ``results/timing/<GPU>[_tf32].json``,
+Ext 1+2 for ext1 and ext1blind (a slight overestimate). The record, ``results/timing/<GPU>[_tf32].json``,
 holds the GPU's exact name (what ``protocol.paired_gpu`` must say), the TF32 setting, the timings,
 and the estimated hours of the Week-7 sweep and of M6-2's dry run, with the counts they assume.
 """
@@ -47,25 +48,23 @@ TIMED_EPOCHS = 2                          # the second is the clean one
 TIMED_BATCHES = 2                         # the second is the clean one
 SEED = 42
 # Whose timings each variant's runs are costed at (see the module docstring).
-COST_OF = {"base": "base", "ext1": "ext1+2", "ext2": "base", "ext1+2": "ext1+2"}
-# The cells the sweep trains in each regime (M6-2, M7-1): every variant in the random regime, base and
-# Ext 1 in the block-aware one. The harness driver will define the sweep; until it does, this does.
-SWEEP_CELLS = {"random": ("base", "ext1", "ext2", "ext1+2"), "block-aware": ("base", "ext1")}
+COST_OF = {"base": "base", "ext1": "ext1+2", "ext2": "base", "ext1+2": "ext1+2", "ext1blind": "ext1+2"}
 DRY_RUN = {"epochs": 20, "seeds": 2}      # M6-2's dry run: every cell at 20 epochs and 2 seeds, scored as the sweep is
 
 def n_validations(epochs, every):
     """How many validation passes a run of ``epochs`` makes: every ``every`` epochs, and the last."""
     return epochs // every + (epochs % every != 0)
 
-def estimate_hours(timings, epochs, every, n_seeds, n_batches, robustness_passes):
-    """Hours to train and score every ``SWEEP_CELLS`` cell at ``n_seeds`` seeds, plus base's robustness passes.
+def estimate_hours(timings, cells, epochs, every, n_seeds, n_batches, robustness_passes):
+    """Hours to train and score every cell at ``n_seeds`` seeds, plus base's robustness passes.
 
+    ``cells`` is ``{regime: [variant, ...]}``, as the config's ``sweep.regimes`` names the sweep's.
     ``timings[variant]`` has ``epoch_seconds``, ``validation_seconds`` and ``scoring_batch_seconds`` for
     base and ext1+2. Each run trains ``epochs`` epochs, validated every ``every``, and is scored under
     both headline holdouts; a scoring pass is ``n_batches`` batches.
     """
     seconds = 0.0
-    for variants in SWEEP_CELLS.values():
+    for variants in cells.values():
         for variant in variants:
             t = timings[COST_OF[variant]]
             seconds += n_seeds * (epochs * t["epoch_seconds"]
@@ -112,7 +111,7 @@ def time_gpu(config, dataset, device, tf32=False, log=print):
                             "scoring_batch_seconds": batches[-1], "first_scoring_batch_seconds": batches[0]}
         log(f"{variant}: {timings[variant]}")
 
-    protocol, every = config["protocol"], config["validation"]["every_n_epochs"]
+    protocol, every, cells = config["protocol"], config["validation"]["every_n_epochs"], config["sweep"]["regimes"]
     n_batches = math.ceil(len(dataset["test_idx"]) / protocol["eval_batch_size"])
     n_seeds, robustness = len(protocol["run_seeds"]), len(protocol["robustness_fractions"]) * len(protocol["run_seeds"])
     return {
@@ -125,10 +124,10 @@ def time_gpu(config, dataset, device, tf32=False, log=print):
                   "sampler": {key: protocol[key] for key in ("eval_sampling_seed", "eval_n_samples", "eval_batch_size")}},
         "timings": timings,
         "estimate_hours": {
-            "sweep": round(estimate_hours(timings, epochs, every, n_seeds, n_batches, robustness), 1),
-            "dry_run": round(estimate_hours(timings, DRY_RUN["epochs"], every, DRY_RUN["seeds"], n_batches, 0), 1),
+            "sweep": round(estimate_hours(timings, cells, epochs, every, n_seeds, n_batches, robustness), 1),
+            "dry_run": round(estimate_hours(timings, cells, DRY_RUN["epochs"], every, DRY_RUN["seeds"], n_batches, 0), 1),
         },
-        "assumes": {"sweep_cells": SWEEP_CELLS, "cost_of": COST_OF, "train_epochs": epochs, "validate_every": every,
+        "assumes": {"sweep_cells": cells, "cost_of": COST_OF, "train_epochs": epochs, "validate_every": every,
                     "seeds": n_seeds, "holdouts": list(HEADLINE), "scoring_batches_per_pass": n_batches,
                     "robustness_passes": robustness, "dry_run": DRY_RUN},
     }

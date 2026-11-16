@@ -21,14 +21,16 @@ Each cell, in ``<out>/<run name>`` (e.g. ``<out>/ext1_block-aware_seed42``):
    not when the store is written after the last;
 3. is scored on test under each of ``sweep.holdouts`` (``--holdouts``) with
    ``diffusion.score.score(..., paired=True)``, unless ``<out>`` already holds a scoring of its final
-   weights, and each scoring is added to its wandb summary (``attach_to_wandb``), where the results
-   store reads it.
+   weights with its median imputation beside it (``span_mae`` reads it), and each scoring is added to
+   its wandb summary (``attach_to_wandb``), where the results store reads it.
 
 So the same command, run again in a new session, finishes what the last one started. On Colab, put
 ``<out>`` on Google Drive: a session's own disk goes with it. ``<out>/sweep.json`` records the tag
 and git commit the folder was started with, and another is refused: the store refuses a regime
-trained from two commits. Every run trains and is scored on ``protocol.paired_gpu``; ``--unpaired``
-lifts that, for a check on another machine (the store refuses its runs).
+trained from two commits. A paired sweep also refuses code with changes its commit does not hold
+(``uncommitted``), since the commit is all the store checks. Every run trains and is scored on
+``protocol.paired_gpu``; ``--unpaired`` lifts that and the commit check, for a check on another
+machine (the store refuses its runs).
 
 ``--compare OTHER`` trains nothing: it checks that each cell finished in both ``<out>`` and
 ``OTHER`` left the same numbers in each (``reproduces``), for M6-2's rerun check: cells rerun into
@@ -87,6 +89,18 @@ def current_commit():
         return None
     return found.stdout.strip()
 
+def uncommitted(root=ROOT):
+    """The tracked files in ``root``'s checkout that differ from its commit; empty outside a git checkout.
+
+    Untracked files (data, outputs, a results store written mid-sweep) are not counted.
+    """
+    try:
+        found = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root,
+                               capture_output=True, text=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    return [line[3:] for line in found.stdout.splitlines()]
+
 def claim(out, tag):
     """Record in ``<out>/sweep.json`` the tag and commit the folder's runs come from; refuse any other."""
     path, here = out / "sweep.json", {"tag": tag, "commit": current_commit()}
@@ -103,9 +117,12 @@ def claim(out, tag):
                          "a regime trained from two commits)")
 
 def final_scoring(run_dir, holdout, fraction):
-    """``run_dir``'s test scoring of ``holdout`` if it scored the run's final weights; else None."""
-    path = run_dir / f"scores_{scores_name('test', holdout, fraction)}.json"
-    if not path.exists():
+    """``run_dir``'s test scoring of ``holdout`` if it scored the run's final weights and its median
+    imputation is beside it (``span_mae`` reads it, and Google Drive may have kept one without the
+    other when a session was lost); else None."""
+    name = scores_name("test", holdout, fraction)
+    path = run_dir / f"scores_{name}.json"
+    if not (path.exists() and (run_dir / f"median_{name}.npy").exists()):
         return None
     scores = json.loads(path.read_text())
     return scores if scores["model_sha256"] == sha256(run_dir / "model.pt") else None
@@ -131,8 +148,12 @@ def sweep(config, dataset, out, tag, device, todo, holdouts, epochs=None, paired
     ``holdouts`` are scored at ``protocol.eval_holdout_fraction``, under ``config_path``'s frozen
     protocol. See the module docstring for what is done, skipped, checked and refused.
     """
-    if paired:
-        require_paired_gpu(config["protocol"], device)          # before anything is written
+    if paired:                                                  # both before anything is written
+        require_paired_gpu(config["protocol"], device)
+        changed = uncommitted()
+        if changed:
+            raise RuntimeError(f"the code has changes its commit ({current_commit()}) does not hold: {changed}. "
+                               "The results store checks only the commit: commit them or undo them")
     out = Path(out)
     claim(out, tag)
     fraction = config["protocol"]["eval_holdout_fraction"]
@@ -224,7 +245,8 @@ def main(argv=None):
     parser.add_argument("--wandb", choices=("online", "disabled"),
                         help="wandb mode (default: WANDB_MODE if set, else online); the store reads only wandb")
     parser.add_argument("--unpaired", action="store_true",
-                        help="train and score on any GPU: a check of the driver, not the sweep (the store refuses its runs)")
+                        help="train and score on any GPU, from code with uncommitted changes too: a check of the "
+                             "driver, not the sweep (the store refuses its runs)")
     parser.add_argument("--compare", type=Path, metavar="OTHER",
                         help="train nothing: check each cell finished in --out and OTHER has the same numbers in both")
     args = parser.parse_args(argv)

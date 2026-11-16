@@ -20,20 +20,28 @@ def test_a_run_validates_every_nth_epoch_and_on_the_last():
 
 TIMINGS = {"base": {"epoch_seconds": 10, "validation_seconds": 20, "scoring_batch_seconds": 30},
            "ext1+2": {"epoch_seconds": 12, "validation_seconds": 25, "scoring_batch_seconds": 40}}
+CELLS = CONFIG["sweep"]["regimes"]                         # the sweep's: what diffusion.sweep trains
 
 def test_the_sweep_estimate_matches_a_hand_count():
     # 30 runs. At base's cost, base and ext2 in the random regime and base block-aware, 5 seeds each:
     # 15 runs of 200*10 + 20 validations*20 + 2 holdouts*50 batches*30 = 5,400 s. At ext1+2's cost,
     # ext1 and ext1+2 random and ext1 block-aware: 15 runs of 200*12 + 20*25 + 2*50*40 = 6,900 s.
     # Then base's 50% and 90% at 5 seeds: 10 passes of 50*30 = 1,500 s.
-    assert estimate_hours(TIMINGS, epochs=200, every=10, n_seeds=5, n_batches=50, robustness_passes=10) \
+    assert estimate_hours(TIMINGS, CELLS, epochs=200, every=10, n_seeds=5, n_batches=50, robustness_passes=10) \
         == pytest.approx((15 * 5_400 + 15 * 6_900 + 10 * 1_500) / 3600)            # 55.4 h
 
 def test_the_dry_run_estimate_matches_a_hand_count():
     # The same 6 cells at 2 seeds and 20 epochs, scored as the sweep is, no robustness passes:
     # 6 runs of 20*10 + 2*20 + 2*50*30 = 3,240 s and 6 of 20*12 + 2*25 + 2*50*40 = 4,290 s.
-    assert estimate_hours(TIMINGS, epochs=20, every=10, n_seeds=2, n_batches=50, robustness_passes=0) \
+    assert estimate_hours(TIMINGS, CELLS, epochs=20, every=10, n_seeds=2, n_batches=50, robustness_passes=0) \
         == pytest.approx((6 * 3_240 + 6 * 4_290) / 3600)                           # 12.6 h
+
+def test_the_estimate_costs_the_cells_it_is_given():
+    # Only base random and ext1blind block-aware (at ext1+2's cost), 3 seeds, no robustness passes:
+    # 3 runs of 5,400 s and 3 of 6,900 s, as in the sweep's hand count.
+    cells = {"random": ["base"], "block-aware": ["ext1blind"]}
+    assert estimate_hours(TIMINGS, cells, epochs=200, every=10, n_seeds=3, n_batches=50, robustness_passes=0) \
+        == pytest.approx((3 * 5_400 + 3 * 6_900) / 3600)                           # 10.25 h
 
 # --- a timing run -----------------------------------------------------------------------
 
@@ -58,7 +66,9 @@ def test_a_timing_trains_two_epochs_and_times_two_scoring_batches_of_each_varian
     monkeypatch.setattr(timing, "RUNS", tmp_path / "runs")
     real_scoring = timing.time_scoring                      # timed for real, reported as 7 s then 3 s
     monkeypatch.setattr(timing, "time_scoring", lambda *args: real_scoring(*args) and [7.0, 3.0])
-    record = time_gpu(tiny(), small_dataset, "cpu", log=lambda line: None)
+    config = tiny()
+    cells = config["sweep"]["regimes"] = {"random": ["base", "ext2"], "block-aware": ["ext1"]}   # not the repo's
+    record = time_gpu(config, small_dataset, "cpu", log=lambda line: None)
     scoring = [batch for batch in drawn if batch != (2, 8)]     # the validation passes (batch 8) aside
     assert scoring == [(2, 2)] * 4                          # two batches of each variant's scoring pass, not the pass
     for variant in ("base", "ext1+2"):
@@ -74,9 +84,10 @@ def test_a_timing_trains_two_epochs_and_times_two_scoring_batches_of_each_varian
     expected = {"train_epochs": 200, "validate_every": 10, "seeds": 5,      # the sweep's, from the config
                 "scoring_batches_per_pass": n_batches, "robustness_passes": 10}
     assert {key: record["assumes"][key] for key in expected} == expected
+    assert record["assumes"]["sweep_cells"] == cells                        # the config's sweep block
     assert record["estimate_hours"] == {
-        "sweep": round(estimate_hours(record["timings"], 200, 10, 5, n_batches, 10), 1),
-        "dry_run": round(estimate_hours(record["timings"], 20, 10, 2, n_batches, 0), 1)}
+        "sweep": round(estimate_hours(record["timings"], cells, 200, 10, 5, n_batches, 10), 1),
+        "dry_run": round(estimate_hours(record["timings"], cells, 20, 10, 2, n_batches, 0), 1)}
     assert (record["gpu"], record["device"], record["tf32"]) == (None, "cpu", False)
 
 def test_scoring_batches_are_timed_one_by_one_and_only_the_first_two(small_dataset, monkeypatch):
