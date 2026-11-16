@@ -225,6 +225,21 @@ validation:
   batch_size: 64
 
 # -----------------------------------------------------------------------------
+# The paired sweep (M6-2; PROJECT_PLAN §3.1, §3.3): the cells diffusion.sweep
+# trains and scores, at every seed in protocol.run_seeds: 20 random-regime runs
+# and 10 block-aware ones. Each regime is paired only within itself. Every
+# run's final weights are scored on test under each holdout listed, at
+# protocol.eval_holdout_fraction. Which runs to launch, not what one trains:
+# left out of every run's saved and wandb config, like tracking, so a variant
+# added here later (M8-4's ext1blind) changes no run already trained.
+# -----------------------------------------------------------------------------
+sweep:
+  regimes:
+    random: [base, ext1, ext2, ext1+2]
+    block-aware: [base, ext1]
+  holdouts: [random, block]
+
+# -----------------------------------------------------------------------------
 # Experiment tracking (M3-2). Where runs are logged, not how they train: not
 # part of the protocol or of a run. diffusion.run reads it from this file and
 # leaves it out of a run's saved config and wandb config. The entity is

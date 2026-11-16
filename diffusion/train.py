@@ -44,7 +44,16 @@ def use_tf32(on):
     torch.backends.cudnn.conv.fp32_precision = precision
 
 def train(config, dataset, run_seed, device, on_epoch_end = None, on_step_end = None, on_batch = None,
-          on_start = None):
+          on_start = None, on_checkpoint = None, resume = None):
+    """Train one model; returns ``(model, history)``, the history of the epochs trained in this call.
+
+    ``on_checkpoint(state)`` is called at the end of every epoch, after ``on_epoch_end``, with
+    ``{"epoch", "model", "optimizer", "scheduler"}`` (the epoch just finished and the three state
+    dicts): all a run needs to resume at that epoch boundary (M6-2). ``resume`` is such a state: the
+    model is still built from the run seed and handed to ``on_start`` as built, then given the
+    state, and training goes on from the next epoch. Every stream is a function of the run seed and
+    the epoch (``RunStreams``), so a resumed run ends exactly as an uninterrupted one.
+    """
 
     use_deterministic_kernels()
     use_tf32(config["protocol"].get("tf32", False))     # a config from before M6-2 has none: float32
@@ -80,10 +89,17 @@ def train(config, dataset, run_seed, device, on_epoch_end = None, on_step_end = 
                           generator = streams.data_order)
     
     max_norm = float("inf") if train_config["clip_grad_norm"] is None else train_config["clip_grad_norm"]
-    
+
+    first_epoch = 0
+    if resume is not None:              # after on_start, so the pairing hash is of the weights as built
+        model.load_state_dict(resume["model"])
+        optimizer.load_state_dict(resume["optimizer"])
+        scheduler.load_state_dict(resume["scheduler"])
+        first_epoch = resume["epoch"] + 1
+
     train_history = []
-    
-    for epoch in range(train_config["epochs"]):
+
+    for epoch in range(first_epoch, train_config["epochs"]):
         
         streams.start_epoch(epoch)
         
@@ -127,7 +143,11 @@ def train(config, dataset, run_seed, device, on_epoch_end = None, on_step_end = 
         
         if on_epoch_end is not None:
             on_epoch_end(epoch, model)
-    
+
+        if on_checkpoint is not None:
+            on_checkpoint({"epoch": epoch, "model": model.state_dict(), "optimizer": optimizer.state_dict(),
+                           "scheduler": scheduler.state_dict()})
+
     return model, train_history
         
         

@@ -156,18 +156,28 @@ def problems(runs, protocol=None):
             found.append(f"the {regime} regime's runs come from different commits: {commits}")
 
     for (regime, seed), group in seeds.items():
-        hashes = {run["config"]["variant"]: summary_block(run["summary"], "pairing") for run in group}
-        for stream in STREAMS:
-            values = {variant: pairing.get(stream) for variant, pairing in hashes.items()}
-            if None in values.values() or len(set(values.values())) > 1:      # None: a run from before M6-2
-                found.append(f"{stream} is missing or differs across the {regime} regime's variants "
-                             f"at seed {seed}: {values}")
-        for encoder in ENCODERS:
-            key = f"init_{encoder}"
-            have = {variant: pairing.get(key) for variant, pairing in hashes.items() if key in pairing}
-            if len(set(have.values())) > 1:
-                found.append(f"{encoder} starts from different weights across the {regime} regime's variants "
-                             f"at seed {seed}: {have}")
+        found += unpaired(regime, seed, {run["config"]["variant"]: summary_block(run["summary"], "pairing")
+                                         for run in group})
+    return found
+
+def unpaired(regime, seed, hashes):
+    """What unpairs a regime's variants at one seed, from ``hashes``, ``{variant: summary["pairing"]}``.
+
+    Every stream and the shared starting weights must be equal in every variant, and each encoder's
+    starting weights in every variant that has it. Also run by ``diffusion.sweep`` as each cell ends.
+    """
+    found = []
+    for stream in STREAMS:
+        values = {variant: pairing.get(stream) for variant, pairing in hashes.items()}
+        if None in values.values() or len(set(values.values())) > 1:      # None: a run from before M6-2
+            found.append(f"{stream} is missing or differs across the {regime} regime's variants "
+                         f"at seed {seed}: {values}")
+    for encoder in ENCODERS:
+        key = f"init_{encoder}"
+        have = {variant: pairing.get(key) for variant, pairing in hashes.items() if key in pairing}
+        if len(set(have.values())) > 1:
+            found.append(f"{encoder} starts from different weights across the {regime} regime's variants "
+                         f"at seed {seed}: {have}")
     return found
 
 def record(runs, tag, protocol=None):
