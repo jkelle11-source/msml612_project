@@ -347,7 +347,7 @@ training randomness its own stream, seeded from `(run_seed, stream, epoch)`:
 | Stream | Used for | In the training loop |
 | --- | --- | --- |
 | `streams.data_order` | shuffling | `DataLoader(..., shuffle=True, generator=streams.data_order)` |
-| `streams.train_masker` | conditioning/target split of each batch | `cond, target = streams.train_masker(mask)`; `cond` goes in `batch["gt_mask"]` |
+| `streams.train_masker` | conditioning/target split of each batch, in the regime's strategy ([Training regimes](#training-regimes-m6-2)) | `cond, target = streams.train_masker(mask)`; `cond` goes in `batch["gt_mask"]` |
 | `streams.diffusion` | diffusion timestep and noise | `model(batch, generator=streams.diffusion)` |
 | global RNG | model init, dropout | `streams.seed_model_init()`, `streams.start_epoch(epoch)` |
 
@@ -363,7 +363,9 @@ Rules:
   would be dealt later draws: at seed 42, Ext 1+2's time encoder would start with
   `w0` = −0.9452 instead of Ext 2's −0.5433.
 - Call `streams.start_epoch(epoch)` at the top of every epoch, after the model is built. It
-  re-seeds all four streams in place, so a DataLoader built once keeps working.
+  re-seeds all four streams in place, so a DataLoader built once keeps working, and the train
+  masker keeps the strategy it was built with (a masker rebuilt as `TrainMasker(seed)` would be
+  `random`, the default, from then on).
 - **Dropout is paired only between variants with the same dropout layers.** It draws from the
   global RNG, and a variant with extra dropout layers consumes more of it. Ext 1's encoder has
   dropout layers, so dropout is not paired between base and Ext 1 (or Ext 2 and Ext 1+2). Ext 2's
@@ -437,6 +439,58 @@ scoring script must call it before any CUDA work. With it, CUDA reruns match bit
 given, is called with a copy of each history record as it is made (M3-1); the run log uses it,
 and wandb (M3-2) does.
 
+### Training regimes (M6-2)
+
+`train.regime` in the config picks how a run trains and what its validation tracks (PROJECT_PLAN
+§3.1). `diffusion.train.REGIMES` maps each regime to its settings, and `diffusion.run --regime`
+sets it:
+
+| `train.regime` | `TrainMasker` strategy | Validation holdout | Trains | Run name |
+| --- | --- | --- | --- | --- |
+| `random` (the config's) | `random` | `EvalMasker`'s | all four variants: the headline sweep and the gate | `base_random_seed42` |
+| `block-aware` | `mix` | `BlockEvalMasker`'s | base and Ext 1, and Ext 1-blind if M8-4 is triggered | `ext1_block-aware_seed42` |
+
+Test scoring is the same in both: every run is scored under both holdouts
+([Scoring a run](#scoring-a-run-m4-1)). Each regime is paired only within itself, and the store
+keeps them apart ([Paired sweep checks](#paired-sweep-checks-m6-2)). At a seed, a block-aware run
+draws the same data order, diffusion draws and starting weights as a random-regime run of the
+same variant; only its train masks differ (tested). A config without `train.regime`, such as one
+saved before M6-2, is `random`, which is how those runs trained. An unknown regime is refused
+before anything runs, from Python and from the command line.
+
+`eval.TrainMasker(seed, strategy="random", window=None)` draws a fresh split every call from its
+own generator:
+
+- `random` (upstream's): per patient, a ratio `r ~ U(0, 1)`, and `round(r · n_observed)` of their
+  observed values hidden, picked uniformly.
+- `mix`: the same split, then a fair coin per patient keeps it (heads) or hides the same
+  `round(r · n_observed)` values in whole `window`-hour slots across all features, apart from one
+  trimmed slot (tails). That is `block_targets`' slot walk on `BlockEvalMasker`'s 16-slot grid, with
+  a NumPy generator seeded from the masker's own. `RunStreams` passes `protocol.block_window_hours`
+  (3) as the window. Over 1,600 test patients, 50.4% came up tails.
+
+Each call reads, in this order, `B` ratios and `B × T·D` scores (all that `random` reads), then,
+for `mix` only, `B` coins and one seed per tails patient. The order is part of the protocol:
+`random`'s output is byte-identical to before `mix` existed, and `mix`'s stream is pinned, each by
+a SHA-256 fingerprint of five calls. Because `mix` trains on the holdout's own slot grid, the
+block-aware regime is matched to our synthetic block pattern (PROJECT_PLAN §8, Limitations; §4.1's
+grid check).
+
+Tests:
+
+- `tests/test_train_masker.py`: both fingerprints (`mix`'s worked out by replaying the documented
+  reads, not by running `TrainMasker`), a hand-checked example, heads keeping `random`'s split and
+  tails its count, tails in whole slots bar one, a fair coin read from the masks, pairing under
+  other random draws, valid splits (a patient with nothing observed too), GPU matching CPU, bad
+  arguments, and dry runs in both strategies on the built dataset and Set A.
+- `tests/test_streams.py`: `RunStreams` builds its masker with the strategy given, and a `mix`
+  masker is still `mix` after `start_epoch`, at epochs 0 to 199.
+- `tests/test_run.py`: names, the default for an old config, the validation holdout built from
+  the run's own config, a block-aware run training on `mix` masks every epoch and validating on
+  the block holdout, the two regimes' hashes, an unknown regime refused before `--overwrite`
+  deletes anything, and `--regime` recorded so a rerun of the saved config keeps it.
+- `tests/test_health.py`: a block-aware health record names the block holdout.
+
 ### Launching a run (M3-1)
 
 ```text
@@ -449,7 +503,8 @@ validation split as it goes, and writes to `outputs/<run name>/` (git-ignored), 
 ([Experiment tracking](#experiment-tracking-m3-2)). Options: `--device` (`cuda`, `mps`, `cpu`,
 default the first available), `--epochs` to override `train.epochs`, `--validate-every` to
 override `validation.every_n_epochs`, `--variant` to set the extension toggles
-([The four variants](#the-four-variants-m6-1)), `--config`, `--dataset`, `--out`, `--overwrite`,
+([The four variants](#the-four-variants-m6-1)), `--regime` to set `train.regime`
+([Training regimes](#training-regimes-m6-2)), `--config`, `--dataset`, `--out`, `--overwrite`,
 `--wandb`, `--tag`, `--paired` (a sweep run: refused on any GPU but `protocol.paired_gpu`,
 [Paired sweep checks](#paired-sweep-checks-m6-2)). The output folder must be empty or new, so two runs' files never mix; `--overwrite`
 first deletes the files listed below from it, and nothing else.
@@ -457,15 +512,16 @@ Everything is written while the run is going, so a stopped run keeps what it has
 
 | File | Contents |
 | --- | --- |
-| `config.yaml` | the resolved config, `--epochs` and `--validate-every` included, `tracking` left out (where a run is logged isn't part of it). `--config` on it reruns the run. |
+| `config.yaml` | the resolved config, `--epochs`, `--validate-every`, `--regime` and the variant flags included, `tracking` left out (where a run is logged isn't part of it). `--config` on it reruns the run. |
 | `history.jsonl` | one line per training step: `epoch`, `loss`, `grad_norm`, `lr` |
 | `curve.json` | one row per epoch: mean loss, largest gradient norm, training seconds, the epoch's `data_order_sha256`, `train_mask_sha256` and `diffusion_sha256` (M6-2), and `val_mae` / `val_rmse` / `val_seconds` when scored |
 | `model.pt` | weights after the latest scored epoch. The last epoch is always scored, so a finished run's are its final weights, the ones that are scored (no best-epoch checkpoint; PROJECT_PLAN §3.1). |
-| `summary.json` | the 500-step health report, the final val MAE, forward fill's val MAE, `below_forward_fill`, the `gpu` it trained on and its `pairing` hashes (M6-2, [Paired sweep checks](#paired-sweep-checks-m6-2)), and `wandb_run`, the run's path on wandb (`entity/project/id`; null when untracked) |
+| `summary.json` | the 500-step health report, the final val MAE, forward fill's val MAE, `below_forward_fill`, the `validation` settings (split, holdout, draws, batch size), the `gpu` it trained on and its `pairing` hashes (M6-2, [Paired sweep checks](#paired-sweep-checks-m6-2)), and `wandb_run`, the run's path on wandb (`entity/project/id`; null when untracked) |
 
 **Validation while training is for tracking, not reporting.** Every `validation.every_n_epochs`
-epochs (and on the last), the run scores the val split's `EvalMasker` targets at 10%, exactly
-as the baselines are scored, using the median of `validation.n_samples` draws (default 5). The
+epochs (and on the last), the run scores the val split's targets at 10% on the holdout its
+regime trains for, `EvalMasker`'s in the random regime and `BlockEvalMasker`'s in the block-aware
+one ([Training regimes](#training-regimes-m6-2)), exactly as the baselines are scored, using the median of `validation.n_samples` draws (default 5). The
 frozen protocol uses 100 draws (`eval.EvalSampler.from_config()`), but one draw over the 400 val
 patients takes about 130 s on MPS, so 100 would take hours. Fewer draws make the median
 noisier, which raises MAE slightly, so a tracked MAE below forward fill is a conservative claim.
@@ -507,7 +563,8 @@ a harness looping over it (M6-2) is tracked too. `tests/conftest.py` sets
 
 Runs are named `<variant>_<regime>_seed<seed>`, e.g. `base_random_seed42` or
 `ext1+2_random_seed46`, the same as their output folder, and tagged with the variant, regime and
-seed. The regime is `random` until M6-2 adds the block-aware one. Every run of a variant, regime
+seed. The regime is the config's `train.regime`, `random` or `block-aware`
+([Training regimes](#training-regimes-m6-2)), e.g. `ext1_block-aware_seed42`. Every run of a variant, regime
 and seed gets the same name, so say what a run is for with `--tag` (repeatable; `tags=` on
 `run()`), e.g. `--tag gate`, `--tag sweep`, `--tag dry-run` or `--tag debug`, and filter on it
 in the workspace. What a run sends, all of it also in its `outputs/` files:
@@ -1227,14 +1284,13 @@ is `eval.OffGridBlockEvalMasker`. It has `BlockEvalMasker`'s per-patient count (
   (`median_test_block_0.1.npy`), so it costs no scoring pass. It refuses a scoring that did not use
   the frozen holdout and sampler, and a `model.pt` that is no longer the weights scored.
 
-M8-4 trains Ext 1-blind through M6-2's harness in the block-aware regime. Until M6-2 reads the
-regime from the config, `diffusion.run` trains every variant in the random regime, so the first
-line below trains the right model in the wrong regime: a plumbing check, not M8-4's run. The second
-scores a finished run off the grid, and the Python gives the block holdout's MAE over hours 1–45:
+M8-4 trains Ext 1-blind through M6-2's harness in the block-aware regime. The first line below
+trains it by hand the same way ([Training regimes](#training-regimes-m6-2)), the second scores
+M7's block-aware Ext 1 run off the grid, and the Python gives the block holdout's MAE over hours 1–45:
 
 ```text
-uv run python -m diffusion.run --seed 42 --variant ext1blind --paired       # random regime until M6-2
-uv run python -m diffusion.score outputs/ext1_<regime>_seed42 --holdout offgrid --paired
+uv run python -m diffusion.run --seed 42 --variant ext1blind --regime block-aware --paired
+uv run python -m diffusion.score outputs/ext1_block-aware_seed42 --holdout offgrid --paired
 ```
 
 ```python
@@ -1243,7 +1299,7 @@ from diffusion.run import DATASET_PATH
 from diffusion.score import span_mae
 from eval import OffGridBlockEvalMasker
 
-span_mae("outputs/ext1_<regime>_seed42", load_dataset(DATASET_PATH), "block", OffGridBlockEvalMasker.from_config().hours)
+span_mae("outputs/ext1_block-aware_seed42", load_dataset(DATASET_PATH), "block", OffGridBlockEvalMasker.from_config().hours)
 ```
 
 What a triggered M8-4 needs besides compute, because of how `diffusion.results` pairs runs:

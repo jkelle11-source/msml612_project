@@ -199,10 +199,19 @@ train:
   # The norm is still computed every step so it can be logged (M3-1).
   clip_grad_norm: null
   # Upstream's itr_per_epoch (1.0e+8) never binds on PhysioNet, so it is left out.
+  # Training regime (PROJECT_PLAN §3.1, M6-2), part of every run's name. random:
+  # TrainMasker's random strategy, validation on EvalMasker's holdout (the headline
+  # sweep, all four variants). block-aware: its mix strategy (block slots of
+  # protocol.block_window_hours), validation on BlockEvalMasker's (base and Ext 1).
+  # Test scoring is the same in both. diffusion.train.REGIMES maps each to its
+  # settings; diffusion.run's --regime sets it. A config without it is random.
+  regime: random
 
 # -----------------------------------------------------------------------------
 # Validation while training (M3-1): diffusion.run scores the val split's
-# EvalMasker targets (10%) every every_n_epochs epochs and on the last epoch.
+# targets (10%) every every_n_epochs epochs and on the last epoch, on the
+# holdout train.regime trains for (M6-2): EvalMasker's for random,
+# BlockEvalMasker's for block-aware.
 # TRACKING ONLY, not the frozen protocol: the median of n_samples draws, with the
 # frozen eval_sampling_seed, in batches of batch_size. Reported results use
 # eval.EvalSampler.from_config() (eval_n_samples: 100, eval_batch_size: 16).

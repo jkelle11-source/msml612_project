@@ -22,7 +22,8 @@ class RunStreams:
     each source of training randomness has a generator of its own:
 
     - ``data_order``: shuffling. Pass it to the DataLoader.
-    - ``train_masker``: the conditioning/target split of each batch (``eval.TrainMasker``).
+    - ``train_masker``: the conditioning/target split of each batch (``eval.TrainMasker``), with
+      the regime's ``strategy`` and the block ``window`` in hours (``diffusion.train.REGIMES``).
     - ``diffusion``: timestep and noise. Pass it as ``model(batch, generator=...)``.
 
     ``seed_model_init()`` goes right before the model is built, and ``start_epoch(epoch)`` at
@@ -37,10 +38,10 @@ class RunStreams:
     variant's epoch from the same state.
     """
 
-    def __init__(self, run_seed):
+    def __init__(self, run_seed, strategy="random", window=None):
         self.run_seed = run_seed
         self.data_order = torch.Generator().manual_seed(derive_seed(run_seed, "data_order"))
-        self.train_masker = TrainMasker(derive_seed(run_seed, "train_mask"))
+        self.train_masker = TrainMasker(derive_seed(run_seed, "train_mask"), strategy, window)
         self.diffusion = torch.Generator().manual_seed(derive_seed(run_seed, "diffusion"))
 
     def seed_model_init(self):

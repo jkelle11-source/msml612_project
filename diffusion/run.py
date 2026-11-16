@@ -3,7 +3,8 @@
     uv run python -m diffusion.run --seed 42
 
 Trains with ``diffusion.train.train``, scores the validation split every
-``validation.every_n_epochs`` epochs, and writes everything to ``outputs/<run name>/``
+``validation.every_n_epochs`` epochs on the holdout its regime trains for (``train.regime``, M6-2:
+``EvalMasker``'s in the random regime, ``BlockEvalMasker``'s in the block-aware one), and writes everything to ``outputs/<run name>/``
 (git-ignored) as it goes, so a run that is stopped keeps what it has done:
 
 - ``config.yaml``: the resolved config the run used. ``--config`` on it reruns the run.
@@ -46,8 +47,8 @@ import wandb
 import yaml
 
 from data.physionet import load_dataset
-from diffusion.train import train
-from eval import EvalMasker, EvalSampler, masked_mae, masked_rmse, median_imputation
+from diffusion.train import REGIMES, regime_name, train
+from eval import BlockEvalMasker, EvalMasker, EvalSampler, masked_mae, masked_rmse, median_imputation
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "configs" / "config.yaml"
@@ -59,9 +60,6 @@ RUN_FILES = ("config.yaml", "history.jsonl", "curve.json", "model.pt", "summary.
 # Where runs are logged (M3-2). Not part of a run: read from the repo's config, and left out
 # of a run's saved config and its wandb config, so every saved config reruns the same way.
 TRACKING = yaml.safe_load(CONFIG_PATH.read_text())["tracking"]
-# TODO(M6-2): every run trains in the random regime until M6-2 adds TrainMasker's block-aware
-# ``mix`` strategy; then read the regime from the config here.
-REGIME = "random"
 
 # Health-report thresholds (ours, M3-1). A spike is a step whose gradient norm is this many
 # times the median over the steps checked; an explosion is the last tenth of those steps
@@ -150,7 +148,17 @@ def variant_name(config):
 
 def run_name(config, seed):
     """``<variant>_<regime>_seed<seed>``, e.g. ``base_random_seed42``: the run's name on wandb (M3-2)."""
-    return f"{variant_name(config)}_{REGIME}_seed{seed}"
+    return f"{variant_name(config)}_{regime_name(config)}_seed{seed}"
+
+def validation_masker(config):
+    """The holdout a run's validation tracks, built from the run's own config: the one its regime
+    trains for (PROJECT_PLAN §3.1), at the headline 10%."""
+    protocol, data = config["protocol"], config["data"]
+    grid = (data["n_timesteps"], data["n_features"])
+    if REGIMES[regime_name(config)]["holdout"] == "block":
+        return BlockEvalMasker(protocol["block_eval_masker_seed"], protocol["eval_holdout_fraction"],
+                               protocol["block_window_hours"], grid)
+    return EvalMasker(protocol["eval_masker_seed"], protocol["eval_holdout_fraction"], grid)
 
 def forward_fill_val_mae(path=BASELINES_PATH):
     """Forward fill's 10% validation MAE from the recorded baselines (M2-3): M3-1's bar."""
@@ -216,10 +224,11 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
     Nothing is written to ``out_dir`` until wandb has started, so a run that cannot start (no
     wandb login) can simply be run again. With ``paired`` (a sweep run, M6-2) it refuses to start,
     before writing or sending anything, on any GPU but ``protocol.paired_gpu``. A config whose
-    toggles are none of the ``VARIANTS`` (``mask_embedding_blind`` without Ext 1, M6-3) is refused
-    first, before ``overwrite`` deletes anything.
+    toggles are none of the ``VARIANTS`` (``mask_embedding_blind`` without Ext 1, M6-3) or whose
+    ``train.regime`` is none of the ``REGIMES`` is refused first, before ``overwrite`` deletes anything.
     """
     variant = variant_name(config)                  # raises ValueError for toggles that are no variant
+    regime = regime_name(config)                    # ... and for a regime that is none of REGIMES
     if paired:
         require_paired_gpu(config["protocol"], device)
     config = {key: value for key, value in config.items() if key != "tracking"}     # see TRACKING
@@ -230,9 +239,8 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
         for name in RUN_FILES:      # only a run's own files: a mistaken --out must not wipe a folder
             (out_dir / name).unlink(missing_ok=True)
 
-    protocol, data, validation = config["protocol"], config["data"], config["validation"]
-    masker = EvalMasker(protocol["eval_masker_seed"], protocol["eval_holdout_fraction"],
-                        (data["n_timesteps"], data["n_features"]))
+    protocol, validation = config["protocol"], config["validation"]
+    masker = validation_masker(config)
     sampler = EvalSampler(protocol["eval_sampling_seed"], validation["n_samples"], validation["batch_size"])
     epochs, bar = config["train"]["epochs"], forward_fill_val_mae()
     history, curve, clock = [], [], {"start": time.time()}
@@ -241,8 +249,8 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
     init, epoch_streams = {}, {}
     tracker = wandb.init(entity=TRACKING["wandb_entity"], project=TRACKING["wandb_project"],
                          mode=wandb_mode, name=run_name(config, seed), job_type="train",
-                         tags=[variant, REGIME, f"seed{seed}", *tags],
-                         config={**config, "seed": seed, "variant": variant, "regime": REGIME, "device": device,
+                         tags=[variant, regime, f"seed{seed}", *tags],
+                         config={**config, "seed": seed, "variant": variant, "regime": regime, "device": device,
                                  "gpu": gpu_name(device), "out_dir": str(out_dir.resolve())})
 
     def on_start(weights):                                      # as built, before any update
@@ -309,7 +317,8 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
             "pairing": {**{f"init_{part}": digest for part, digest in init.items()},
                         **{stream: chain_sha256(row[f"{stream}_sha256"] for row in curve)
                            for stream in PAIRED_STREAMS}},
-            "validation": {"split": "val", "n_samples": validation["n_samples"], "batch_size": validation["batch_size"]},
+            "validation": {"split": "val", "holdout": REGIMES[regime]["holdout"],
+                           "n_samples": validation["n_samples"], "batch_size": validation["batch_size"]},
             "health": health_report(history),
             "final_val_mae": final["val_mae"],
             "forward_fill_val_mae": bar,
@@ -330,6 +339,9 @@ def main(argv=None):
     parser.add_argument("--epochs", type=int, help="override train.epochs; recorded in the saved config")
     parser.add_argument("--validate-every", type=int,
                         help="override validation.every_n_epochs; recorded in the saved config")
+    parser.add_argument("--regime", choices=list(REGIMES),
+                        help="set train.regime (M6-2): random, or block-aware (TrainMasker's mix strategy, "
+                             "validated on the block holdout); recorded in the saved config")
     parser.add_argument("--variant", choices=list(VARIANTS),
                         help="set every extension toggle to this variant's, on or off (M6-1); recorded in "
                              "the saved config. Not with a toggle flag")
@@ -359,6 +371,8 @@ def main(argv=None):
         config["train"]["epochs"] = args.epochs
     if args.validate_every is not None:
         config["validation"]["every_n_epochs"] = args.validate_every
+    if args.regime is not None:
+        config["train"]["regime"] = args.regime
     if args.variant is not None:
         config = with_variant(config, args.variant)
     if args.use_mask_embedding:
@@ -369,11 +383,12 @@ def main(argv=None):
         config["model"]["mask_embedding_blind"] = True
     try:
         variant_name(config)
+        regime_name(config)
     except ValueError as error:                 # e.g. --mask_embedding_blind without Ext 1
         parser.error(str(error))
     device = pick_device(args.device)
     out_dir = args.out or OUTPUTS / run_name(config, args.seed)             # the run's wandb name
-    print(f"{variant_name(config)} seed {args.seed} on {device}, {config['train']['epochs']} epochs -> {out_dir}", flush=True)
+    print(f"{variant_name(config)} {regime_name(config)} seed {args.seed} on {device}, {config['train']['epochs']} epochs -> {out_dir}", flush=True)
     _, summary = run(config, load_dataset(args.dataset), args.seed, device, out_dir,
                      log=lambda line: print(line, flush=True), overwrite=args.overwrite,
                      wandb_mode=args.wandb, tags=args.tag, paired=args.paired)

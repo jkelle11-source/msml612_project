@@ -10,10 +10,10 @@ from data.physionet import save_dataset
 import torch
 import wandb
 from diffusion.run import (PAIRED_STREAMS, RUN_FILES, VARIANTS, chain_sha256, health_report, main, run, run_name,
-                           validate, variant_name, weight_hashes, with_variant)
+                           validate, validation_masker, variant_name, weight_hashes, with_variant)
 from diffusion.streams import RunStreams, derive_seed
-from diffusion.train import train
-from eval import EvalMasker
+from diffusion.train import REGIMES, regime_name, train
+from eval import BlockEvalMasker, EvalMasker, EvalSampler, TrainMasker
 from models.build import build_model
 
 def tiny_config(epochs=2):
@@ -479,3 +479,100 @@ def test_the_command_line_starts_a_paired_run_only_on_the_picked_gpu(small_datas
 def test_an_unpaired_run_goes_anywhere_and_says_where(small_dataset, tmp_path):
     _, summary = run(picked("Tesla T4"), small_dataset, 42, "cpu", tmp_path, log=quiet)     # health, debugging
     assert summary["device"] == "cpu" and summary["gpu"] is None
+
+# --- the training regime (M6-2) ---------------------------------------------------------
+
+WINDOW = CONFIG["protocol"]["block_window_hours"]
+
+def in_regime(config, regime):
+    config = copy.deepcopy(config)
+    config["train"]["regime"] = regime
+    return config
+
+def test_the_regime_is_read_from_the_config():
+    assert CONFIG["train"]["regime"] == "random"                            # the headline sweep's
+    assert list(REGIMES) == ["random", "block-aware"]
+    assert run_name(with_variant(CONFIG, "ext1"), 43) == "ext1_random_seed43"
+    assert run_name(in_regime(with_variant(CONFIG, "ext1"), "block-aware"), 43) == "ext1_block-aware_seed43"
+    saved_before_m6_2 = copy.deepcopy(CONFIG)
+    del saved_before_m6_2["train"]["regime"]
+    assert regime_name(saved_before_m6_2) == "random"                       # how the gate runs trained
+    with pytest.raises(ValueError, match="train.regime must be one of"):
+        regime_name(in_regime(CONFIG, "block"))
+
+def test_validation_tracks_the_holdout_the_regime_trains_for(small_dataset):
+    idx = small_dataset["val_idx"]
+    mask, ids = small_dataset["mask"][idx], small_dataset["record_ids"][idx]
+    random_targets = EvalMasker.from_config()(mask, ids)[1]
+    block_targets = BlockEvalMasker.from_config()(mask, ids)[1]
+    assert not np.array_equal(random_targets, block_targets)                # so the two can be told apart
+    assert np.array_equal(validation_masker(CONFIG)(mask, ids)[1], random_targets)
+    assert np.array_equal(validation_masker(in_regime(CONFIG, "block-aware"))(mask, ids)[1], block_targets)
+    other = in_regime(CONFIG, "block-aware")                                # built from the run's own config
+    other["protocol"]["block_eval_masker_seed"] = 1
+    assert not np.array_equal(validation_masker(other)(mask, ids)[1], block_targets)
+
+def test_a_block_aware_run_trains_on_mix_masks_at_every_epoch(small_dataset):
+    drawn = {}
+
+    def capture(epoch, values, mask, cond_mask, diffusion_state):
+        drawn.setdefault(epoch, []).append((mask, cond_mask))
+
+    train(in_regime(tiny_config(), "block-aware"), small_dataset, 42, "cpu", on_batch=capture)
+    assert sorted(drawn) == [0, 1]
+    for epoch, batches in drawn.items():
+        masker = TrainMasker(derive_seed(42, "train_mask", epoch), "mix", WINDOW)      # as start_epoch seeds it
+        assert all(torch.equal(masker(mask)[0], cond_mask) for mask, cond_mask in batches)
+
+def test_a_block_aware_run_validates_on_the_block_holdout_and_says_so(small_dataset, tmp_path, fake_wandb):
+    config = in_regime(with_variant(tiny_config(), "ext1"), "block-aware")
+    model, summary = run(config, small_dataset, 42, "cpu", tmp_path, log=quiet, wandb_mode="online")
+    init = fake_wandb[0].init
+    assert init["name"] == "ext1_block-aware_seed42" and init["tags"] == ["ext1", "block-aware", "seed42"]
+    assert init["config"]["regime"] == init["config"]["train"]["regime"] == "block-aware"
+    assert yaml.safe_load((tmp_path / "config.yaml").read_text())["train"]["regime"] == "block-aware"
+    assert summary["validation"]["holdout"] == "block"
+    sampler = EvalSampler(CONFIG["protocol"]["eval_sampling_seed"], 2, 8)    # tiny_config's validation
+    assert summary["final_val_mae"] == validate(model, small_dataset, sampler, BlockEvalMasker.from_config())["mae"]
+    assert summary["final_val_mae"] != validate(model, small_dataset, sampler, EvalMasker.from_config())["mae"]
+
+def test_the_regime_changes_only_the_train_masks(small_dataset, tmp_path):
+    pairing, holdout = {}, {}
+    for regime in REGIMES:
+        _, summary = run(in_regime(with_variant(tiny_config(), "ext1"), regime), small_dataset, 42, "cpu",
+                         tmp_path / regime, log=quiet)
+        pairing[regime], holdout[regime] = summary["pairing"], summary["validation"]["holdout"]
+    assert holdout == {"random": "random", "block-aware": "block"}
+    for key in ("init_shared", "init_mask_encoder", "data_order", "diffusion"):
+        assert pairing["random"][key] == pairing["block-aware"][key]
+    assert pairing["random"]["train_mask"] != pairing["block-aware"]["train_mask"]
+
+def test_run_refuses_an_unknown_regime_before_touching_its_folder(small_dataset, tmp_path, fake_wandb):
+    out = tmp_path / "run"
+    out.mkdir()
+    for name in RUN_FILES:
+        (out / name).write_text("an earlier run's file")
+    with pytest.raises(ValueError, match="train.regime must be one of"):
+        run(in_regime(tiny_config(), "block"), small_dataset, 42, "cpu", out, log=quiet, overwrite=True,
+            wandb_mode="online")
+    assert all((out / name).read_text() == "an earlier run's file" for name in RUN_FILES)
+    assert fake_wandb == []
+
+def test_the_regime_flag_is_recorded_and_a_rerun_keeps_it(small_dataset, tmp_path, fake_wandb, monkeypatch):
+    monkeypatch.setattr("diffusion.run.OUTPUTS", tmp_path / "outputs")
+    launch(tmp_path, small_dataset, "--regime", "block-aware")
+    first = tmp_path / "outputs" / "base_block-aware_seed42"                # the default folder is the run name
+    assert yaml.safe_load((first / "config.yaml").read_text())["train"]["regime"] == "block-aware"
+    main(["--seed", "42", "--dataset", str(tmp_path / "data.npz"), "--device", "cpu",
+          "--config", str(first / "config.yaml"), "--out", str(tmp_path / "rerun")])         # no --regime
+    assert [r.init["name"] for r in fake_wandb] == ["base_block-aware_seed42"] * 2
+    assert (first / "history.jsonl").read_text() == (tmp_path / "rerun" / "history.jsonl").read_text()
+
+def test_the_command_line_refuses_an_unknown_regime(small_dataset, tmp_path, fake_wandb):
+    with pytest.raises(SystemExit):
+        launch(tmp_path, small_dataset, "--regime", "block", "--out", str(tmp_path / "flag"))
+    (tmp_path / "bad.yaml").write_text(yaml.safe_dump(in_regime(tiny_config(), "block")))
+    with pytest.raises(SystemExit):
+        main(["--seed", "42", "--dataset", str(tmp_path / "data.npz"), "--device", "cpu",
+              "--config", str(tmp_path / "bad.yaml"), "--out", str(tmp_path / "config")])
+    assert not (tmp_path / "flag").exists() and not (tmp_path / "config").exists() and fake_wandb == []

@@ -8,6 +8,18 @@ from diffusion.streams import RunStreams
 from diffusion.data import train_loader, to_batch
 from models.build import build_model
 
+# The training regimes (PROJECT_PLAN §3.1, M6-2), by ``train.regime``: TrainMasker's strategy, and
+# the holdout validation tracks (diffusion.score's names). Test scoring is the same in both.
+REGIMES = {"random": {"strategy": "random", "holdout": "random"},
+           "block-aware": {"strategy": "mix", "holdout": "block"}}
+
+def regime_name(config):
+    """``random`` or ``block-aware``, from ``train.regime``; a config saved before M6-2 has none: random."""
+    regime = config["train"].get("regime", "random")
+    if regime not in REGIMES:
+        raise ValueError(f"train.regime must be one of {list(REGIMES)}, not {regime!r}")
+    return regime
+
 def use_deterministic_kernels():
     """Make reruns bit-identical on CUDA too (M3-1).
 
@@ -37,7 +49,8 @@ def train(config, dataset, run_seed, device, on_epoch_end = None, on_step_end = 
     use_deterministic_kernels()
     use_tf32(config["protocol"].get("tf32", False))     # a config from before M6-2 has none: float32
 
-    streams = RunStreams(run_seed)
+    streams = RunStreams(run_seed, REGIMES[regime_name(config)]["strategy"],
+                         config["protocol"]["block_window_hours"])
     streams.seed_model_init()
 
     model = build_model(config, device)

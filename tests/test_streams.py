@@ -9,6 +9,7 @@ from eval import TrainMasker
 from models.csdi import CSDI_Physio
 
 RUN_SEEDS = CONFIG["protocol"]["run_seeds"]
+WINDOW = CONFIG["protocol"]["block_window_hours"]
 B, T, D = 4, 48, 35
 
 def random_mask(n=B, seed=0, observed_rate=0.2):
@@ -115,6 +116,25 @@ def test_train_masker_stream_matches_a_masker_seeded_directly():
     direct = TrainMasker(derive_seed(42, "train_mask", 5))
     for _ in range(3):
         assert torch.equal(streams.train_masker(mask)[1], direct(mask)[1])
+
+def test_the_train_masker_has_the_strategy_it_is_given():
+    mask = random_mask(n=32)
+    seed = derive_seed(42, "train_mask")
+    plain, mixed = RunStreams(42).train_masker(mask)[1], RunStreams(42, "mix", WINDOW).train_masker(mask)[1]
+    assert torch.equal(plain, TrainMasker(seed)(mask)[1])                  # random by default
+    assert torch.equal(mixed, TrainMasker(seed, "mix", WINDOW)(mask)[1])
+    assert not torch.equal(plain, mixed)
+
+def test_a_mix_masker_stays_mix_at_every_epoch():
+    # start_epoch re-seeds the masker it has; a masker rebuilt as TrainMasker(seed) would be random,
+    # the default, from epoch 1 on.
+    mask, streams = random_mask(n=32), RunStreams(42, "mix", WINDOW)
+    for epoch in (0, 1, 7, 199):
+        streams.start_epoch(epoch)
+        seed = derive_seed(42, "train_mask", epoch)
+        expected = TrainMasker(seed, "mix", WINDOW)(mask)[1]
+        assert torch.equal(streams.train_masker(mask)[1], expected)
+        assert not torch.equal(expected, TrainMasker(seed)(mask)[1])
 
 # --- model init -------------------------------------------------------------------------
 
