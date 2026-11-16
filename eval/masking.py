@@ -185,17 +185,35 @@ class OffGridBlockEvalMasker(BlockEvalMasker):
                    protocol["block_window_hours"], protocol["offgrid_block_offset_hours"], grid)
 
 class TrainMasker:
-    """Fresh conditioning/target split every training step (PROJECT_PLAN §3.1; CSDI "random").
+    """Fresh conditioning/target split every training step (PROJECT_PLAN §3.1).
 
-    For each patient, draws a ratio ``r ~ U(0, 1)`` and hides ``round(r * n_observed)`` of
-    their observed values as targets. Uses a private CPU generator seeded from the run seed,
-    so the mask stream is reproducible, is the same on CPU and GPU, and is not shifted by any
-    other random draws (e.g. Ext 1's extra layers) -- which keeps paired seeds paired.
+    ``random`` (CSDI's "random"): for each patient, draws a ratio ``r ~ U(0, 1)`` and hides
+    ``round(r * n_observed)`` of their observed values as targets, picked uniformly.
+
+    ``mix`` (M6-2, the block-aware regime): draws the ``random`` split, then a fair coin per
+    patient keeps it (heads) or hides the same ``round(r * n_observed)`` values in whole
+    ``window``-hour slots across all features instead (tails), apart from one trimmed slot: the
+    slot walk of ``block_targets``, on the grid ``BlockEvalMasker`` hides on.
+
+    Uses a private CPU generator seeded from the run seed, so the mask stream is reproducible,
+    is the same on CPU and GPU, and is not shifted by any other random draws (e.g. Ext 1's extra
+    layers) -- which keeps paired seeds paired. Each call draws, in this order: ``B`` ratios and
+    ``B x T*D`` scores (all that ``random`` draws, so its stream is the one from before ``mix``);
+    then, for ``mix`` only, ``B`` coins and one integer per tails patient in batch order, which
+    seeds that patient's NumPy generator for ``block_targets``. The order is part of the protocol.
     Only ever removes values from ``mask``: pass ``EvalMasker``'s ``cond_mask`` for val/test.
     """
 
-    def __init__(self, seed):
+    STRATEGIES = ("random", "mix")
+
+    def __init__(self, seed, strategy="random", window=None):
+        if strategy not in self.STRATEGIES:
+            raise ValueError(f"strategy must be one of {self.STRATEGIES}, not {strategy!r}")
+        if strategy == "mix" and window is None:
+            raise ValueError("the mix strategy needs the block window in hours (protocol.block_window_hours)")
         self.generator = torch.Generator().manual_seed(seed)
+        self.strategy = strategy
+        self.window = window
 
     def __call__(self, mask):
         """Split ``mask`` (B, T, D) tensor into ``(cond_mask, target_mask)`` on ``mask.device``."""
@@ -205,5 +223,12 @@ class TrainMasker:
         scores = torch.rand(observed.shape, generator=self.generator) * observed
         rank = scores.argsort(1, descending=True).argsort(1)    # 0 = highest score
         target = ((rank < n_hide) & (observed == 1)).to(mask.dtype)
+        if self.strategy == "mix":
+            tails = torch.rand(len(mask), generator=self.generator) < 0.5
+            for i in tails.nonzero().flatten().tolist():
+                seed = int(torch.randint(2**62, (1,), generator=self.generator))
+                patient = observed[i].reshape(mask.shape[1:]).numpy()
+                blocks = block_targets(patient, int(n_hide[i]), np.random.default_rng(seed), self.window)
+                target[i] = torch.from_numpy(blocks).reshape(-1)
         target = target.reshape(mask.shape).to(mask.device)
         return mask - target, target
