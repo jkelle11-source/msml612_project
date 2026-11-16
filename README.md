@@ -42,6 +42,8 @@ diffusion/     # training data feed, loop and random streams around the
                #   Single-seed health record from wandb (health.py).        [M5-3]
                #   Pairing hashes, paired-GPU guard (run.py, score.py).     [M6-2]
                #   The sweep's checked results store (results.py).          [M6-2]
+               #   The GPU timing test (timing.py).                         [M6-2]
+               #   The sweep's driver (sweep.py); resuming a run (run.py).  [M6-2]
 eval/          # EvalMasker / TrainMasker + masked, standardized metrics;
                #   EvalSampler (frozen-noise evaluation pass).              [M1-3]
                #   Mean and forward-fill baselines.                         [M2-3]
@@ -101,8 +103,14 @@ The evaluation sampler is frozen the same way: `eval.EvalSampler` reads
 (see [Random streams](#random-streams-seed-pairing)).
 
 `protocol.paired_gpu` (M6-2) names the one GPU model every paired run trains and is scored on
-(PROJECT_PLAN §3.3). It is `null` until M6-2's timing test picks it, and no paired run starts
-before then (see [Paired sweep checks](#paired-sweep-checks-m6-2)).
+(PROJECT_PLAN §3.3): `NVIDIA A100-SXM4-80GB`, Colab's G4 runtime, picked by M6-2's timing test
+([The timing test](#the-timing-test-m6-2)). A paired run refuses to start on any other GPU (see
+[Paired sweep checks](#paired-sweep-checks-m6-2)).
+
+`protocol.tf32` (M6-2) says whether CUDA computes float32 convolutions and matrix multiplies in
+TF32. It is `true`, as the timing test chose: on the paired GPU it takes nearly a quarter off the
+Week-7 sweep (88.0 h to 67.5 h). Training and scoring both apply it, so it is the same for every
+run. On a T4, MPS or the CPU, which have no TF32, it changes nothing.
 
 The model and training settings live in the same file, under upstream's key names (M2-1):
 `diffusion` (the reused noise schedule and denoiser size), the side-information keys in
@@ -340,7 +348,7 @@ training randomness its own stream, seeded from `(run_seed, stream, epoch)`:
 | Stream | Used for | In the training loop |
 | --- | --- | --- |
 | `streams.data_order` | shuffling | `DataLoader(..., shuffle=True, generator=streams.data_order)` |
-| `streams.train_masker` | conditioning/target split of each batch | `cond, target = streams.train_masker(mask)`; `cond` goes in `batch["gt_mask"]` |
+| `streams.train_masker` | conditioning/target split of each batch, in the regime's strategy ([Training regimes](#training-regimes-m6-2)) | `cond, target = streams.train_masker(mask)`; `cond` goes in `batch["gt_mask"]` |
 | `streams.diffusion` | diffusion timestep and noise | `model(batch, generator=streams.diffusion)` |
 | global RNG | model init, dropout | `streams.seed_model_init()`, `streams.start_epoch(epoch)` |
 
@@ -356,7 +364,9 @@ Rules:
   would be dealt later draws: at seed 42, Ext 1+2's time encoder would start with
   `w0` = −0.9452 instead of Ext 2's −0.5433.
 - Call `streams.start_epoch(epoch)` at the top of every epoch, after the model is built. It
-  re-seeds all four streams in place, so a DataLoader built once keeps working.
+  re-seeds all four streams in place, so a DataLoader built once keeps working, and the train
+  masker keeps the strategy it was built with (a masker rebuilt as `TrainMasker(seed)` would be
+  `random`, the default, from then on).
 - **Dropout is paired only between variants with the same dropout layers.** It draws from the
   global RNG, and a variant with extra dropout layers consumes more of it. Ext 1's encoder has
   dropout layers, so dropout is not paired between base and Ext 1 (or Ext 2 and Ext 1+2). Ext 2's
@@ -367,7 +377,10 @@ Rules:
 - **Resuming needs no RNG state.** Because every stream is a function of the run seed and the
   epoch, a checkpoint taken at an epoch boundary needs only the model, the optimizer (plus
   the learning-rate scheduler) and the epoch number; the resumed run then ends
-  with the same weights as an uninterrupted one. A run resumed mid-epoch does not.
+  with the same weights as an uninterrupted one. A run is resumed from its last checkpoint,
+  taken after its last validated epoch, and redoes the epochs since. `run(..., resume=True)` does
+  this (M6-2,
+  [Launching a run](#launching-a-run-m3-1)).
 - **Evaluation noise is frozen.** `eval.EvalSampler` runs one evaluation pass of the reused
   sampler: `samples = EvalSampler.from_config()(model, values, mask, cond_mask)`, shape
   `(K, N, 48, D)`. It re-seeds a private generator with `protocol.eval_sampling_seed` at the
@@ -428,7 +441,62 @@ runtime first. The switch is process-wide, so a run's validation passes are cove
 scoring script must call it before any CUDA work. With it, CUDA reruns match bit for bit too: two
 2-epoch runs on a Colab T4 did ([`Docs/M3_debug_log.md`](Docs/M3_debug_log.md)). `on_step_end(record)`, if
 given, is called with a copy of each history record as it is made (M3-1); the run log uses it,
-and wandb (M3-2) does.
+and wandb (M3-2) does. `on_checkpoint(state)` is called at the end of every epoch with the epoch
+and the model's, optimizer's and schedule's states (`diffusion.run` writes one to disk after each
+validated epoch but the last), and `resume=state` goes on from one (M6-2,
+[Launching a run](#launching-a-run-m3-1)).
+
+### Training regimes (M6-2)
+
+`train.regime` in the config picks how a run trains and what its validation tracks (PROJECT_PLAN
+§3.1). `diffusion.train.REGIMES` maps each regime to its settings, and `diffusion.run --regime`
+sets it:
+
+| `train.regime` | `TrainMasker` strategy | Validation holdout | Trains | Run name |
+| --- | --- | --- | --- | --- |
+| `random` (the config's) | `random` | `EvalMasker`'s | all four variants: the headline sweep and the gate | `base_random_seed42` |
+| `block-aware` | `mix` | `BlockEvalMasker`'s | base and Ext 1, and Ext 1-blind if M8-4 is triggered | `ext1_block-aware_seed42` |
+
+Test scoring is the same in both: every run is scored under both holdouts
+([Scoring a run](#scoring-a-run-m4-1)). Each regime is paired only within itself, and the store
+keeps them apart ([Paired sweep checks](#paired-sweep-checks-m6-2)). At a seed, a block-aware run
+draws the same data order, diffusion draws and starting weights as a random-regime run of the
+same variant; only its train masks differ (tested). A config without `train.regime`, such as one
+saved before M6-2, is `random`, which is how those runs trained. An unknown regime is refused
+before anything runs, from Python and from the command line.
+
+`eval.TrainMasker(seed, strategy="random", window=None)` draws a fresh split every call from its
+own generator:
+
+- `random` (upstream's): per patient, a ratio `r ~ U(0, 1)`, and `round(r · n_observed)` of their
+  observed values hidden, picked uniformly.
+- `mix`: the same split, then a fair coin per patient keeps it (heads) or hides the same
+  `round(r · n_observed)` values in whole `window`-hour slots across all features, apart from one
+  trimmed slot (tails). That is `block_targets`' slot walk on `BlockEvalMasker`'s 16-slot grid, with
+  a NumPy generator seeded from the masker's own. `RunStreams` passes `protocol.block_window_hours`
+  (3) as the window. Over 1,600 test patients, 50.4% came up tails.
+
+Each call reads, in this order, `B` ratios and `B × T·D` scores (all that `random` reads), then,
+for `mix` only, `B` coins and one seed per tails patient. The order is part of the protocol:
+`random`'s output is byte-identical to before `mix` existed, and `mix`'s stream is pinned, each by
+a SHA-256 fingerprint of five calls. Because `mix` trains on the holdout's own slot grid, the
+block-aware regime is matched to our synthetic block pattern (PROJECT_PLAN §8, Limitations; §4.1's
+grid check).
+
+Tests:
+
+- `tests/test_train_masker.py`: both fingerprints (`mix`'s worked out by replaying the documented
+  reads, not by running `TrainMasker`), a hand-checked example, heads keeping `random`'s split and
+  tails its count, tails in whole slots bar one, a fair coin read from the masks, pairing under
+  other random draws, valid splits (a patient with nothing observed too), GPU matching CPU, bad
+  arguments, and dry runs in both strategies on the built dataset and Set A.
+- `tests/test_streams.py`: `RunStreams` builds its masker with the strategy given, and a `mix`
+  masker is still `mix` after `start_epoch`, at epochs 0 to 199.
+- `tests/test_run.py`: names, the default for an old config, the validation holdout built from
+  the run's own config, a block-aware run training on `mix` masks every epoch and validating on
+  the block holdout, the two regimes' hashes, an unknown regime refused before `--overwrite`
+  deletes anything, and `--regime` recorded so a rerun of the saved config keeps it.
+- `tests/test_health.py`: a block-aware health record names the block holdout.
 
 ### Launching a run (M3-1)
 
@@ -442,7 +510,9 @@ validation split as it goes, and writes to `outputs/<run name>/` (git-ignored), 
 ([Experiment tracking](#experiment-tracking-m3-2)). Options: `--device` (`cuda`, `mps`, `cpu`,
 default the first available), `--epochs` to override `train.epochs`, `--validate-every` to
 override `validation.every_n_epochs`, `--variant` to set the extension toggles
-([The four variants](#the-four-variants-m6-1)), `--config`, `--dataset`, `--out`, `--overwrite`,
+([The four variants](#the-four-variants-m6-1)), `--regime` to set `train.regime`
+([Training regimes](#training-regimes-m6-2)), `--config`, `--dataset`, `--out`, `--overwrite`,
+`--resume` (below),
 `--wandb`, `--tag`, `--paired` (a sweep run: refused on any GPU but `protocol.paired_gpu`,
 [Paired sweep checks](#paired-sweep-checks-m6-2)). The output folder must be empty or new, so two runs' files never mix; `--overwrite`
 first deletes the files listed below from it, and nothing else.
@@ -450,15 +520,45 @@ Everything is written while the run is going, so a stopped run keeps what it has
 
 | File | Contents |
 | --- | --- |
-| `config.yaml` | the resolved config, `--epochs` and `--validate-every` included, `tracking` left out (where a run is logged isn't part of it). `--config` on it reruns the run. |
+| `config.yaml` | the resolved config, `--epochs`, `--validate-every`, `--regime` and the variant flags included, `tracking` left out (where a run is logged isn't part of it). `--config` on it reruns the run. |
 | `history.jsonl` | one line per training step: `epoch`, `loss`, `grad_norm`, `lr` |
 | `curve.json` | one row per epoch: mean loss, largest gradient norm, training seconds, the epoch's `data_order_sha256`, `train_mask_sha256` and `diffusion_sha256` (M6-2), and `val_mae` / `val_rmse` / `val_seconds` when scored |
 | `model.pt` | weights after the latest scored epoch. The last epoch is always scored, so a finished run's are its final weights, the ones that are scored (no best-epoch checkpoint; PROJECT_PLAN §3.1). |
-| `summary.json` | the 500-step health report, the final val MAE, forward fill's val MAE, `below_forward_fill`, the `gpu` it trained on and its `pairing` hashes (M6-2, [Paired sweep checks](#paired-sweep-checks-m6-2)), and `wandb_run`, the run's path on wandb (`entity/project/id`; null when untracked) |
+| `summary.json` | the 500-step health report, the final val MAE, forward fill's val MAE, `below_forward_fill`, the `validation` settings (split, holdout, draws, batch size), the `gpu` it trained on and its `pairing` hashes (M6-2, [Paired sweep checks](#paired-sweep-checks-m6-2)), `model_sha256`, the SHA-256 of the final `model.pt` (M6-2, checked by [`diffusion.score`](#scoring-a-run-m4-1)), and `wandb_run`, the run's path on wandb (`entity/project/id`; null when untracked) |
+| `checkpoint.pt` | the model, optimizer and learning-rate schedule, the epoch, the number of steps so far, and the run's wandb path (M6-2), rewritten whole after every validated epoch but the last |
+
+**Resuming a run (M6-2).** `checkpoint.pt` is written beside itself and then renamed, so a
+session lost mid-save leaves the last one whole. It is written after every validated epoch (every
+`validation.every_n_epochs`, 10, when `model.pt` is saved too), a tenth of the Google Drive uploads
+of one every epoch, so a lost session redoes at most 10 epochs, about 1–2 minutes on the G4. It is
+not written after the last epoch: the summary follows that one, so a run stopped between the two
+redoes its last 10 epochs, and the final `model.pt` whose hash the summary records is always written
+in the same session as the summary.
+
+`--resume` (`run(..., resume=True)`) continues the unfinished run in the output folder from its
+checkpoint. The model is still built from the run seed and hashed as built (`on_start`), then given
+the checkpoint; the steps and epochs after the checkpoint are dropped and redone; and the run goes
+on as the same wandb run. Every stream is a function of the run seed and the epoch
+([Random streams](#random-streams-seed-pairing)), so a resumed run ends with the same files,
+numbers and weights as one never stopped. The tests check that for a session lost right after a
+checkpoint, between an epoch's files and its checkpoint, and in the middle of an epoch.
+
+A folder with no usable checkpoint is started again, which is always correct: one with no checkpoint
+yet, and one whose `history.jsonl` and `curve.json` do not reach its checkpoint's epoch. Google
+Drive uploads each file in the background, so a session lost on it can leave a newer
+`checkpoint.pt` than those two, and a run resumed from it would lack the steps and epochs in
+between. A last `history.jsonl` line cut short (a session lost while writing it) is ignored. The
+tests check the checkpoints' epochs and step counts, and that a `curve.json` a row short, missing or
+cut short, or a `history.jsonl` an epoch short, each start the run again and end as one never
+stopped, while a line cut short after the checkpoint resumes. A
+finished run is refused, and so is a run started with another config: give `--resume` the flags the
+run started with. [`diffusion.sweep`](#running-the-paired-sweep-m6-2) resumes every run it finds
+unfinished.
 
 **Validation while training is for tracking, not reporting.** Every `validation.every_n_epochs`
-epochs (and on the last), the run scores the val split's `EvalMasker` targets at 10%, exactly
-as the baselines are scored, using the median of `validation.n_samples` draws (default 5). The
+epochs (and on the last), the run scores the val split's targets at 10% on the holdout its
+regime trains for, `EvalMasker`'s in the random regime and `BlockEvalMasker`'s in the block-aware
+one ([Training regimes](#training-regimes-m6-2)), exactly as the baselines are scored, using the median of `validation.n_samples` draws (default 5). The
 frozen protocol uses 100 draws (`eval.EvalSampler.from_config()`), but one draw over the 400 val
 patients takes about 130 s on MPS, so 100 would take hours. Fewer draws make the median
 noisier, which raises MAE slightly, so a tracked MAE below forward fill is a conservative claim.
@@ -500,7 +600,8 @@ a harness looping over it (M6-2) is tracked too. `tests/conftest.py` sets
 
 Runs are named `<variant>_<regime>_seed<seed>`, e.g. `base_random_seed42` or
 `ext1+2_random_seed46`, the same as their output folder, and tagged with the variant, regime and
-seed. The regime is `random` until M6-2 adds the block-aware one. Every run of a variant, regime
+seed. The regime is the config's `train.regime`, `random` or `block-aware`
+([Training regimes](#training-regimes-m6-2)), e.g. `ext1_block-aware_seed42`. Every run of a variant, regime
 and seed gets the same name, so say what a run is for with `--tag` (repeatable; `tags=` on
 `run()`), e.g. `--tag gate`, `--tag sweep`, `--tag dry-run` or `--tag debug`, and filter on it
 in the workspace. What a run sends, all of it also in its `outputs/` files:
@@ -579,7 +680,10 @@ training (5 draws) is only for watching it. It rebuilds the model from the run's
 split's held-out values with `eval.EvalSampler.from_config()`: 100 draws per patient with the
 frozen `eval_sampling_seed`, 16 patients at a time, the median of the draws scored in standardized
 units exactly as the baselines are. A run without `summary.json` has not finished, so its
-`model.pt` is an earlier epoch's, and it is refused.
+`model.pt` is an earlier epoch's, and it is refused. So is a `model.pt` that is not the final
+weights `summary.json` records (`model_sha256`, M6-2): on Google Drive, a session lost just after a
+run finished can leave its summary beside an earlier epoch's weights, which would otherwise be
+scored as the final ones. A run from before the summary recorded them is not checked.
 
 The holdout is the frozen random one at 10% unless told otherwise: `--fraction 0.5` or `0.9` for
 CSDI's robustness rates, `--holdout block` for `BlockEvalMasker`'s (10% only), `--split val` for
@@ -596,7 +700,8 @@ Two files go into the run folder, named for what was scored:
 The MAE and RMSE are also added to the run's wandb summary (its `wandb_run`) under the baselines'
 keys, e.g. `random/0.1/test/mae`, so CSDI runs line up with the baselines in the runs table.
 Beside them go what the sweep's results store collects and checks (M6-2,
-[Paired sweep checks](#paired-sweep-checks-m6-2)): the GPU (`random/0.1/test/gpu`), the sampler's
+[Paired sweep checks](#paired-sweep-checks-m6-2)): the GPU (`random/0.1/test/gpu`), whether the pass
+ran in TF32 (`.../tf32`, from the frozen `protocol.tf32`, which the pass applies), the sampler's
 and holdout's settings (`.../sampler.eval_n_samples`, `.../holdout_settings.eval_masker_seed`, ...)
 and the per-variable MAE (`.../per_variable_mae.HR`, ...).
 That needs wandb online: `--wandb disabled`, or `WANDB_MODE` set to anything but `online`, skips
@@ -1058,12 +1163,107 @@ Tests:
 
 ---
 
+## Running the paired sweep (M6-2)
+
+`diffusion/sweep.py` is the driver that trains and scores the paired sweep (PROJECT_PLAN §3.3).
+A cell is a regime, a variant and a seed. The config's `sweep` block names each regime's variants
+([Training regimes](#training-regimes-m6-2)), and the seeds are `protocol.run_seeds`:
+
+```yaml
+sweep:
+  regimes:
+    random: [base, ext1, ext2, ext1+2]     # 20 cells at seeds 42-46: the headline sweep
+    block-aware: [base, ext1]              # 10 cells
+  holdouts: [random, block]                # every run's test scorings, at 10%
+```
+
+The block says which runs to launch, not what one trains, so `diffusion.run` leaves it out of
+every run's saved and wandb config, as it does `tracking`: a variant added to it later (M8-4's
+`ext1blind`) changes no run already trained. Cells run regime by regime (random first), then seed
+by seed, then variant by variant, so a sweep cut short leaves whole seeds behind it, and the
+block-aware runs come after the 20 headline ones (PROJECT_PLAN §8). For each cell, in
+`<out>/<run name>`, the driver:
+
+1. trains it with `run(..., paired=True, resume=True)`, tagged with `--tag`. A run a lost session
+   stopped goes on from its last checkpoint ([Resuming a run](#launching-a-run-m3-1)); a finished
+   one is kept, once its saved config is checked to be the cell's;
+2. checks its pairing hashes against those of the regime's other variants at its seed already in
+   `<out>`, with the store's own check (`diffusion.results.unpaired`), and stops at the first cell
+   that unpairs, not when the store is written after the last;
+3. scores its final weights on test under both holdouts with `score(..., paired=True)`, unless
+   `<out>` already holds a scoring of those weights with its median imputation beside it
+   (`span_mae` reads it), and adds every scoring to the run's wandb summary (`attach_to_wandb`),
+   where the store reads it.
+
+So the same command, run again in a new session, finishes what the last one started, redoing at
+most 10 epochs or the scoring pass a session was lost in. `<out>/sweep.json` records the tag and
+git commit the folder was started with, and another is refused: the store refuses a regime trained
+from two commits, so a `git pull` between sessions is caught before it costs a run. The commit is
+all the store checks, so a paired sweep also refuses code with changes the commit does not hold
+(tracked files edited, deleted or staged; untracked files such as data and outputs are fine):
+commit them or undo them first. The driver refuses to start on any GPU but `protocol.paired_gpu`;
+`--unpaired` lifts that and the commit check, for a check on another machine, whose runs the store
+refuses.
+
+On Colab's G4 runtime, after the setup in [Environment](#environment), put `<out>` on Google
+Drive, since a session's own disk goes with it. The setup clones `main`, so a later session checks
+out the commit the folder was started from (`sweep.json`) before it goes on; otherwise a merge into
+`main` between sessions has the driver refuse to start. Drive uploads files in the background, so
+flush it before you end a session on purpose (a session that is lost cannot, and the driver redoes
+what it lost):
+
+```text
+from google.colab import drive, userdata
+import json, os, pathlib, subprocess
+drive.mount("/content/drive")
+os.environ["WANDB_API_KEY"] = userdata.get("WANDB_API_KEY")
+OUT = "/content/drive/MyDrive/msml612/dry-run"
+started = pathlib.Path(OUT) / "sweep.json"
+if started.exists():        # a later session: the folder's commit, not main's newest
+    subprocess.run(["git", "checkout", json.loads(started.read_text())["commit"]], check=True)
+!uv run python -m diffusion.sweep --tag dry-run --epochs 20 --seeds 42 43 --out {OUT}
+drive.flush_and_unmount()   # before ending the session yourself
+```
+
+| What | `uv run python -m diffusion.sweep ...` | Cells | Hours on the G4 |
+| --- | --- | --- | --- |
+| the dry run (M6-2) | `--tag dry-run --epochs 20 --seeds 42 43 --out <Drive>/dry-run` | 12 | about 16.4 |
+| its rerun check | `--tag rerun --epochs 20 --regime random --variants base --seeds 42 --out <Drive>/rerun` | 1 | about 1.4 |
+| the sweep (M7-1) | `--tag sweep --out <Drive>/sweep` | 30 | about 67.5 |
+| M8-4's control, if triggered | `--tag sweep --out <Drive>/sweep --regime block-aware --variants ext1blind --seeds 42 43 44 --holdouts block` | 3 | about 4.5 |
+| M8-4's grid check, if triggered | `--tag sweep --out <Drive>/sweep --regime block-aware --variants base ext1 --seeds 42 43 44 --holdouts offgrid` | 6 scorings, no training | about 3.9 |
+
+The hours are the timing test's ([The timing test](#the-timing-test-m6-2)). Then
+`uv run python -m diffusion.results --tag dry-run` collects and checks the runs (below), and
+`--compare` checks the rerun:
+
+```text
+uv run python -m diffusion.sweep --regime random --variants base --seeds 42 --out <Drive>/dry-run --compare <Drive>/rerun
+```
+
+It trains nothing. For each cell finished in both folders it checks that the two runs left the same
+numbers: every training step, every epoch's row but its seconds, the summary but its wandb run, the
+final weights, and each scoring's MAE, RMSE, per-variable MAE and target count. It exits non-zero
+if any differ, or if no cell is in both. Base's 50% and 90% scorings (M7-1) are not the driver's:
+`diffusion.score <run folder> --fraction 0.5 --paired` scores one.
+
+Tests (`tests/test_sweep.py`): the cells and their order (30 for the sweep, 12 for the dry run, 3
+for M8-4); every cell trained, scored under both holdouts with the final weights and attached, and
+tagged; the same command again training and scoring nothing more; a sweep a lost session stopped,
+in training or in scoring, ending with the same numbers as one never stopped; a cell that unpairs
+its seed stopping the sweep before it is scored; a scoring of other weights done again, and one
+whose median imputation is missing; a finished run with another config, another tag or another
+commit refused; a paired sweep only on the picked GPU, scoring paired, and never from code with
+uncommitted changes (`uncommitted` against a scratch git repository: changed and deleted tracked
+files named, untracked ones not); and `--compare` naming what differs.
+
 ## Paired sweep checks (M6-2)
 
 The parts of M6-2's harness that show its runs are paired and keep their numbers: pairing
-hashes, the paired GPU, and the results store. The driver that loops over seeds and variants
-(Jake's part of M6-2) calls `run()` and `score()` with `paired=True` (`--paired` on either command
-line), and `diffusion.score.attach_to_wandb` after every `score()`, since the store reads wandb.
+hashes, the paired GPU, and the results store. The driver, `diffusion.sweep`
+([Running the paired sweep](#running-the-paired-sweep-m6-2)), calls `run()` and `score()` with
+`paired=True` (`--paired` on either command line), and `diffusion.score.attach_to_wandb` after
+every `score()`, since the store reads wandb.
 
 **Pairing hashes.** Every run hashes what its random streams gave it, as training draws it, so
 a seed's variants are shown to be paired rather than assumed to be (PROJECT_PLAN §3.3):
@@ -1089,8 +1289,8 @@ pairing: it loads the checkpoint after `on_start` has hashed the weights as buil
 each stream's chain from the per-epoch hashes in its `curve.json`.
 
 **The paired GPU.** `protocol.paired_gpu` names the one GPU model every paired run trains and
-is scored on, as `torch.cuda.get_device_name()` names it (`Tesla T4`). It is `null` until M6-2's
-timing test picks it ([Environment](#environment)). `run(..., paired=True)` and
+is scored on, as `torch.cuda.get_device_name()` names it: `NVIDIA A100-SXM4-80GB`, picked by
+M6-2's timing test ([Environment](#environment)). `run(..., paired=True)` and
 `score(..., paired=True)` (`--paired` on the command line) refuse to start on any other GPU, before
 writing or sending anything,
 and refuse to start at all while it is `null`. Every run records the GPU it trained on (`gpu`
@@ -1126,7 +1326,8 @@ unless:
 - every run trained, and every holdout was scored, on `protocol.paired_gpu`, one GPU for all;
 - every holdout was scored with the frozen sampler and holdout of `configs/config.yaml`
   (`eval_sampling_seed`, `eval_n_samples`, `eval_batch_size`, and the holdout's seed and window),
-  as the gate requires of its runs; a holdout `diffusion.score` does not know is refused too;
+  as the gate requires of its runs, and with its `protocol.tf32` (training's is part of the
+  config, so is checked with it); a holdout `diffusion.score` does not know is refused too;
 - no cell has two runs. A rerun gets the same name on wandb; untag the one to leave out, or tag
   a rerun apart (`rerun`) when checking that a cell reproduces.
 
@@ -1143,10 +1344,12 @@ Tests:
   from the command line, writing and sending nothing, and starts on the picked one, recording it.
 - `tests/test_score.py`: the scores record the GPU and send it to wandb (null for older scores),
   with the sampler's and holdout's settings and every variable's MAE; a paired scoring is refused
-  before it scores, from Python and from the command line, and runs on the picked GPU.
+  before it scores, from Python and from the command line, and runs on the picked GPU; a `model.pt`
+  that is not the final weights its `summary.json` records is refused before any draw, writing
+  nothing, and a run from before the summary recorded them is scored unchecked.
 - `tests/test_results.py`: the store's layout, configs, per-variable MAE, unscored holdouts,
   robustness rates and a holdout of another name; each way runs can be unpaired refused on its
-  own (diffusion draws, a sampler or holdout other than the frozen one, a second commit in a
+  own (diffusion draws, a sampler, holdout or TF32 setting other than the protocol's, a second commit in a
   regime among them); validation settings, output folders and each regime's commit allowed to
   differ; a pairing block wandb flattened read the same; and real runs through `diffusion.run`,
   `diffusion.score` and `attach_to_wandb` stored, with one relabeled to another seed caught by
@@ -1218,14 +1421,16 @@ is `eval.OffGridBlockEvalMasker`. It has `BlockEvalMasker`'s per-patient count (
   (`median_test_block_0.1.npy`), so it costs no scoring pass. It refuses a scoring that did not use
   the frozen holdout and sampler, and a `model.pt` that is no longer the weights scored.
 
-M8-4 trains Ext 1-blind through M6-2's harness in the block-aware regime. Until M6-2 reads the
-regime from the config, `diffusion.run` trains every variant in the random regime, so the first
-line below trains the right model in the wrong regime: a plumbing check, not M8-4's run. The second
-scores a finished run off the grid, and the Python gives the block holdout's MAE over hours 1–45:
+M8-4 runs both checks through M6-2's driver, in the sweep's folder under the sweep's tag
+([Running the paired sweep](#running-the-paired-sweep-m6-2)). The first line below trains Ext
+1-blind in the block-aware regime at seeds 42–44 and scores it on the block holdout; the second
+scores M7's block-aware base and Ext 1 runs at those seeds off the grid, training nothing (6
+passes, each checked against its run's final weights, resumable and added to wandb); and the Python
+gives the block holdout's MAE over hours 1–45 for one run:
 
 ```text
-uv run python -m diffusion.run --seed 42 --variant ext1blind --paired       # random regime until M6-2
-uv run python -m diffusion.score outputs/ext1_<regime>_seed42 --holdout offgrid --paired
+uv run python -m diffusion.sweep --tag sweep --out <sweep folder> --regime block-aware --variants ext1blind --seeds 42 43 44 --holdouts block
+uv run python -m diffusion.sweep --tag sweep --out <sweep folder> --regime block-aware --variants base ext1 --seeds 42 43 44 --holdouts offgrid
 ```
 
 ```python
@@ -1234,19 +1439,27 @@ from diffusion.run import DATASET_PATH
 from diffusion.score import span_mae
 from eval import OffGridBlockEvalMasker
 
-span_mae("outputs/ext1_<regime>_seed42", load_dataset(DATASET_PATH), "block", OffGridBlockEvalMasker.from_config().hours)
+span_mae("<sweep folder>/ext1_block-aware_seed42", load_dataset(DATASET_PATH), "block", OffGridBlockEvalMasker.from_config().hours)
 ```
 
 What a triggered M8-4 needs besides compute, because of how `diffusion.results` pairs runs:
 
 - **The same commit as M7's block-aware runs.** The store refuses a regime whose runs come from
   different commits, so Ext 1-blind is trained from the commit M7's runs were (check it out), or
-  the whole block-aware regime is refused.
+  the whole block-aware regime is refused. In the sweep's folder, `diffusion.sweep` refuses any other
+  commit itself (`sweep.json`).
 - **A tag the store collects with them.** The store reads runs by wandb tag: give Ext 1-blind the
-  sweep's tag, or add M8-4's tag to M7's block-aware runs at seeds 42–44. Ext 1-blind is scored on
-  the block holdout only, so the store lists its `random/0.1` as unscored: expected, not a refusal.
+  sweep's tag (the driver refuses another in the sweep's folder), or add M8-4's tag to M7's
+  block-aware runs at seeds 42–44. Ext 1-blind is scored on the block holdout only, so the store
+  lists its `random/0.1` as unscored: expected, not a refusal.
 - **M7's block-aware run folders at seeds 42–44, kept.** Off-grid scoring needs their `model.pt`, and
   `span_mae` their `median_test_block_0.1.npy`; the store holds neither.
+- **The sweep's folder itself, shared.** Ext 1-blind trains into it beside M7's block-aware runs,
+  so the driver checks its pairing against Ext 1's and base's as each cell ends, and the off-grid
+  pass reads their weights from it. In a folder of its own, Ext 1-blind would be checked against
+  nothing until the store is written. The folder is on the Google Drive of whoever ran M7: share
+  it with whoever runs M8-4 as an editor, who adds it to their own Drive as a shortcut in My Drive
+  so that Colab's `drive.mount` shows it, and passes that path as `--out`.
 
 The short run (M6-3) trained Ext 1-blind at seed 42 for 1 epoch on Set A through `diffusion.run`
 (MPS), then scored it through `diffusion.score` on the val split's block and off-grid holdouts,
@@ -1297,29 +1510,25 @@ with `pytest` in the dev group.
 there. macOS and Windows resolve the plain PyPI wheel (CPU/MPS), so local tests still run with
 no extra config.
 
-**Every run in a paired comparison trains and is scored on one GPU model: a Colab T4, unless
-the M6 timing test picks a faster one** (PROJECT_PLAN §3.3). The rule was settled at the M5-3
-review; the GPU itself stays open until that test. The rule covers the M6 dry run, the Week-7
-sweep, and the Week-8 ablation and attribution checks: every variant, regime and seed.
-Deterministic kernels ([Training](#training)) make reruns bit-identical only on one kind of GPU.
-On another, float rounding differs from the first optimizer step: base at seed 42, with the same
-code and learning rate, gave the same loss on a T4 and on an M4 Pro at step 0, and losses 0.002
-apart by step 10. So a seed whose base ran on one GPU and whose Ext 1 ran on another is not
-paired. When the chosen GPU is not free, wait for one; never take another GPU.
+**Every run in a paired comparison trains and is scored on one GPU model: Colab's G4 runtime,
+an `NVIDIA A100-SXM4-80GB`, with TF32 on** (PROJECT_PLAN §3.3), picked by M6-2's timing test
+([below](#the-timing-test-m6-2)). The rule was settled at the M5-3 review. It covers the M6 dry
+run, the Week-7 sweep, and the Week-8 ablation and attribution checks: every variant, regime and
+seed. Deterministic kernels ([Training](#training)) make reruns bit-identical only on one kind of
+GPU. On another, float rounding differs from the first optimizer step: base at seed 42, with the
+same code and learning rate, gave the same loss on a T4 and on an M4 Pro at step 0, and losses
+0.002 apart by step 10. So a seed whose base ran on one GPU and whose Ext 1 ran on another is not
+paired. When the chosen GPU is not free, wait for one; never take another GPU. That includes
+Colab's A100 runtime: its 40 GB card is the same chip, but nothing has checked that it rounds the
+same, so the guard treats it as another GPU.
 
-Why the T4 is the default:
-
-- It is the one GPU on every Colab tier, so all three of us can get it.
-- The plan's budget is timed on it (PROJECT_PLAN §8).
-- It has no TF32, so it computes in float32 throughout. An A100, L4 or H100 runs the denoiser's
-  convolutions in TF32 by default (`torch.backends.cudnn.allow_tf32` is `True` in torch
-  2.14.1), and nothing here turns that off.
-
-It is also Colab's slowest GPU, and Week 7 is about 270 T4-hours. So before the dry run, M6-2
-times training and scoring on each GPU everyone who runs a paired run can get (T4, L4 and A100
-on Colab Pro). It picks the one that finishes the sweep soonest, counting how often it is free
-and its compute units. If the pick has TF32, the setting is made explicit and is the same for
-every run. The pick and its timings are recorded here.
+Until the test, the T4 was the default: it is on every Colab tier, the plan's budget was timed on
+it, and it has no TF32. It is also Colab's slowest GPU: the test puts the Week-7 sweep at 322 h
+on it, against 67.5 h on the pick. An A100, L4 or H100 runs the denoiser's convolutions in TF32
+unless told not to (PyTorch's default: `torch.backends.cudnn.conv.fp32_precision` is `"tf32"` in
+torch 2.14.1). `protocol.tf32` tells it, the same for every run, in training and scoring; the
+pick turns it on ([The timing test](#the-timing-test-m6-2) says why). Josh, without student Colab
+Pro, can get only the T4, so M8-4's runs need an account with Colab Pro.
 
 Check the GPU before launching:
 
@@ -1327,7 +1536,8 @@ Check the GPU before launching:
 !nvidia-smi --query-gpu=name --format=csv,noheader
 ```
 
-It should print the chosen GPU's name (`Tesla T4` for the T4). wandb records each run's GPU in
+It should print `NVIDIA A100-SXM4-80GB`, the name the guard compares, not the runtime menu's
+"G4". wandb records each run's GPU in
 its metadata, and `diffusion.health` copies it into its record. Since M6-2 every run and every
 scoring also records its GPU itself, and a paired run refuses to start on any GPU but
 `protocol.paired_gpu` ([Paired sweep checks](#paired-sweep-checks-m6-2)). Health checks and debugging can run on any machine, but their
@@ -1347,6 +1557,96 @@ with `uv run` from a shell cell:
 The last line should print `2.14.1+cu130 13.0 True`. Run the tests anywhere with
 `uv run pytest`; the tests that need the raw Set A files skip themselves when the data has
 not been downloaded.
+
+### The timing test (M6-2)
+
+On each GPU everyone who runs a paired run can get, after the setup above:
+
+```text
+!uv run python -m diffusion.timing           # results/timing/<GPU>.json, e.g. tesla_t4.json
+!uv run python -m diffusion.timing --tf32    # an L4 or A100 only: the same with TF32 on
+```
+
+`diffusion/timing.py` trains base and Ext 1+2 for 2 epochs at seed 42 through `diffusion.run`, as
+a sweep run trains (deterministic kernels, pairing hashes, validation), with wandb off, into
+`outputs/timing/`. It reads each run's second epoch and its validation pass from `curve.json`,
+then times the first 2 of the test split's 50 batches of a frozen scoring pass (100 draws, batch
+16) on that run's weights. The second epoch and the second batch are the clean ones: the first
+epoch also builds the model, and the first batch warms the GPU up. The validation pass counts
+because a 200-epoch run makes 20 of them. Nothing is scored or sent to wandb.
+
+Base and Ext 1+2 are the sweep's cheapest and dearest variants. Ext 2's encoder adds about
+nothing to base, and Ext 1's is most of what Ext 1+2 adds, so the estimates cost ext2's runs at
+base's timings and ext1's (and ext1blind's) at Ext 1+2's (a slight overestimate). The cells costed
+are the config's `sweep.regimes`, the driver's ([Running the paired sweep](#running-the-paired-sweep-m6-2)).
+The record holds the GPU's exact name, the TF32 setting, the timings, and two estimates, with the
+counts they assume:
+
+- the Week-7 sweep: 30 runs of 200 epochs with 20 validation passes each, every run scored under
+  both holdouts, and base's 50% and 90% passes at 5 seeds: 70 scoring passes in all;
+- the dry run: the same 12 cells at 20 epochs and 2 seeds, scored as the sweep is, since the
+  results store refuses any scoring but the frozen one, so its 24 passes cost a sweep pass each.
+
+To pick:
+
+- Compare the candidates' sweep hours, with TF32 off and, on an L4 or A100, on.
+- Note how often Colab gave you each GPU, and its compute units per hour (Colab's Resources
+  panel). Colab Pro's compute units are a monthly allowance per account, so compare the sweep's
+  total units (hours × units per hour) with what the accounts running it have left, not only
+  the rate.
+- Keep the T4 unless another is clearly faster, reliably free and affordable in units.
+- Write the pick into `protocol.paired_gpu` exactly as its record's `gpu` says (`Tesla T4`,
+  `NVIDIA L4`, `NVIDIA A100-SXM4-80GB`), not as Colab's runtime menu names it. The guard
+  compares the string, so the 40 GB and 80 GB A100s are two GPUs to it. Set `protocol.tf32` to
+  the setting the pick was chosen with.
+- Fill in the table below, commit the records in `results/timing/`, and write the pick into
+  PROJECT_PLAN §3.3, all before the dry run.
+
+The records in `results/timing/`, timed on Colab Pro in November 2026 (the sweep's hours split
+into the scoring part and the rest):
+
+| GPU (its record's `gpu`) | Colab runtime | TF32 | Sweep h | of which scoring h | Dry run h |
+| --- | --- | --- | --- | --- | --- |
+| `Tesla T4` | T4 | none | 321.9 | 222.7 | 80.4 |
+| `NVIDIA L4` | L4 | off | 136.5 | 87.7 | 32.0 |
+| `NVIDIA L4` | L4 | on | 116.9 | 71.2 | 26.3 |
+| `NVIDIA A100-SXM4-40GB` | A100 | off | 88.5 | 49.7 | 18.6 |
+| `NVIDIA A100-SXM4-40GB` | A100 | on | 65.9 | 44.1 | 16.0 |
+| `NVIDIA A100-SXM4-80GB` | G4 | off | 88.0 | 49.7 | 18.6 |
+| **`NVIDIA A100-SXM4-80GB`** | **G4** | **on** | **67.5** | **45.3** | **16.4** |
+
+Compute units: the hourly rates were not read from the Resources panel. Each runtime's
+session, both timing runs plus setup, cost about 3 units for the T4 and L4 together, 5 for the
+A100 runtime, and 2.5 for G4. The A100 and G4 runtimes were each free on the first try.
+
+**The pick: Colab's G4 runtime, `NVIDIA A100-SXM4-80GB`, with TF32 on**
+(`protocol.paired_gpu: "NVIDIA A100-SXM4-80GB"`, `protocol.tf32: true`).
+
+- The A100s are the fastest. The 40 GB and 80 GB cards are the same chip and ran the sweep in the
+  same time (88.5 h and 88.0 h with TF32 off): the extra memory does nothing for this model.
+  G4's session cost half the A100 runtime's units for the same timed work (about 12 minutes of
+  timing each).
+- TF32 takes another 20.5 h off (88.0 h to 67.5 h). It roughly halves training (28.7 h to
+  15.2 h) but takes only about a tenth off scoring (49.7 h to 45.3 h). Scoring is two-thirds of
+  the sweep on this GPU, and a bigger GPU barely speeds it up: the scorer runs each patient's 100
+  draws one after another at batch 16, calls too small to fill an A100.
+- Runs stay paired with TF32 on: every run computes the same way on the same GPU with
+  deterministic kernels, and M6-2's rerun check (a rerun cell reproduces its numbers) runs with
+  TF32 on. The cost
+  is precision: TF32 rounds the inputs of convolutions and matrix multiplies to a 10-bit
+  mantissa, as PyTorch already does by default for convolutions on these GPUs. Every Δ is taken
+  against the sweep's own base, trained the same way.
+- The T4 would take 322 h, more than the plan's estimate of about 270 h, which came from scoring
+  timed at batch 64.
+
+Tests:
+
+- `tests/test_timing.py`: both estimates against a hand count; a timing run trains 2 epochs of
+  each variant, draws exactly 2 batches of each one's scoring pass, writes no scores, and
+  records its timings from the runs' `curve.json`; with `--tf32` the runs and the scoring
+  batches compute in TF32; a record is named for its GPU and TF32 setting.
+- `tests/test_train.py` and `tests/test_score.py`: training and scoring compute float32 as
+  `protocol.tf32` says (a config without it: float32), and a scoring records it.
 
 ---
 

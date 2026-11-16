@@ -89,10 +89,17 @@ protocol:
   # The one GPU model every paired run trains and is scored on (PROJECT_PLAN
   # §3.3, M6-2), as torch.cuda.get_device_name() names it, e.g. "Tesla T4". On
   # another GPU float rounding differs from the first step, so its runs are not
-  # paired. null until M6-2's timing test picks it: a paired run (run() and
-  # score() with paired=True) refuses to start on any other GPU, and refuses to
-  # start at all while this is null.
-  paired_gpu: null
+  # paired. A paired run (run() and score() with paired=True) refuses to start
+  # on any other GPU.
+  paired_gpu: NVIDIA A100-SXM4-80GB
+
+  # Whether CUDA computes float32 convolutions and matrix multiplies in TF32
+  # (PROJECT_PLAN §3.3, M6-2). An A100, L4 or H100 runs cuDNN convolutions in
+  # TF32 unless told not to (PyTorch's default); this makes the setting explicit
+  # and the same for every run, training (diffusion.train) and scoring
+  # (diffusion.score). Off: float32 throughout, as on the T4, which has no TF32
+  # (nor have MPS and the CPU, where it changes nothing).
+  tf32: true
 
   # Reproduction gate: base CSDI must reach <= this MAE @10% averaged over >=3
   # seeds before any extension delta is trusted (PROJECT_PLAN §3.4).
@@ -192,10 +199,19 @@ train:
   # The norm is still computed every step so it can be logged (M3-1).
   clip_grad_norm: null
   # Upstream's itr_per_epoch (1.0e+8) never binds on PhysioNet, so it is left out.
+  # Training regime (PROJECT_PLAN §3.1, M6-2), part of every run's name. random:
+  # TrainMasker's random strategy, validation on EvalMasker's holdout (the headline
+  # sweep, all four variants). block-aware: its mix strategy (block slots of
+  # protocol.block_window_hours), validation on BlockEvalMasker's (base and Ext 1).
+  # Test scoring is the same in both. diffusion.train.REGIMES maps each to its
+  # settings; diffusion.run's --regime sets it. A config without it is random.
+  regime: random
 
 # -----------------------------------------------------------------------------
 # Validation while training (M3-1): diffusion.run scores the val split's
-# EvalMasker targets (10%) every every_n_epochs epochs and on the last epoch.
+# targets (10%) every every_n_epochs epochs and on the last epoch, on the
+# holdout train.regime trains for (M6-2): EvalMasker's for random,
+# BlockEvalMasker's for block-aware.
 # TRACKING ONLY, not the frozen protocol: the median of n_samples draws, with the
 # frozen eval_sampling_seed, in batches of batch_size. Reported results use
 # eval.EvalSampler.from_config() (eval_n_samples: 100, eval_batch_size: 16).
@@ -207,6 +223,21 @@ validation:
   every_n_epochs: 10
   n_samples: 5
   batch_size: 64
+
+# -----------------------------------------------------------------------------
+# The paired sweep (M6-2; PROJECT_PLAN §3.1, §3.3): the cells diffusion.sweep
+# trains and scores, at every seed in protocol.run_seeds: 20 random-regime runs
+# and 10 block-aware ones. Each regime is paired only within itself. Every
+# run's final weights are scored on test under each holdout listed, at
+# protocol.eval_holdout_fraction. Which runs to launch, not what one trains:
+# left out of every run's saved and wandb config, like tracking, so a variant
+# added here later (M8-4's ext1blind) changes no run already trained.
+# -----------------------------------------------------------------------------
+sweep:
+  regimes:
+    random: [base, ext1, ext2, ext1+2]
+    block-aware: [base, ext1]
+  holdouts: [random, block]
 
 # -----------------------------------------------------------------------------
 # Experiment tracking (M3-2). Where runs are logged, not how they train: not

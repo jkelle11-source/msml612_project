@@ -25,7 +25,8 @@ ext1 and ext1+2, Ext 2's in ext2 and ext1+2). Every run of a regime must have th
 for the toggles (how a run is validated aside: it does not touch training) and come from the same
 git commit, and every run must have trained, and every holdout been scored, on
 ``protocol.paired_gpu``, the same for all. Every scoring must have used the frozen sampler and
-holdout of ``configs/config.yaml``, as the gate requires of its runs. Refused besides: two runs in
+holdout of ``configs/config.yaml``, as the gate requires of its runs, and its ``protocol.tf32``
+(a run's training TF32 is part of its config, so is checked with it). Refused besides: two runs in
 one cell, which wandb allows (a rerun gets the same name). Untag the one to leave out.
 """
 
@@ -136,6 +137,9 @@ def problems(runs, protocol=None):
             if scores.get("holdout_settings") != settings:
                 found.append(f"{run['name']}'s {holdout} was scored on holdout {scores.get('holdout_settings')}, "
                              f"not the frozen {settings}")
+            if scores.get("tf32") != protocol.get("tf32", False):
+                found.append(f"{run['name']}'s {holdout} was scored with tf32 {scores.get('tf32')}, "
+                             f"not the protocol's {protocol.get('tf32', False)}")
 
     for regime, group in regimes.items():
         configs = [flatten(shared_config(run["config"])) for run in group]
@@ -152,18 +156,28 @@ def problems(runs, protocol=None):
             found.append(f"the {regime} regime's runs come from different commits: {commits}")
 
     for (regime, seed), group in seeds.items():
-        hashes = {run["config"]["variant"]: summary_block(run["summary"], "pairing") for run in group}
-        for stream in STREAMS:
-            values = {variant: pairing.get(stream) for variant, pairing in hashes.items()}
-            if None in values.values() or len(set(values.values())) > 1:      # None: a run from before M6-2
-                found.append(f"{stream} is missing or differs across the {regime} regime's variants "
-                             f"at seed {seed}: {values}")
-        for encoder in ENCODERS:
-            key = f"init_{encoder}"
-            have = {variant: pairing.get(key) for variant, pairing in hashes.items() if key in pairing}
-            if len(set(have.values())) > 1:
-                found.append(f"{encoder} starts from different weights across the {regime} regime's variants "
-                             f"at seed {seed}: {have}")
+        found += unpaired(regime, seed, {run["config"]["variant"]: summary_block(run["summary"], "pairing")
+                                         for run in group})
+    return found
+
+def unpaired(regime, seed, hashes):
+    """What unpairs a regime's variants at one seed, from ``hashes``, ``{variant: summary["pairing"]}``.
+
+    Every stream and the shared starting weights must be equal in every variant, and each encoder's
+    starting weights in every variant that has it. Also run by ``diffusion.sweep`` as each cell ends.
+    """
+    found = []
+    for stream in STREAMS:
+        values = {variant: pairing.get(stream) for variant, pairing in hashes.items()}
+        if None in values.values() or len(set(values.values())) > 1:      # None: a run from before M6-2
+            found.append(f"{stream} is missing or differs across the {regime} regime's variants "
+                         f"at seed {seed}: {values}")
+    for encoder in ENCODERS:
+        key = f"init_{encoder}"
+        have = {variant: pairing.get(key) for variant, pairing in hashes.items() if key in pairing}
+        if len(set(have.values())) > 1:
+            found.append(f"{encoder} starts from different weights across the {regime} regime's variants "
+                         f"at seed {seed}: {have}")
     return found
 
 def record(runs, tag, protocol=None):

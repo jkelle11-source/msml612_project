@@ -3,7 +3,8 @@
     uv run python -m diffusion.run --seed 42
 
 Trains with ``diffusion.train.train``, scores the validation split every
-``validation.every_n_epochs`` epochs, and writes everything to ``outputs/<run name>/``
+``validation.every_n_epochs`` epochs on the holdout its regime trains for (``train.regime``, M6-2:
+``EvalMasker``'s in the random regime, ``BlockEvalMasker``'s in the block-aware one), and writes everything to ``outputs/<run name>/``
 (git-ignored) as it goes, so a run that is stopped keeps what it has done:
 
 - ``config.yaml``: the resolved config the run used. ``--config`` on it reruns the run.
@@ -15,11 +16,18 @@ Trains with ``diffusion.train.train``, scores the validation split every
   finished run leaves its final weights here, the ones that are scored (PROJECT_PLAN §3.1).
 - ``summary.json``: the 500-step health report, the final val MAE, whether it is below
   forward fill's, the GPU it trained on, its pairing hashes (M6-2: the starting weights of each
-  part, and each paired stream over the whole run), and the run's path on wandb
+  part, and each paired stream over the whole run), the SHA-256 of its final ``model.pt``
+  (``model_sha256``, which ``diffusion.score`` checks), and the run's path on wandb
   (``entity/project/id``; null if untracked).
+- ``checkpoint.pt`` (M6-2): the model, optimizer and learning-rate schedule, the epoch, the number
+  of steps so far and the run's wandb path, rewritten whole after every validated epoch but the
+  last (see ``run``).
 
 The run refuses an output folder that is not empty, so two runs' files never mix; with
-``--overwrite`` it first deletes the files a run writes (``RUN_FILES``), and nothing else.
+``--overwrite`` it first deletes the files a run writes (``RUN_FILES``), and nothing else. With
+``--resume`` (M6-2) it continues the run in the folder from its checkpoint, on the same wandb run,
+and ends with the same files and numbers as a run that was never stopped; a folder with no usable
+checkpoint (none yet, or one its ``history.jsonl`` and ``curve.json`` do not reach) is started again.
 
 The same numbers stream to wandb as the run goes (M3-2), to the team and project in the
 config's ``tracking`` block, under the name ``run_name()`` gives: every step's loss, gradient
@@ -37,6 +45,7 @@ import argparse
 import copy
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 
@@ -46,22 +55,24 @@ import wandb
 import yaml
 
 from data.physionet import load_dataset
-from diffusion.train import train
-from eval import EvalMasker, EvalSampler, masked_mae, masked_rmse, median_imputation
+from diffusion.train import REGIMES, regime_name, train
+from eval import BlockEvalMasker, EvalMasker, EvalSampler, masked_mae, masked_rmse, median_imputation
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "configs" / "config.yaml"
 DATASET_PATH = ROOT / "data" / "processed" / "physionet_set_a.npz"
 BASELINES_PATH = ROOT / "results" / "baselines.json"
 OUTPUTS = ROOT / "outputs"
-RUN_FILES = ("config.yaml", "history.jsonl", "curve.json", "model.pt", "summary.json")
+RUN_FILES = ("config.yaml", "history.jsonl", "curve.json", "model.pt", "summary.json", "checkpoint.pt")
+CHECKPOINT_TEMP = "checkpoint.pt.tmp"       # written, then renamed: a session lost mid-save leaves the last one whole
 
 # Where runs are logged (M3-2). Not part of a run: read from the repo's config, and left out
 # of a run's saved config and its wandb config, so every saved config reruns the same way.
 TRACKING = yaml.safe_load(CONFIG_PATH.read_text())["tracking"]
-# TODO(M6-2): every run trains in the random regime until M6-2 adds TrainMasker's block-aware
-# ``mix`` strategy; then read the regime from the config here.
-REGIME = "random"
+# The config blocks that are not part of a run, so are left out of its saved and wandb config: where
+# runs are logged, and which runs diffusion.sweep launches (M6-2), which may grow (M8-4's ext1blind)
+# without changing a run already trained.
+NOT_A_RUN = ("tracking", "sweep")
 
 # Health-report thresholds (ours, M3-1). A spike is a step whose gradient norm is this many
 # times the median over the steps checked; an explosion is the last tenth of those steps
@@ -150,7 +161,17 @@ def variant_name(config):
 
 def run_name(config, seed):
     """``<variant>_<regime>_seed<seed>``, e.g. ``base_random_seed42``: the run's name on wandb (M3-2)."""
-    return f"{variant_name(config)}_{REGIME}_seed{seed}"
+    return f"{variant_name(config)}_{regime_name(config)}_seed{seed}"
+
+def validation_masker(config):
+    """The holdout a run's validation tracks, built from the run's own config: the one its regime
+    trains for (PROJECT_PLAN §3.1), at the headline 10%."""
+    protocol, data = config["protocol"], config["data"]
+    grid = (data["n_timesteps"], data["n_features"])
+    if REGIMES[regime_name(config)]["holdout"] == "block":
+        return BlockEvalMasker(protocol["block_eval_masker_seed"], protocol["eval_holdout_fraction"],
+                               protocol["block_window_hours"], grid)
+    return EvalMasker(protocol["eval_masker_seed"], protocol["eval_holdout_fraction"], grid)
 
 def forward_fill_val_mae(path=BASELINES_PATH):
     """Forward fill's 10% validation MAE from the recorded baselines (M2-3): M3-1's bar."""
@@ -205,45 +226,103 @@ def health_report(history, n_steps=500):
                          and report["complete"])
     return report
 
-def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wandb_mode=None, tags=(), paired=False):
+def history_records(path):
+    """The records of a ``history.jsonl``, up to a line cut short by a session lost while writing it."""
+    records = []
+    for line in path.read_text().splitlines() if path.exists() else ():
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            break
+    return records
+
+def resume_point(out_dir, config, log=print):
+    """``(checkpoint, history, curve)`` to resume the unfinished run in ``out_dir`` from; None to start it again.
+
+    ``history`` and ``curve`` are its ``history.jsonl`` records and ``curve.json`` rows up to the
+    checkpoint's epoch; anything later is redone. None if it has no checkpoint yet, or if those files
+    do not reach the checkpoint: Google Drive uploads each file in the background, so a session lost
+    on it can leave a newer ``checkpoint.pt`` than them, and a run resumed from it would lack the steps
+    and epochs in between (review of #57). Starting again is always right. Refuses a finished run
+    (nothing to resume) and a run whose saved config is not ``config``: resuming with another config
+    would end as neither run.
+    """
+    if (out_dir / "summary.json").exists():
+        raise FileExistsError(f"{out_dir} holds a finished run: there is nothing to resume")
+    if not (out_dir / "checkpoint.pt").exists():
+        return None
+    if yaml.safe_load((out_dir / "config.yaml").read_text()) != config:
+        raise ValueError(f"the run in {out_dir} was started with another config: resume it with its own "
+                         "(--config on its config.yaml)")
+    checkpoint = torch.load(out_dir / "checkpoint.pt", map_location="cpu")
+    done = checkpoint["epoch"]
+    history = [record for record in history_records(out_dir / "history.jsonl") if record["epoch"] <= done]
+    try:
+        curve = [row for row in json.loads((out_dir / "curve.json").read_text()) if row["epoch"] <= done]
+    except (FileNotFoundError, json.JSONDecodeError):
+        curve = []
+    if len(history) != checkpoint.get("steps") or [row["epoch"] for row in curve] != list(range(done + 1)):
+        log(f"{out_dir.name}'s history.jsonl and curve.json do not reach its checkpoint at epoch {done + 1}: "
+            "starting it again")
+        return None
+    return checkpoint, history, curve
+
+def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wandb_mode=None, tags=(), paired=False,
+        resume=False):
     """Train one model and score it on the validation split as it goes; returns ``(model, summary)``.
 
     ``out_dir`` must be empty or new. With ``overwrite`` an earlier run's files are deleted first,
-    so a run that stops early cannot leave them next to its own. ``wandb_mode`` is passed to
+    so a run that stops early cannot leave them next to its own. With ``resume`` (M6-2) the
+    unfinished run in ``out_dir`` goes on from its checkpoint, on the same wandb run, keeping its
+    earlier steps and epochs (each stream's hash chain is rebuilt from them), and ends with the same
+    files and numbers as a run that was never stopped; with no usable checkpoint (``resume_point``),
+    the run starts again. The checkpoint is written after every validated epoch, when ``model.pt``
+    is too, but not after the last: the summary follows the last, so a run stopped between the two
+    redoes its last ``validation.every_n_epochs`` epochs, and the final ``model.pt`` whose hash the
+    summary records is always one written in the same session (review of #57). ``wandb_mode`` is passed to
     ``wandb.init``: ``"online"``, ``"offline"``, ``"disabled"``, or ``None`` (the default) to let
     ``WANDB_MODE`` decide, as the command line does, so a harness looping over ``run()`` is
     tracked unless told otherwise. ``tags`` are added to the wandb run's variant, regime and seed.
     Nothing is written to ``out_dir`` until wandb has started, so a run that cannot start (no
     wandb login) can simply be run again. With ``paired`` (a sweep run, M6-2) it refuses to start,
     before writing or sending anything, on any GPU but ``protocol.paired_gpu``. A config whose
-    toggles are none of the ``VARIANTS`` (``mask_embedding_blind`` without Ext 1, M6-3) is refused
-    first, before ``overwrite`` deletes anything.
+    toggles are none of the ``VARIANTS`` (``mask_embedding_blind`` without Ext 1, M6-3) or whose
+    ``train.regime`` is none of the ``REGIMES`` is refused first, before ``overwrite`` deletes anything.
     """
     variant = variant_name(config)                  # raises ValueError for toggles that are no variant
+    regime = regime_name(config)                    # ... and for a regime that is none of REGIMES
     if paired:
         require_paired_gpu(config["protocol"], device)
-    config = {key: value for key, value in config.items() if key != "tracking"}     # see TRACKING
+    config = {key: value for key, value in config.items() if key not in NOT_A_RUN}
     out_dir = Path(out_dir)
-    if out_dir.exists() and any(out_dir.iterdir()):
-        if not overwrite:
+    point = resume_point(out_dir, config, log) if resume else None
+    checkpoint, history, curve = (None, [], []) if point is None else point
+    if checkpoint is None and out_dir.exists() and any(out_dir.iterdir()):
+        if not (overwrite or resume):
             raise FileExistsError(f"{out_dir} is not empty; pass --overwrite to replace the run in it")
-        for name in RUN_FILES:      # only a run's own files: a mistaken --out must not wipe a folder
+        for name in (*RUN_FILES, CHECKPOINT_TEMP):  # only a run's own files: a mistaken --out must not wipe a folder
             (out_dir / name).unlink(missing_ok=True)
 
-    protocol, data, validation = config["protocol"], config["data"], config["validation"]
-    masker = EvalMasker(protocol["eval_masker_seed"], protocol["eval_holdout_fraction"],
-                        (data["n_timesteps"], data["n_features"]))
+    protocol, validation = config["protocol"], config["validation"]
+    masker = validation_masker(config)
     sampler = EvalSampler(protocol["eval_sampling_seed"], validation["n_samples"], validation["batch_size"])
     epochs, bar = config["train"]["epochs"], forward_fill_val_mae()
-    history, curve, clock = [], [], {"start": time.time()}
+    clock = {"start": time.time()}
+
+    def validated(epoch):                       # every every_n_epochs epochs, and the last
+        return (epoch + 1) % validation["every_n_epochs"] == 0 or epoch + 1 == epochs
+
     # Pairing hashes (M6-2): the starting weights, then what each paired stream gives every epoch as
     # training draws it, so diffusion.results can check a seed's variants were given the same.
     init, epoch_streams = {}, {}
+    same_wandb_run = {} if checkpoint is None or checkpoint["wandb_run"] is None else \
+        {"id": checkpoint["wandb_run"].split("/")[-1], "resume": "must"}
     tracker = wandb.init(entity=TRACKING["wandb_entity"], project=TRACKING["wandb_project"],
                          mode=wandb_mode, name=run_name(config, seed), job_type="train",
-                         tags=[variant, REGIME, f"seed{seed}", *tags],
-                         config={**config, "seed": seed, "variant": variant, "regime": REGIME, "device": device,
-                                 "gpu": gpu_name(device), "out_dir": str(out_dir.resolve())})
+                         tags=[variant, regime, f"seed{seed}", *tags],
+                         config={**config, "seed": seed, "variant": variant, "regime": regime, "device": device,
+                                 "gpu": gpu_name(device), "out_dir": str(out_dir.resolve())},
+                         **same_wandb_run)
 
     def on_start(weights):                                      # as built, before any update
         init.update(weight_hashes(weights))
@@ -275,7 +354,7 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
                **{f"{stream}_sha256": digest.hexdigest() for stream, digest in epoch_streams.items()}}
         epoch_streams.clear()
         line = f"epoch {epoch + 1}/{epochs}  loss {row['loss']:.4f}  max grad norm {row['grad_norm_max']:.2f}"
-        if (epoch + 1) % validation["every_n_epochs"] == 0 or epoch + 1 == epochs:
+        if validated(epoch):
             started = time.time()
             row.update({f"val_{k}": v for k, v in validate(model, dataset, sampler, masker).items()})
             row["val_seconds"] = round(time.time() - started, 1)
@@ -292,12 +371,26 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
         log(f"{line}  [{row['seconds']:.0f}s]")
         clock["start"] = time.time()
 
+    def on_checkpoint(state):                       # after on_epoch_end, so the files hold the epoch too
+        # Only after a validated epoch, with model.pt (a tenth of the Drive uploads of every epoch), and
+        # never after the last (see the docstring). steps: how far history.jsonl must reach to resume.
+        if not validated(state["epoch"]) or state["epoch"] + 1 == epochs:
+            return
+        torch.save({**state, "steps": len(history), "wandb_run": None if tracker.disabled else tracker.path},
+                   out_dir / CHECKPOINT_TEMP)
+        os.replace(out_dir / CHECKPOINT_TEMP, out_dir / "checkpoint.pt")
+
     with tracker:                                   # a run that raises is closed on wandb as failed
         out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
-        (out_dir / "history.jsonl").write_text("")
+        if checkpoint is None:
+            (out_dir / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
+        else:
+            log(f"resuming {out_dir.name} at epoch {checkpoint['epoch'] + 2}/{epochs}, from its checkpoint")
+        (out_dir / "history.jsonl").write_text("".join(json.dumps(r) + "\n" for r in history))
+        if curve:
+            (out_dir / "curve.json").write_text(json.dumps(curve, indent=1) + "\n")
         model, _ = train(config, dataset, seed, device, on_epoch_end=on_epoch_end, on_step_end=on_step_end,
-                         on_batch=on_batch, on_start=on_start)
+                         on_batch=on_batch, on_start=on_start, on_checkpoint=on_checkpoint, resume=checkpoint)
 
         final = curve[-1]                                       # the last epoch is always scored
         summary = {
@@ -309,9 +402,13 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
             "pairing": {**{f"init_{part}": digest for part, digest in init.items()},
                         **{stream: chain_sha256(row[f"{stream}_sha256"] for row in curve)
                            for stream in PAIRED_STREAMS}},
-            "validation": {"split": "val", "n_samples": validation["n_samples"], "batch_size": validation["batch_size"]},
+            "validation": {"split": "val", "holdout": REGIMES[regime]["holdout"],
+                           "n_samples": validation["n_samples"], "batch_size": validation["batch_size"]},
             "health": health_report(history),
             "final_val_mae": final["val_mae"],
+            # The final weights, as this session wrote them: diffusion.score refuses a model.pt that is not
+            # them, e.g. an earlier epoch's that Google Drive kept when a session was lost (review of #57).
+            "model_sha256": hashlib.sha256((out_dir / "model.pt").read_bytes()).hexdigest(),
             "forward_fill_val_mae": bar,
             "below_forward_fill": None if bar is None else final["val_mae"] < bar,
             # entity/project/id on wandb, so a later step (the gate's test scoring, M4-1) can find the run
@@ -330,6 +427,9 @@ def main(argv=None):
     parser.add_argument("--epochs", type=int, help="override train.epochs; recorded in the saved config")
     parser.add_argument("--validate-every", type=int,
                         help="override validation.every_n_epochs; recorded in the saved config")
+    parser.add_argument("--regime", choices=list(REGIMES),
+                        help="set train.regime (M6-2): random, or block-aware (TrainMasker's mix strategy, "
+                             "validated on the block holdout); recorded in the saved config")
     parser.add_argument("--variant", choices=list(VARIANTS),
                         help="set every extension toggle to this variant's, on or off (M6-1); recorded in "
                              "the saved config. Not with a toggle flag")
@@ -344,6 +444,9 @@ def main(argv=None):
                         help="output folder (default outputs/<run name>, e.g. outputs/base_random_seed42)")
     parser.add_argument("--overwrite", action="store_true",
                         help="delete an earlier run's files in the output folder first")
+    parser.add_argument("--resume", action="store_true",
+                        help="continue the unfinished run in the output folder from its last epoch (M6-2), "
+                             "with the same flags; start it again if it never finished one")
     parser.add_argument("--wandb", choices=("online", "offline", "disabled"),
                         help="wandb mode (default: WANDB_MODE if set, else online)")
     parser.add_argument("--tag", action="append", default=[],
@@ -353,12 +456,16 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.variant is not None and (args.use_mask_embedding or args.use_time_encoding or args.mask_embedding_blind):
         parser.error("--variant sets every extension toggle; give it or the toggle flags, not both")
+    if args.resume and args.overwrite:
+        parser.error("--resume continues the run in the folder and --overwrite deletes it: give one")
 
     config = copy.deepcopy(yaml.safe_load(args.config.read_text()))
     if args.epochs is not None:
         config["train"]["epochs"] = args.epochs
     if args.validate_every is not None:
         config["validation"]["every_n_epochs"] = args.validate_every
+    if args.regime is not None:
+        config["train"]["regime"] = args.regime
     if args.variant is not None:
         config = with_variant(config, args.variant)
     if args.use_mask_embedding:
@@ -369,14 +476,15 @@ def main(argv=None):
         config["model"]["mask_embedding_blind"] = True
     try:
         variant_name(config)
+        regime_name(config)
     except ValueError as error:                 # e.g. --mask_embedding_blind without Ext 1
         parser.error(str(error))
     device = pick_device(args.device)
     out_dir = args.out or OUTPUTS / run_name(config, args.seed)             # the run's wandb name
-    print(f"{variant_name(config)} seed {args.seed} on {device}, {config['train']['epochs']} epochs -> {out_dir}", flush=True)
+    print(f"{variant_name(config)} {regime_name(config)} seed {args.seed} on {device}, {config['train']['epochs']} epochs -> {out_dir}", flush=True)
     _, summary = run(config, load_dataset(args.dataset), args.seed, device, out_dir,
                      log=lambda line: print(line, flush=True), overwrite=args.overwrite,
-                     wandb_mode=args.wandb, tags=args.tag, paired=args.paired)
+                     wandb_mode=args.wandb, tags=args.tag, paired=args.paired, resume=args.resume)
     print(json.dumps(summary, indent=1))
 
 if __name__ == "__main__":

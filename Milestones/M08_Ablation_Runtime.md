@@ -26,11 +26,11 @@
   | Ext 1 attribution checks, only if triggered (§4.1) | — | Ext 1-blind | 3 | 3† |
 
   \*If compute is tight, sweep `T` at a single `d_model` and **state it**. Total ≈ 35–40 runs.
-  †Block-aware regime, plus 6 off-grid scoring passes of M7's block-aware runs (no retraining); about 37 h of compute, on a session of its own on the sweep's GPU (§3.3), in parallel with the ablation.
+  †Block-aware regime, plus 6 off-grid scoring passes of M7's block-aware runs (no retraining); about 8.5 h of compute (§8), on a session of its own on the sweep's GPU (§3.3), in parallel with the ablation.
 - **Ext 1's attribution checks run only if triggered** (§4.1, fixed before any result). `M7-2` says whether Ext 1's block-aware contrast separates from zero; if it does not, there is no gain to attribute and `M8-4` closes with that one line.
 - **`n_heads = 8` is fixed across the `d_model` sweep** (upstream CSDI's value; head_dim 8/16/32, all valid) so divisibility doesn't silently break the ablation (§3.6).
 - **Runtime is a first-class result, not an afterthought** (§7). The MAE-vs-latency curve is one of the guaranteed high-performance stories even if every extension comes back null.
-- **Every run and every latency on the sweep's GPU** (§3.3, settled at the `M5-3` review; picked by `M6-2`'s timing test, a T4 by default). Ablation cells are compared with each other and the attribution checks with M7's runs, so they share M7's GPU; a latency compares only with latencies timed on the same GPU.
+- **Every run and every latency on the sweep's GPU** (§3.3, settled at the `M5-3` review; `M6-2`'s timing test picked Colab's G4 runtime, an `NVIDIA A100-SXM4-80GB`, with TF32 on). Ablation cells are compared with each other and the attribution checks with M7's runs, so they share M7's GPU; a latency compares only with latencies timed on the same GPU.
 - **Conformal gate is a real decision with a real deadline** — end of this week (§4.3). If the combined model isn't stable at ≤ ~0.24 @10%, cut conformal cleanly; it does not weaken the core project.
 
 ---
@@ -109,8 +109,8 @@
 **Context.** The two checks §4.1 fixed before any result, built in `M6-3`. They run only if `M7-2` reports Ext 1's block-aware paired Δ vs. base separated from zero; otherwise this issue closes with that one line, since a null needs no control. **Ext 1-blind** asks whether the gain comes from the mask information or from the encoder's extra weights and learned position vector; the **off-grid block holdout** asks whether it survives blocks that do not sit on the training grid. Josh runs them: Week 8 is light on the Ext 1 track, and his session on the sweep's GPU runs in parallel with the ablation.
 
 **Deliverables**
-- If triggered: Ext 1-blind trained in the block-aware regime at seeds 42–44 through the paired harness, final weights scored on `BlockEvalMasker` (about 2.1 h of training and a 3.4 h scoring pass a run, timed on an M4 Pro, which runs as fast as a T4: about 16.5 h on a T4). It trains and is scored on the sweep's GPU, like the Ext 1 runs it is paired with (§3.3).
-- If triggered: the block-aware base and Ext 1 runs at seeds 42–44 from `M7-1` scored on the off-grid holdout, no retraining (6 passes, about 20 h).
+- If triggered: Ext 1-blind trained in the block-aware regime at seeds 42–44 through the paired harness, final weights scored on `BlockEvalMasker` (about 1.5 h a run with its validation and scoring pass on the sweep's GPU, costed at Ext 1+2's timings as `M6-2`'s timing test costs Ext 1: about 4.5 h). It trains and is scored on the sweep's GPU, like the Ext 1 runs it is paired with (§3.3).
+- If triggered: the block-aware base and Ext 1 runs at seeds 42–44 from `M7-1` scored on the off-grid holdout, no retraining (6 passes, about 4 h on the sweep's GPU).
 - Paired Δ ± SE over seeds 42–44 for Ext 1 vs. Ext 1-blind on the block holdout, and for Ext 1 vs. base on the off-grid holdout, set beside Ext 1 vs. base on the block holdout over the same hours, 1–45, and over all hours, with `M7-2`'s paired-Δ code, written into the results store. The off-grid holdout never hides hour 0, base's hardest hour, nor hours 46–47 (§4.1), so the like-for-like comparison is the block holdout over hours 1–45: `diffusion.score.span_mae` reads it from each run's saved block scoring, with no new pass.
 - If not triggered: a one-line record of the `M7-2` Δ and SE that decided it.
 
@@ -118,6 +118,8 @@
 - Train Ext 1-blind from the commit M7's block-aware runs were trained from: the results store refuses a regime whose runs come from different commits.
 - Give it a tag the store collects with M7's block-aware runs (the sweep's tag, or M8-4's added to M7's block-aware runs at seeds 42–44). It is scored on the block holdout only, so the store lists its `random/0.1` as unscored, as expected.
 - Keep M7's block-aware run folders at seeds 42–44: off-grid scoring needs their `model.pt`, and `span_mae` their `median_test_block_0.1.npy`. The store holds neither.
+- From the review of #57 (M6-2's driver): run both checks with `diffusion.sweep` in the sweep's folder, under the sweep's tag and from its commit. `--regime block-aware --variants ext1blind --seeds 42 43 44 --holdouts block` trains and scores Ext 1-blind; `--regime block-aware --variants base ext1 --seeds 42 43 44 --holdouts offgrid` scores M7's runs off the grid, training nothing (README, Ext 1's attribution checks).
+- The sweep's folder is on the Google Drive of whoever ran M7: they share it as an editor with whoever runs M8-4, who adds it to their own Drive as a shortcut in My Drive and passes that path as `--out`. In a folder of its own, Ext 1-blind would be checked against nothing until the store is written.
 
 **Definition of Done**
 - [ ] Trigger decision recorded from `M7-2`'s numbers.

@@ -36,7 +36,8 @@ from diffusion.score import scores_name
 from eval import EvalMasker, masked_mae, masked_rmse
 
 GATE_PATH = ROOT / "results" / "gate.json"
-TRACKING_ONLY = ("tracking", "validation")      # where a run is logged and how it is watched, not what it trains
+# Where a run is logged, how it is watched, and which runs the harness launches (M6-2): not what one trains.
+TRACKING_ONLY = ("tracking", "validation", "sweep")
 
 def mean_se(xs):
     """Mean and SE (sample standard deviation over √n) of ``xs``; SE is None for a single value."""

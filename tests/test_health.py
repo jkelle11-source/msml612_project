@@ -147,6 +147,13 @@ def test_a_note_for_a_variant_not_given_is_refused():
     with pytest.raises(ValueError, match="notes for variants not given"):
         record([fake_run()], notes={"ext2": "pending"})
 
+def test_each_regime_is_validated_on_its_own_holdout():
+    block_aware = [fake_run(), ext1_run()]
+    for run in block_aware:
+        run["config"]["regime"] = "block-aware"
+    assert record(block_aware)["validation"]["holdout"] == "block"
+    assert record([fake_run(), ext1_run()])["validation"]["holdout"] == "random"
+
 # --- the encoders' gates ------------------------------------------------------------------
 
 def test_the_gate_is_read_from_the_runs_weights():

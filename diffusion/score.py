@@ -5,7 +5,9 @@
 This is the protocol's number for a run; validation while training (5 draws) is tracking only.
 The model is rebuilt from the run's saved ``config.yaml`` and given its ``model.pt``, its final
 weights (PROJECT_PLAN §3.1). A run without ``summary.json`` has not finished, so its ``model.pt``
-is an earlier epoch's, and it is refused. The holdout and the sampler are the frozen protocol's,
+is an earlier epoch's, and it is refused; so is a ``model.pt`` that is not the final weights its
+``summary.json`` records (``model_sha256``, M6-2; a run from before has none, and is not checked).
+The holdout and the sampler are the frozen protocol's,
 from ``configs/config.yaml``:
 
 - the holdout: ``EvalMasker``'s random holdout at 10% (``--fraction 0.5`` or ``0.9`` for CSDI's
@@ -34,7 +36,8 @@ The scores are also added to the run's wandb summary (``wandb_run`` in its ``sum
 the baselines' keys, e.g. ``random/0.1/test/mae``, so the runs table lines CSDI up with them.
 ``--wandb disabled`` skips that, as does ``WANDB_MODE`` set to anything but ``online``. Beside the
 MAE and RMSE go what ``diffusion.results`` needs to collect and check them (M6-2): the GPU they were
-scored on (``random/0.1/test/gpu``), the sampler's and holdout's settings
+scored on (``random/0.1/test/gpu``), whether the pass ran in TF32 (``.../tf32``, from the frozen
+``protocol.tf32``, which the pass applies), the sampler's and holdout's settings
 (``random/0.1/test/sampler.eval_n_samples``, ``.../holdout_settings.eval_masker_seed``) and the
 per-variable MAE (``.../per_variable_mae.HR``). A paired run's scoring (``score(..., paired=True)``
 or ``--paired``) starts only on ``protocol.paired_gpu``.
@@ -55,7 +58,7 @@ import yaml
 
 from data.physionet import load_dataset
 from diffusion.run import CONFIG_PATH, DATASET_PATH, gpu_name, pick_device, require_paired_gpu
-from diffusion.train import use_deterministic_kernels
+from diffusion.train import use_deterministic_kernels, use_tf32
 from eval import BlockEvalMasker, EvalMasker, EvalSampler, OffGridBlockEvalMasker, masked_errors, masked_mae, \
     masked_rmse, median_imputation, per_variable_mae
 from models.build import build_model
@@ -106,21 +109,27 @@ def score(run_dir, dataset, device, holdout="random", fraction=None, split="test
     With ``paired`` (a sweep run, M6-2) it refuses any GPU but that block's ``paired_gpu``.
     """
     use_deterministic_kernels()                 # before any CUDA work (README, Training)
+    protocol = yaml.safe_load(Path(config_path).read_text())["protocol"]
     if paired:
-        require_paired_gpu(yaml.safe_load(Path(config_path).read_text())["protocol"], device)
+        require_paired_gpu(protocol, device)
+    tf32 = protocol.get("tf32", False)          # the frozen protocol's, as the sampler's settings are
+    use_tf32(tf32)
     run_dir = Path(run_dir)
     if not (run_dir / "summary.json").exists():
         raise FileNotFoundError(f"{run_dir} has no summary.json: the run has not finished, "
                                 "so its model.pt is not its final weights")
     summary = json.loads((run_dir / "summary.json").read_text())
     run_config = yaml.safe_load((run_dir / "config.yaml").read_text())
-    protocol = yaml.safe_load(Path(config_path).read_text())["protocol"]
     fraction = protocol["eval_holdout_fraction"] if fraction is None else fraction
     grid = (run_config["data"]["n_timesteps"], run_config["data"]["n_features"])
     masker, holdout_settings = holdout_masker(protocol, grid, holdout, fraction)
     sampler = EvalSampler(protocol["eval_sampling_seed"], protocol["eval_n_samples"], protocol["eval_batch_size"])
 
     weights = (run_dir / "model.pt").read_bytes()
+    model_sha256 = hashlib.sha256(weights).hexdigest()
+    if summary.get("model_sha256", model_sha256) != model_sha256:       # none: a run from before M6-2's review
+        raise ValueError(f"{run_dir}'s model.pt is not the final weights its summary.json records (an earlier "
+                         "epoch's, kept by Google Drive when a session was lost?): train the run again")
     model = build_model(run_config, device)
     model.load_state_dict(torch.load(io.BytesIO(weights), map_location=device))
 
@@ -159,8 +168,9 @@ def score(run_dir, dataset, device, holdout="random", fraction=None, split="test
                     "eval_batch_size": sampler.batch_size},
         "device": device,
         "gpu": gpu_name(device),
+        "tf32": tf32,
         "seconds": round(time.time() - started, 1),
-        "model_sha256": hashlib.sha256(weights).hexdigest(),
+        "model_sha256": model_sha256,
         "wandb_run": summary.get("wandb_run"),
     }
     name = scores_name(split, holdout, fraction)
@@ -207,7 +217,8 @@ def attach_to_wandb(scores, mode=None):
 
     Keys are the baselines' (``eval.baselines.wandb_summary``): ``<holdout>/<fraction>/<split>/<metric>``
     for the MAE and RMSE. Beside them, for ``diffusion.results`` (M6-2): ``.../gpu`` (null off CUDA,
-    and for scores from before M6-2, which did not record it), and the sampler's and holdout's
+    and for scores from before M6-2, which did not record it), ``.../tf32`` (whether the pass ran in
+    TF32, ``protocol.tf32``; null for scores from before it was recorded), and the sampler's and holdout's
     settings and the per-variable MAE as ``.../sampler.<key>``, ``.../holdout_settings.<key>`` and
     ``.../per_variable_mae.<variable>``, written flat as wandb keeps a nested block anyway.
     Skipped for an untracked run, and unless ``mode`` (default ``WANDB_MODE``, else online) is online.
@@ -216,7 +227,8 @@ def attach_to_wandb(scores, mode=None):
     if mode != "online" or scores["wandb_run"] is None:
         return False
     prefix = f"{scores['holdout']}/{scores['fraction']}/{scores['split']}"
-    update = {f"{prefix}/mae": scores["mae"], f"{prefix}/rmse": scores["rmse"], f"{prefix}/gpu": scores.get("gpu")}
+    update = {f"{prefix}/mae": scores["mae"], f"{prefix}/rmse": scores["rmse"], f"{prefix}/gpu": scores.get("gpu"),
+              f"{prefix}/tf32": scores.get("tf32")}
     for block in ("sampler", "holdout_settings", "per_variable_mae"):
         update |= {f"{prefix}/{block}.{key}": value for key, value in scores.get(block, {}).items()}
     wandb.Api().run(scores["wandb_run"]).summary.update(update)

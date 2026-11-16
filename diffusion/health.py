@@ -43,14 +43,13 @@ import torch
 
 from diffusion.gate import flatten
 from diffusion.run import ROOT, TRACKING, health_report
+from diffusion.train import REGIMES
 
 RESULTS = ROOT / "results"
 STATUS = "health only, not an effect measurement"
 LABELS = ("out_dir", "variant")     # name a run, not what it trains: left out of config_differences
 VALIDATION_KEYS = ("validation.n_samples", "validation.batch_size", "protocol.eval_masker_seed",
                    "protocol.eval_sampling_seed", "protocol.eval_holdout_fraction")
-# TODO(M6-2): the block-aware regime validates on BlockEvalMasker's holdout (PROJECT_PLAN §3.1).
-HOLDOUT_OF_REGIME = {"random": "random"}
 # Each extension's toggle: its encoder's gate in model.pt, as models.build_model names it, and the
 # gate's field in the record. A run from before M5-2 has no use_time_encoding: off.
 GATES = {"use_mask_embedding": ("mask_encoder.gate", "mask_encoder_gate"),     # Ext 1, MissingnessEncoder
@@ -192,7 +191,7 @@ def record(runs, notes=None, ticket="M5-3"):
         if len({repr(leaves.get(key)) for leaves in flat.values()}) > 1:
             problems.append(f"runs validated with different {key}: {[leaves.get(key) for leaves in flat.values()]}")
     regime = runs[0]["config"]["regime"]
-    if regime not in HOLDOUT_OF_REGIME:
+    if regime not in REGIMES:
         problems.append(f"no validation holdout known for regime {regime!r}")
     unknown = set(notes) - set(configs)
     if unknown:
@@ -208,7 +207,7 @@ def record(runs, notes=None, ticket="M5-3"):
         "ticket": ticket,
         "seed": first["seed"],
         "regime": regime,
-        "validation": {"split": "val", "holdout": HOLDOUT_OF_REGIME[regime],
+        "validation": {"split": "val", "holdout": REGIMES[regime]["holdout"],
                        "fraction": first["protocol"]["eval_holdout_fraction"],
                        "n_samples": first["validation"]["n_samples"],
                        "batch_size": first["validation"]["batch_size"]},

@@ -10,6 +10,7 @@ from conftest import CONFIG
 from data.physionet import save_dataset
 from diffusion.run import run
 from diffusion.score import attach_to_wandb, main, score, span_mae
+from diffusion.train import use_tf32
 from eval import BlockEvalMasker, EvalMasker, EvalSampler, OffGridBlockEvalMasker, masked_mae, median_imputation
 from models.build import build_model
 import torch
@@ -132,6 +133,9 @@ def test_the_runs_own_weights_are_scored(run_dir, small_dataset, tmp_path):
         for p in model.parameters():
             p.add_(torch.randn(p.shape) * 0.1)
     torch.save(model.state_dict(), run_dir / "model.pt")
+    summary = json.loads((run_dir / "summary.json").read_text())
+    summary["model_sha256"] = hashlib.sha256((run_dir / "model.pt").read_bytes()).hexdigest()   # as the run's own
+    (run_dir / "summary.json").write_text(json.dumps(summary))
     assert score(run_dir, small_dataset, "cpu", config_path=config, log=quiet)["mae"] != scores["mae"]
 
 def test_the_scores_record_the_hash_of_the_weights_scored(run_dir, small_dataset, fake_sampler):
@@ -142,6 +146,24 @@ def test_an_unfinished_run_is_refused(run_dir, small_dataset, fake_sampler):
     (run_dir / "summary.json").unlink()             # model.pt alone may be an earlier epoch's weights
     with pytest.raises(FileNotFoundError, match="not finished"):
         score(run_dir, small_dataset, "cpu", log=quiet)
+
+def test_weights_that_are_not_the_runs_final_ones_are_refused(run_dir, small_dataset, fake_sampler, tmp_path):
+    # As Google Drive can leave a folder after a lost session: the run's summary.json, but the model.pt of
+    # an earlier epoch (here, a 1-epoch run at another seed stands in for one).
+    summary = json.loads((run_dir / "summary.json").read_text())
+    assert summary["model_sha256"] == hashlib.sha256((run_dir / "model.pt").read_bytes()).hexdigest()
+    other = tmp_path / "other"
+    run(tiny_config(), small_dataset, 43, "cpu", other, log=quiet, wandb_mode="disabled")
+    shutil.copy(other / "model.pt", run_dir / "model.pt")
+    passes = len(fake_sampler)                      # the other run's validation passes drew from it too
+    with pytest.raises(ValueError, match="not the final weights its summary.json records"):
+        score(run_dir, small_dataset, "cpu", log=quiet)
+    assert not list(run_dir.glob("scores_*")) and not list(run_dir.glob("median_*"))
+    assert len(fake_sampler) == passes              # refused before any draw
+    del summary["model_sha256"]                     # a run from before the summary recorded them: not checked
+    (run_dir / "summary.json").write_text(json.dumps(summary))
+    assert score(run_dir, small_dataset, "cpu", log=quiet)["model_sha256"] == \
+        hashlib.sha256((other / "model.pt").read_bytes()).hexdigest()
 
 def test_held_out_values_cannot_reach_the_guess(run_dir, small_dataset, tmp_path):
     config = quick_protocol(tmp_path)
@@ -271,7 +293,7 @@ def fake_api(monkeypatch):
     monkeypatch.setattr("diffusion.score.wandb.Api", FakeApi)
     return FakeApi.updates
 
-SCORES = {"holdout": "random", "fraction": 0.1, "split": "test", "mae": 0.23, "rmse": 0.5, "gpu": "Tesla T4",
+SCORES = {"holdout": "random", "fraction": 0.1, "split": "test", "mae": 0.23, "rmse": 0.5, "gpu": "Tesla T4", "tf32": False,
           "sampler": {"eval_sampling_seed": 2021, "eval_n_samples": 100, "eval_batch_size": 16},
           "holdout_settings": {"eval_masker_seed": 7}, "per_variable_mae": {"HR": 0.1, "SysABP": None},
           "wandb_run": "DATA612/msml612-csdi/abc123"}
@@ -281,7 +303,7 @@ def test_scores_join_the_runs_wandb_summary_under_the_baselines_keys(fake_api):
     assert fake_api == [("DATA612/msml612-csdi/abc123", {
         "random/0.1/test/mae": 0.23, "random/0.1/test/rmse": 0.5,
         # M6-2: what diffusion.results collects and checks, flat as wandb keeps a block anyway
-        "random/0.1/test/gpu": "Tesla T4",
+        "random/0.1/test/gpu": "Tesla T4", "random/0.1/test/tf32": False,
         "random/0.1/test/sampler.eval_sampling_seed": 2021, "random/0.1/test/sampler.eval_n_samples": 100,
         "random/0.1/test/sampler.eval_batch_size": 16, "random/0.1/test/holdout_settings.eval_masker_seed": 7,
         "random/0.1/test/per_variable_mae.HR": 0.1, "random/0.1/test/per_variable_mae.SysABP": None})]
@@ -329,6 +351,19 @@ def test_a_paired_scoring_refuses_any_gpu_but_the_picked_one(gpu, refusal, run_d
     with pytest.raises(RuntimeError, match=refusal):
         score(run_dir, small_dataset, "cpu", config_path=picked(tmp_path, gpu), log=quiet, paired=True)
     assert not list(run_dir.glob("scores_*")) and fake_sampler == []       # refused before scoring
+
+@pytest.mark.parametrize("tf32, precision", [(True, "tf32"), (False, "ieee")])
+def test_a_scoring_runs_and_records_the_protocols_tf32(tf32, precision, run_dir, small_dataset, fake_sampler, tmp_path):
+    config = copy.deepcopy(CONFIG)
+    config["protocol"]["tf32"] = tf32
+    (tmp_path / "tf32_config.yaml").write_text(yaml.safe_dump(config))
+    try:
+        scores = score(run_dir, small_dataset, "cpu", config_path=tmp_path / "tf32_config.yaml", log=quiet)
+        assert torch.backends.cuda.matmul.fp32_precision == torch.backends.cudnn.conv.fp32_precision == precision
+    finally:
+        use_tf32(False)
+    assert scores["tf32"] is tf32
+    assert json.loads((run_dir / "scores_test_random_0.1.json").read_text())["tf32"] is tf32
 
 def test_the_command_line_scores_a_paired_run_only_on_the_picked_gpu(run_dir, small_dataset, fake_sampler, tmp_path):
     save_dataset(small_dataset, tmp_path / "data.npz")

@@ -10,10 +10,10 @@ from data.physionet import save_dataset
 import torch
 import wandb
 from diffusion.run import (PAIRED_STREAMS, RUN_FILES, VARIANTS, chain_sha256, health_report, main, run, run_name,
-                           validate, variant_name, weight_hashes, with_variant)
+                           validate, validation_masker, variant_name, weight_hashes, with_variant)
 from diffusion.streams import RunStreams, derive_seed
-from diffusion.train import train
-from eval import EvalMasker
+from diffusion.train import REGIMES, regime_name, train
+from eval import BlockEvalMasker, EvalMasker, EvalSampler, TrainMasker
 from models.build import build_model
 
 def tiny_config(epochs=2):
@@ -25,8 +25,9 @@ def tiny_config(epochs=2):
     return config
 
 def as_saved(config):
-    """``config`` as a run saves it and sends it to wandb: without the ``tracking`` block (M3-2)."""
-    return {key: value for key, value in config.items() if key != "tracking"}
+    """``config`` as a run saves it and sends it to wandb: without the ``tracking`` block (M3-2) or
+    the ``sweep`` block (M6-2)."""
+    return {key: value for key, value in config.items() if key not in ("tracking", "sweep")}
 
 def history(loss, grad_norm):
     return [{"epoch": 0, "loss": l, "grad_norm": g, "lr": 1.0e-3} for l, g in zip(loss, grad_norm)]
@@ -119,7 +120,7 @@ def test_a_run_writes_its_outputs_as_it_goes(small_dataset, tmp_path):
     assert [row["epoch"] for row in curve] == [0, 1] and all("val_mae" in row for row in curve)
     assert sorted(p.name for p in tmp_path.iterdir()) == sorted(RUN_FILES)      # no best.pt: final weights are scored
     assert yaml.safe_load((tmp_path / "config.yaml").read_text()) == as_saved(tiny_config())
-    assert "tracking" in tiny_config()                                      # so it really was left out
+    assert {"tracking", "sweep"} <= set(tiny_config())                      # so they really were left out
     assert json.loads((tmp_path / "summary.json").read_text()) == summary
     assert summary["health"]["n_steps"] == 8 and summary["variant"] == "base"
     assert summary["final_val_mae"] == curve[-1]["val_mae"]
@@ -479,3 +480,296 @@ def test_the_command_line_starts_a_paired_run_only_on_the_picked_gpu(small_datas
 def test_an_unpaired_run_goes_anywhere_and_says_where(small_dataset, tmp_path):
     _, summary = run(picked("Tesla T4"), small_dataset, 42, "cpu", tmp_path, log=quiet)     # health, debugging
     assert summary["device"] == "cpu" and summary["gpu"] is None
+
+# --- the training regime (M6-2) ---------------------------------------------------------
+
+WINDOW = CONFIG["protocol"]["block_window_hours"]
+
+def in_regime(config, regime):
+    config = copy.deepcopy(config)
+    config["train"]["regime"] = regime
+    return config
+
+def test_the_regime_is_read_from_the_config():
+    assert CONFIG["train"]["regime"] == "random"                            # the headline sweep's
+    assert list(REGIMES) == ["random", "block-aware"]
+    assert run_name(with_variant(CONFIG, "ext1"), 43) == "ext1_random_seed43"
+    assert run_name(in_regime(with_variant(CONFIG, "ext1"), "block-aware"), 43) == "ext1_block-aware_seed43"
+    saved_before_m6_2 = copy.deepcopy(CONFIG)
+    del saved_before_m6_2["train"]["regime"]
+    assert regime_name(saved_before_m6_2) == "random"                       # how the gate runs trained
+    with pytest.raises(ValueError, match="train.regime must be one of"):
+        regime_name(in_regime(CONFIG, "block"))
+
+def test_validation_tracks_the_holdout_the_regime_trains_for(small_dataset):
+    idx = small_dataset["val_idx"]
+    mask, ids = small_dataset["mask"][idx], small_dataset["record_ids"][idx]
+    random_targets = EvalMasker.from_config()(mask, ids)[1]
+    block_targets = BlockEvalMasker.from_config()(mask, ids)[1]
+    assert not np.array_equal(random_targets, block_targets)                # so the two can be told apart
+    assert np.array_equal(validation_masker(CONFIG)(mask, ids)[1], random_targets)
+    assert np.array_equal(validation_masker(in_regime(CONFIG, "block-aware"))(mask, ids)[1], block_targets)
+    other = in_regime(CONFIG, "block-aware")                                # built from the run's own config
+    other["protocol"]["block_eval_masker_seed"] = 1
+    assert not np.array_equal(validation_masker(other)(mask, ids)[1], block_targets)
+
+def test_a_block_aware_run_trains_on_mix_masks_at_every_epoch(small_dataset):
+    drawn = {}
+
+    def capture(epoch, values, mask, cond_mask, diffusion_state):
+        drawn.setdefault(epoch, []).append((mask, cond_mask))
+
+    train(in_regime(tiny_config(), "block-aware"), small_dataset, 42, "cpu", on_batch=capture)
+    assert sorted(drawn) == [0, 1]
+    for epoch, batches in drawn.items():
+        masker = TrainMasker(derive_seed(42, "train_mask", epoch), "mix", WINDOW)      # as start_epoch seeds it
+        assert all(torch.equal(masker(mask)[0], cond_mask) for mask, cond_mask in batches)
+
+def test_a_block_aware_run_validates_on_the_block_holdout_and_says_so(small_dataset, tmp_path, fake_wandb):
+    config = in_regime(with_variant(tiny_config(), "ext1"), "block-aware")
+    model, summary = run(config, small_dataset, 42, "cpu", tmp_path, log=quiet, wandb_mode="online")
+    init = fake_wandb[0].init
+    assert init["name"] == "ext1_block-aware_seed42" and init["tags"] == ["ext1", "block-aware", "seed42"]
+    assert init["config"]["regime"] == init["config"]["train"]["regime"] == "block-aware"
+    assert yaml.safe_load((tmp_path / "config.yaml").read_text())["train"]["regime"] == "block-aware"
+    assert summary["validation"]["holdout"] == "block"
+    sampler = EvalSampler(CONFIG["protocol"]["eval_sampling_seed"], 2, 8)    # tiny_config's validation
+    assert summary["final_val_mae"] == validate(model, small_dataset, sampler, BlockEvalMasker.from_config())["mae"]
+    assert summary["final_val_mae"] != validate(model, small_dataset, sampler, EvalMasker.from_config())["mae"]
+
+def test_the_regime_changes_only_the_train_masks(small_dataset, tmp_path):
+    pairing, holdout = {}, {}
+    for regime in REGIMES:
+        _, summary = run(in_regime(with_variant(tiny_config(), "ext1"), regime), small_dataset, 42, "cpu",
+                         tmp_path / regime, log=quiet)
+        pairing[regime], holdout[regime] = summary["pairing"], summary["validation"]["holdout"]
+    assert holdout == {"random": "random", "block-aware": "block"}
+    for key in ("init_shared", "init_mask_encoder", "data_order", "diffusion"):
+        assert pairing["random"][key] == pairing["block-aware"][key]
+    assert pairing["random"]["train_mask"] != pairing["block-aware"]["train_mask"]
+
+def test_run_refuses_an_unknown_regime_before_touching_its_folder(small_dataset, tmp_path, fake_wandb):
+    out = tmp_path / "run"
+    out.mkdir()
+    for name in RUN_FILES:
+        (out / name).write_text("an earlier run's file")
+    with pytest.raises(ValueError, match="train.regime must be one of"):
+        run(in_regime(tiny_config(), "block"), small_dataset, 42, "cpu", out, log=quiet, overwrite=True,
+            wandb_mode="online")
+    assert all((out / name).read_text() == "an earlier run's file" for name in RUN_FILES)
+    assert fake_wandb == []
+
+def test_the_regime_flag_is_recorded_and_a_rerun_keeps_it(small_dataset, tmp_path, fake_wandb, monkeypatch):
+    monkeypatch.setattr("diffusion.run.OUTPUTS", tmp_path / "outputs")
+    launch(tmp_path, small_dataset, "--regime", "block-aware")
+    first = tmp_path / "outputs" / "base_block-aware_seed42"                # the default folder is the run name
+    assert yaml.safe_load((first / "config.yaml").read_text())["train"]["regime"] == "block-aware"
+    main(["--seed", "42", "--dataset", str(tmp_path / "data.npz"), "--device", "cpu",
+          "--config", str(first / "config.yaml"), "--out", str(tmp_path / "rerun")])         # no --regime
+    assert [r.init["name"] for r in fake_wandb] == ["base_block-aware_seed42"] * 2
+    assert (first / "history.jsonl").read_text() == (tmp_path / "rerun" / "history.jsonl").read_text()
+
+def test_the_command_line_refuses_an_unknown_regime(small_dataset, tmp_path, fake_wandb):
+    with pytest.raises(SystemExit):
+        launch(tmp_path, small_dataset, "--regime", "block", "--out", str(tmp_path / "flag"))
+    (tmp_path / "bad.yaml").write_text(yaml.safe_dump(in_regime(tiny_config(), "block")))
+    with pytest.raises(SystemExit):
+        main(["--seed", "42", "--dataset", str(tmp_path / "data.npz"), "--device", "cpu",
+              "--config", str(tmp_path / "bad.yaml"), "--out", str(tmp_path / "config")])
+    assert not (tmp_path / "flag").exists() and not (tmp_path / "config").exists() and fake_wandb == []
+
+# --- resuming a run at an epoch boundary (M6-2) -----------------------------------------
+
+class SessionLost(Exception):
+    """A Colab session ending in the middle of a run."""
+
+def dies(monkeypatch, when):
+    """Make ``diffusion.run.train`` stop the run at ``when``, as a lost session would (epochs from 0)."""
+    real_train = train
+
+    def stopping_train(*args, on_checkpoint, on_step_end, **kwargs):
+        def checkpoint(state):
+            if when == "before epoch 2's checkpoint" and state["epoch"] == 2:     # its files written, not it
+                raise SessionLost
+            on_checkpoint(state)
+            if when == "after epoch 1's checkpoint" and state["epoch"] == 1:
+                raise SessionLost
+
+        def step(record):
+            on_step_end(record)
+            if when == f"in the middle of epoch {record['epoch']}":
+                raise SessionLost
+
+        return real_train(*args, on_checkpoint=checkpoint, on_step_end=step, **kwargs)
+
+    monkeypatch.setattr("diffusion.run.train", stopping_train)
+
+def run_files(out_dir):
+    """What a run leaves that must not depend on being stopped: everything but the seconds."""
+    curve = [{k: v for k, v in row.items() if not k.endswith("seconds")}
+             for row in json.loads((out_dir / "curve.json").read_text())]
+    weights = {name: torch.load(out_dir / name) for name in ("model.pt", "checkpoint.pt")}
+    return ((out_dir / "history.jsonl").read_text(), curve, json.loads((out_dir / "summary.json").read_text()),
+            {k: v for k, v in weights["model.pt"].items()}, weights["checkpoint.pt"]["model"])
+
+def same_files(a, b):
+    history_a, curve_a, summary_a, model_a, last_a = a
+    history_b, curve_b, summary_b, model_b, last_b = b
+    return (history_a == history_b and curve_a == curve_b and summary_a == summary_b
+            and all(torch.equal(model_a[k], model_b[k]) for k in model_a)
+            and all(torch.equal(last_a[k], last_b[k]) for k in last_a))
+
+@pytest.mark.parametrize("when", ["after epoch 1's checkpoint", "before epoch 2's checkpoint",
+                                  "in the middle of epoch 2"])
+def test_a_resumed_run_ends_exactly_as_one_never_stopped(when, small_dataset, tmp_path, monkeypatch):
+    config = with_variant(tiny_config(epochs=4), "ext1")                    # dropout in its encoder too
+    run(config, small_dataset, 42, "cpu", tmp_path / "whole", log=quiet)
+    with monkeypatch.context() as patch:
+        dies(patch, when)
+        with pytest.raises(SessionLost):
+            run(config, small_dataset, 42, "cpu", tmp_path / "stopped", log=quiet)
+    assert torch.load(tmp_path / "stopped" / "checkpoint.pt")["epoch"] == 1
+    assert not (tmp_path / "stopped" / "summary.json").exists()
+    lines = []
+    run(config, small_dataset, 42, "cpu", tmp_path / "stopped", log=lines.append, resume=True)
+    assert lines[0] == "resuming stopped at epoch 3/4, from its checkpoint" and len(lines) == 3
+    assert same_files(run_files(tmp_path / "stopped"), run_files(tmp_path / "whole"))
+    assert sorted(p.name for p in (tmp_path / "stopped").iterdir()) == sorted(RUN_FILES)
+
+def test_train_resumes_from_a_checkpoint_after_hashing_the_weights_as_built(small_dataset):
+    config = tiny_config(epochs=3)
+    states, built = [], []
+    _, whole = train(config, small_dataset, 42, "cpu", on_checkpoint=lambda state: states.append(copy.deepcopy(state)),
+                     on_start=built.append)
+    assert [state["epoch"] for state in states] == [0, 1, 2]
+    resumed_start = []
+    model, resumed = train(config, small_dataset, 42, "cpu", resume=states[0], on_start=resumed_start.append)
+    assert resumed == [record for record in whole if record["epoch"] >= 1]
+    assert all(torch.equal(built[0][k], resumed_start[0][k]) for k in built[0])          # not the checkpoint's
+    assert all(torch.equal(model.state_dict()[k], states[2]["model"][k]) for k in states[2]["model"])
+
+def test_a_resumed_run_goes_on_on_the_same_wandb_run(small_dataset, tmp_path, monkeypatch, fake_wandb):
+    config = tiny_config(epochs=4)
+    with monkeypatch.context() as patch:
+        dies(patch, "after epoch 1's checkpoint")
+        with pytest.raises(SessionLost):
+            run(config, small_dataset, 42, "cpu", tmp_path, log=quiet, wandb_mode="online")
+    assert torch.load(tmp_path / "checkpoint.pt")["wandb_run"] == fake_wandb[0].path
+    _, summary = run(config, small_dataset, 42, "cpu", tmp_path, log=quiet, wandb_mode="online", resume=True)
+    first, second = fake_wandb
+    assert "id" not in first.init and (second.init["id"], second.init["resume"]) == ("fakeid", "must")
+    steps = [step for tracked in fake_wandb for step, _ in logged(tracked, "train/loss")]
+    assert steps == list(range(16))                                         # 4 epochs of 4 steps, none twice
+    assert summary["wandb_run"] == second.path and second.summary == summary
+
+def test_resuming_refuses_a_finished_run_and_another_config(small_dataset, tmp_path, monkeypatch):
+    config = tiny_config(epochs=3)
+    run(config, small_dataset, 42, "cpu", tmp_path / "finished", log=quiet)
+    with pytest.raises(FileExistsError, match="finished run"):
+        run(config, small_dataset, 42, "cpu", tmp_path / "finished", log=quiet, resume=True)
+    with monkeypatch.context() as patch:
+        dies(patch, "after epoch 1's checkpoint")
+        with pytest.raises(SessionLost):
+            run(config, small_dataset, 42, "cpu", tmp_path / "stopped", log=quiet)
+    before = {p.name: p.read_bytes() for p in (tmp_path / "stopped").iterdir()}
+    with pytest.raises(ValueError, match="started with another config"):
+        run(tiny_config(epochs=5), small_dataset, 42, "cpu", tmp_path / "stopped", log=quiet, resume=True)
+    assert {p.name: p.read_bytes() for p in (tmp_path / "stopped").iterdir()} == before
+
+def test_resuming_a_run_stopped_before_its_first_checkpoint_starts_it_again(small_dataset, tmp_path, monkeypatch):
+    config = tiny_config(epochs=2)
+    run(config, small_dataset, 42, "cpu", tmp_path / "whole", log=quiet)
+    with monkeypatch.context() as patch:
+        dies(patch, "in the middle of epoch 0")
+        with pytest.raises(SessionLost):
+            run(config, small_dataset, 42, "cpu", tmp_path / "stopped", log=quiet)
+    assert not (tmp_path / "stopped" / "checkpoint.pt").exists()
+    assert (tmp_path / "stopped" / "history.jsonl").exists()               # it had started
+    (tmp_path / "stopped" / "notes.txt").write_text("not a run file")
+    run(config, small_dataset, 42, "cpu", tmp_path / "stopped", log=quiet, resume=True)
+    assert same_files(run_files(tmp_path / "stopped"), run_files(tmp_path / "whole"))
+    assert (tmp_path / "stopped" / "notes.txt").read_text() == "not a run file"
+
+def test_the_command_line_resumes_a_run(small_dataset, tmp_path, monkeypatch):
+    save_dataset(small_dataset, tmp_path / "data.npz")
+    (tmp_path / "config.yaml").write_text(yaml.safe_dump(tiny_config(epochs=4)))
+    common = ["--seed", "42", "--dataset", str(tmp_path / "data.npz"), "--device", "cpu",
+              "--config", str(tmp_path / "config.yaml")]
+    main([*common, "--out", str(tmp_path / "whole")])
+    with monkeypatch.context() as patch:
+        dies(patch, "after epoch 1's checkpoint")
+        with pytest.raises(SessionLost):
+            main([*common, "--out", str(tmp_path / "stopped")])
+    with pytest.raises(SystemExit):
+        main([*common, "--out", str(tmp_path / "stopped"), "--resume", "--overwrite"])
+    main([*common, "--out", str(tmp_path / "stopped"), "--resume"])
+    assert same_files(run_files(tmp_path / "stopped"), run_files(tmp_path / "whole"))
+
+def test_a_run_checkpoints_after_each_validated_epoch_but_the_last(small_dataset, tmp_path, monkeypatch):
+    config = tiny_config(epochs=5)
+    config["validation"]["every_n_epochs"] = 2               # validated after epochs 2, 4 and 5 (from 1)
+    seen, real_train = [], train
+
+    def watching(*args, on_checkpoint, **kwargs):
+        def checkpoint(state):
+            on_checkpoint(state)
+            path = tmp_path / "run" / "checkpoint.pt"
+            seen.append(torch.load(path)["epoch"] if path.exists() else None)
+        return real_train(*args, on_checkpoint=checkpoint, **kwargs)
+
+    monkeypatch.setattr("diffusion.run.train", watching)
+    run(config, small_dataset, 42, "cpu", tmp_path / "run", log=quiet)
+    assert seen == [None, 1, 1, 3, 3]                       # from 0: after epochs 1 and 3, not after 4, the last
+    records = [json.loads(line) for line in (tmp_path / "run" / "history.jsonl").read_text().splitlines()]
+    assert torch.load(tmp_path / "run" / "checkpoint.pt")["steps"] == sum(r["epoch"] <= 3 for r in records)
+
+def test_the_summary_records_the_hash_of_the_final_weights(small_dataset, tmp_path):
+    model, summary = run(tiny_config(epochs=2), small_dataset, 42, "cpu", tmp_path, log=quiet)
+    saved = torch.load(tmp_path / "model.pt")
+    assert all(torch.equal(saved[key], value) for key, value in model.state_dict().items())   # the final weights
+    assert summary["model_sha256"] == hashlib.sha256((tmp_path / "model.pt").read_bytes()).hexdigest()
+
+def behind(out_dir, what):
+    """``out_dir`` as Google Drive can leave it after a lost session: ``what`` older than ``checkpoint.pt``."""
+    if what == "curve.json a row short":
+        curve = json.loads((out_dir / "curve.json").read_text())
+        (out_dir / "curve.json").write_text(json.dumps(curve[:-1]))
+    elif what == "history.jsonl an epoch short":
+        lines = (out_dir / "history.jsonl").read_text().splitlines()
+        (out_dir / "history.jsonl").write_text("".join(line + "\n" for line in lines if json.loads(line)["epoch"] < 1))
+    elif what == "no curve.json":
+        (out_dir / "curve.json").unlink()
+    elif what == "curve.json cut short":
+        text = (out_dir / "curve.json").read_text()
+        (out_dir / "curve.json").write_text(text[:len(text) // 2])
+
+@pytest.mark.parametrize("what", ["curve.json a row short", "history.jsonl an epoch short", "no curve.json",
+                                  "curve.json cut short"])
+def test_a_run_whose_files_do_not_reach_its_checkpoint_is_started_again(what, small_dataset, tmp_path, monkeypatch):
+    config = tiny_config(epochs=4)
+    run(config, small_dataset, 42, "cpu", tmp_path / "whole", log=quiet)
+    with monkeypatch.context() as patch:
+        dies(patch, "after epoch 1's checkpoint")
+        with pytest.raises(SessionLost):
+            run(config, small_dataset, 42, "cpu", tmp_path / "stopped", log=quiet)
+    behind(tmp_path / "stopped", what)
+    lines = []
+    run(config, small_dataset, 42, "cpu", tmp_path / "stopped", log=lines.append, resume=True)
+    assert lines[0] == ("stopped's history.jsonl and curve.json do not reach its checkpoint at epoch 2: "
+                        "starting it again")
+    assert len(lines) == 1 + 4                              # then every epoch, from the first
+    assert same_files(run_files(tmp_path / "stopped"), run_files(tmp_path / "whole"))
+
+def test_a_history_line_cut_short_after_the_checkpoint_does_not_stop_a_resume(small_dataset, tmp_path, monkeypatch):
+    config = tiny_config(epochs=4)
+    run(config, small_dataset, 42, "cpu", tmp_path / "whole", log=quiet)
+    with monkeypatch.context() as patch:
+        dies(patch, "before epoch 2's checkpoint")          # epoch 2's lines written, its checkpoint not
+        with pytest.raises(SessionLost):
+            run(config, small_dataset, 42, "cpu", tmp_path / "stopped", log=quiet)
+    text = (tmp_path / "stopped" / "history.jsonl").read_text()
+    (tmp_path / "stopped" / "history.jsonl").write_text(text[:-10])       # lost in the middle of its last line
+    lines = []
+    run(config, small_dataset, 42, "cpu", tmp_path / "stopped", log=lines.append, resume=True)
+    assert lines[0] == "resuming stopped at epoch 3/4, from its checkpoint"
+    assert same_files(run_files(tmp_path / "stopped"), run_files(tmp_path / "whole"))
