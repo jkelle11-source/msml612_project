@@ -84,6 +84,7 @@ def test_the_store_holds_each_runs_scores_by_regime_variant_and_seed():
                                 "random/0.1": {"mae": pytest.approx(0.243), "rmse": 0.5, "gpu": T4,
                                                "per_variable_mae": PER_VARIABLE}}}
     assert store["gpu"] == T4 and store["unscored"] == [] and store["tag"] == "dry-run"
+    assert store["missing"] == []               # seeds 44-46 have no run at all: the dry run trains two
 
 def test_each_regimes_config_is_kept_without_the_toggles_and_labels():
     store = record(dry_run(), "dry-run")
@@ -98,6 +99,15 @@ def test_a_holdout_not_scored_yet_is_null_and_listed():
     store = record(runs, "sweep")
     assert store["runs"]["random"]["ext2"]["43"]["scores"]["block/0.1"] is None
     assert store["unscored"] == ["ext2_random_seed43: block/0.1"]
+
+def test_a_planned_run_not_finished_is_listed():
+    runs = dry_run()
+    runs.remove(find(runs, "ext2", 43))                     # crashed, so fetch leaves it out
+    runs.remove(find(runs, "ext1", 42, "block-aware"))      # still training
+    store = record(runs, "sweep")
+    assert "43" not in store["runs"]["random"]["ext2"]
+    assert store["missing"] == ["ext2_random_seed43", "ext1_block-aware_seed42"]
+    assert record(runs, "sweep", plan={"random": ["base"]})["missing"] == []
 
 def test_bases_robustness_rates_are_kept_beside_the_headline():
     runs = dry_run()
@@ -151,6 +161,12 @@ def another_gpu_for_the_block_aware_regime():
             run["summary"] |= {key: "NVIDIA L4" for key in run["summary"] if key.endswith("/gpu")}
     return runs
 
+def every_run_trained_with_the_other_tf32():
+    runs = dry_run()
+    for run in runs:
+        run["config"]["protocol"]["tf32"] = not TF32
+    return runs
+
 def a_rerun_kept_beside_the_run():
     runs = dry_run()
     return runs + [fake_run("ext1", 42) | {"path": "DATA612/msml612-csdi/rerun"}]
@@ -197,6 +213,9 @@ UNPAIRED = {
     "trained with the other TF32 setting": (
         changed("ext2", 43, lambda run: run["config"]["protocol"].update(tf32=not TF32)),
         "differ in more than their toggles: ['protocol.tf32']"),
+    "every run trained with the other TF32 setting": (every_run_trained_with_the_other_tf32,
+                                                      f"base_random_seed42 trained with tf32 {not TF32}, "
+                                                      f"not the protocol's {TF32}"),
     "trained from another commit": (changed("ext1", 43, lambda run: run["metadata"]["git"].update(commit="def5678")),
                                     "the random regime's runs come from different commits"),
     "no commit recorded": (changed("base", 42, lambda run: run.update(metadata={})),
@@ -305,4 +324,4 @@ def test_the_command_line_writes_the_store_named_for_the_tag(tmp_path, monkeypat
     store = main(["--tag", "dry-run"], fetch=lambda tag: asked.append(tag) or dry_run())
     assert asked == ["dry-run"]
     assert json.loads((tmp_path / "dry-run.json").read_text()) == json.loads(json.dumps(store))
-    assert "12 paired runs on Tesla T4, 0 holdout(s) not scored yet" in capsys.readouterr().out
+    assert "12 paired runs on Tesla T4, 0 holdout(s) not scored yet, 0 planned run(s) missing" in capsys.readouterr().out

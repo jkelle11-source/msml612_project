@@ -1311,8 +1311,11 @@ It reads every finished run with the tag and writes `results/<tag>.json`:
 RMSE, scoring GPU and per-variable MAE of every holdout scored (`random/0.1`, `block/0.1`, base's
 `random/0.5` and `random/0.9` once M7-1 scores them, and any other holdout `diffusion.score`
 knows, such as M6-3's off-grid one); `configs[regime]` the config the regime's runs share,
-toggles aside; `gpu` the paired GPU; and `unscored` the runs still missing a 10% holdout, whose
-scores are null meanwhile, so the store can be written while the sweep runs. The per-variable
+toggles aside; `gpu` the paired GPU; `unscored` the runs still missing a 10% holdout, whose
+scores are null meanwhile, so the store can be written while the sweep runs; and `missing` the
+cells `sweep.regimes` plans with no finished run yet, at each seed the store has runs at (one
+still training, or one wandb lists as crashed or failed), so M7-2's table never drops a cell
+unnoticed. The per-variable
 MAE is there for Ext 2's high-autocorrelation variables (HR, SysABP; PROJECT_PLAN §4.2) and M9-2,
 so no run folder has to outlive its Colab session. It writes nothing, and lists every reason,
 unless:
@@ -1326,8 +1329,8 @@ unless:
 - every run trained, and every holdout was scored, on `protocol.paired_gpu`, one GPU for all;
 - every holdout was scored with the frozen sampler and holdout of `configs/config.yaml`
   (`eval_sampling_seed`, `eval_n_samples`, `eval_batch_size`, and the holdout's seed and window),
-  as the gate requires of its runs, and with its `protocol.tf32` (training's is part of the
-  config, so is checked with it); a holdout `diffusion.score` does not know is refused too;
+  as the gate requires of its runs, and with its `protocol.tf32`, which every run trained with
+  too; a holdout `diffusion.score` does not know is refused too;
 - no cell has two runs. A rerun gets the same name on wandb; untag the one to leave out, or tag
   a rerun apart (`rerun`) when checking that a cell reproduces.
 
@@ -1348,9 +1351,9 @@ Tests:
   that is not the final weights its `summary.json` records is refused before any draw, writing
   nothing, and a run from before the summary recorded them is scored unchecked.
 - `tests/test_results.py`: the store's layout, configs, per-variable MAE, unscored holdouts,
-  robustness rates and a holdout of another name; each way runs can be unpaired refused on its
-  own (diffusion draws, a sampler, holdout or TF32 setting other than the protocol's, a second commit in a
-  regime among them); validation settings, output folders and each regime's commit allowed to
+  missing planned runs, robustness rates and a holdout of another name; each way runs can be
+  unpaired refused on its own (diffusion draws, a sampler, holdout or TF32 setting other than the
+  protocol's in scoring or in training, a second commit in a regime among them); validation settings, output folders and each regime's commit allowed to
   differ; a pairing block wandb flattened read the same; and real runs through `diffusion.run`,
   `diffusion.score` and `attach_to_wandb` stored, with one relabeled to another seed caught by
   its data-order hash.
