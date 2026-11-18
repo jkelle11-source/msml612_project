@@ -72,13 +72,13 @@
 - From the review of #56 (M6-3): the driver must also train `ext1blind` when asked, in the block-aware regime at seeds it is given, for `M8-4`; it is in `VARIANTS` but never swept. Once the regime is read from the config, update the README's M6-3 example (`diffusion.run --variant ext1blind`, which trains in the random regime until then). `run()` refuses a config whose toggles are no variant before it touches the run's folder.
 
 **Definition of Done**
-- [ ] Within a seed and regime, the variants demonstrably share data order and RNG (asserted in-harness or logged and diffed).
+- [x] Within a seed and regime, the variants demonstrably share data order and RNG (asserted in-harness or logged and diffed).
 - [x] Timing test recorded for every candidate GPU; the pick, with its TF32 setting, written into the README and PROJECT_PLAN §3.3 before the dry run.
-- [ ] Every run records the GPU it trained and was scored on, and the harness refuses to start a paired run on any GPU but the one the timing test picked (§3.3).
+- [x] Every run records the GPU it trained and was scored on, and the harness refuses to start a paired run on any GPU but the one the timing test picked (§3.3).
 - [x] `TrainMasker`'s `random` output is byte-identical to before `mix` was added; `mix`'s block samples are whole 3-hour all-feature slots apart from one trimmed slot (tests green).
-- [ ] Dry-run completes for all four variants and the block-aware pair at ≥2 seeds; results under both holdouts land in the structured log.
-- [ ] Resuming/rerunning a `(variant, regime, seed)` cell reproduces its numbers.
-- [ ] Harness is config-driven and ready to scale to the full 30-run sweep (20 random-regime + 10 block-aware).
+- [x] Dry-run completes for all four variants and the block-aware pair at ≥2 seeds; results under both holdouts land in the structured log.
+- [x] Resuming/rerunning a `(variant, regime, seed)` cell reproduces its numbers.
+- [x] Harness is config-driven and ready to scale to the full 30-run sweep (20 random-regime + 10 block-aware).
 
 ---
 
