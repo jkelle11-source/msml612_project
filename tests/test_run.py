@@ -760,6 +760,32 @@ def test_a_run_whose_files_do_not_reach_its_checkpoint_is_started_again(what, sm
     assert len(lines) == 1 + 4                              # then every epoch, from the first
     assert same_files(run_files(tmp_path / "stopped"), run_files(tmp_path / "whole"))
 
+@pytest.mark.parametrize("elsewhere, written_on", [("a T4", "Tesla T4"), ("the Mac's GPU", "mps"),
+                                                   ("before checkpoints recorded it", "a device it does not record")])
+def test_a_run_checkpointed_on_another_device_or_gpu_is_started_again(elsewhere, written_on, small_dataset, tmp_path,
+                                                                      monkeypatch):
+    config = tiny_config(epochs=4)
+    run(config, small_dataset, 42, "cpu", tmp_path / "whole", log=quiet)
+    with monkeypatch.context() as patch:
+        if elsewhere == "a T4":
+            patch.setattr("diffusion.run.gpu_name", lambda device: "Tesla T4")     # stopped on a T4's CUDA ...
+        dies(patch, "after epoch 1's checkpoint")
+        with pytest.raises(SessionLost):
+            run(config, small_dataset, 42, "cpu", tmp_path / "stopped", log=quiet)
+    path = tmp_path / "stopped" / "checkpoint.pt"
+    checkpoint = torch.load(path)
+    assert (checkpoint["device"], checkpoint["gpu"]) == ("cpu", "Tesla T4" if elsewhere == "a T4" else None)
+    if elsewhere == "the Mac's GPU":
+        checkpoint["device"] = "mps"
+    elif elsewhere == "before checkpoints recorded it":
+        del checkpoint["device"], checkpoint["gpu"]
+    torch.save(checkpoint, path)
+    lines = []
+    run(config, small_dataset, 42, "cpu", tmp_path / "stopped", log=lines.append, resume=True)    # ... resumed here
+    assert lines[0] == f"stopped's checkpoint was written on {written_on}, not on cpu: starting it again"
+    assert len(lines) == 1 + 4                              # then every epoch, from the first
+    assert same_files(run_files(tmp_path / "stopped"), run_files(tmp_path / "whole"))
+
 def test_a_history_line_cut_short_after_the_checkpoint_does_not_stop_a_resume(small_dataset, tmp_path, monkeypatch):
     config = tiny_config(epochs=4)
     run(config, small_dataset, 42, "cpu", tmp_path / "whole", log=quiet)

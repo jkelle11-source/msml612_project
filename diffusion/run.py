@@ -20,14 +20,15 @@ Trains with ``diffusion.train.train``, scores the validation split every
   (``model_sha256``, which ``diffusion.score`` checks), and the run's path on wandb
   (``entity/project/id``; null if untracked).
 - ``checkpoint.pt`` (M6-2): the model, optimizer and learning-rate schedule, the epoch, the number
-  of steps so far and the run's wandb path, rewritten whole after every validated epoch but the
-  last (see ``run``).
+  of steps so far, the run's wandb path, and the device and GPU it was written on, rewritten whole
+  after every validated epoch but the last (see ``run``).
 
 The run refuses an output folder that is not empty, so two runs' files never mix; with
 ``--overwrite`` it first deletes the files a run writes (``RUN_FILES``), and nothing else. With
 ``--resume`` (M6-2) it continues the run in the folder from its checkpoint, on the same wandb run,
 and ends with the same files and numbers as a run that was never stopped; a folder with no usable
-checkpoint (none yet, or one its ``history.jsonl`` and ``curve.json`` do not reach) is started again.
+checkpoint (none yet, one its ``history.jsonl`` and ``curve.json`` do not reach, or one written on
+another device or GPU) is started again.
 
 The same numbers stream to wandb as the run goes (M3-2), to the team and project in the
 config's ``tracking`` block, under the name ``run_name()`` gives: every step's loss, gradient
@@ -236,16 +237,18 @@ def history_records(path):
             break
     return records
 
-def resume_point(out_dir, config, log=print):
+def resume_point(out_dir, config, device, log=print):
     """``(checkpoint, history, curve)`` to resume the unfinished run in ``out_dir`` from; None to start it again.
 
     ``history`` and ``curve`` are its ``history.jsonl`` records and ``curve.json`` rows up to the
-    checkpoint's epoch; anything later is redone. None if it has no checkpoint yet, or if those files
-    do not reach the checkpoint: Google Drive uploads each file in the background, so a session lost
-    on it can leave a newer ``checkpoint.pt`` than them, and a run resumed from it would lack the steps
-    and epochs in between (review of #57). Starting again is always right. Refuses a finished run
-    (nothing to resume) and a run whose saved config is not ``config``: resuming with another config
-    would end as neither run.
+    checkpoint's epoch; anything later is redone. None if it has no checkpoint yet; if the checkpoint
+    was written on another device or GPU than ``device`` (review of #58: float rounding differs from
+    one to another, so a run trained on two is neither one never stopped nor paired, yet its summary
+    would name only the last); or if those files do not reach the checkpoint: Google Drive uploads
+    each file in the background, so a session lost on it can leave a newer ``checkpoint.pt`` than
+    them, and a run resumed from it would lack the steps and epochs in between (review of #57).
+    Starting again is always right. Refuses a finished run (nothing to resume) and a run whose saved
+    config is not ``config``: resuming with another config would end as neither run.
     """
     if (out_dir / "summary.json").exists():
         raise FileExistsError(f"{out_dir} holds a finished run: there is nothing to resume")
@@ -255,8 +258,13 @@ def resume_point(out_dir, config, log=print):
         raise ValueError(f"the run in {out_dir} was started with another config: resume it with its own "
                          "(--config on its config.yaml)")
     checkpoint = torch.load(out_dir / "checkpoint.pt", map_location="cpu")
-    done = checkpoint["epoch"]
-    history = [record for record in history_records(out_dir / "history.jsonl") if record["epoch"] <= done]
+    done, here = checkpoint["epoch"], {"device": device, "gpu": gpu_name(device)}
+    if {key: checkpoint.get(key) for key in here} != here:
+        written_on = checkpoint.get("gpu") or checkpoint.get("device") or "a device it does not record"
+        log(f"{out_dir.name}'s checkpoint was written on {written_on}, not on {here['gpu'] or device}: "
+            "starting it again")
+        return None
+    history =[record for record in history_records(out_dir / "history.jsonl") if record["epoch"] <= done]
     try:
         curve = [row for row in json.loads((out_dir / "curve.json").read_text()) if row["epoch"] <= done]
     except (FileNotFoundError, json.JSONDecodeError):
@@ -295,7 +303,7 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
         require_paired_gpu(config["protocol"], device)
     config = {key: value for key, value in config.items() if key not in NOT_A_RUN}
     out_dir = Path(out_dir)
-    point = resume_point(out_dir, config, log) if resume else None
+    point = resume_point(out_dir, config, device, log) if resume else None
     checkpoint, history, curve = (None, [], []) if point is None else point
     if checkpoint is None and out_dir.exists() and any(out_dir.iterdir()):
         if not (overwrite or resume):
@@ -376,7 +384,8 @@ def run(config, dataset, seed, device, out_dir, log=print, overwrite=False, wand
         # never after the last (see the docstring). steps: how far history.jsonl must reach to resume.
         if not validated(state["epoch"]) or state["epoch"] + 1 == epochs:
             return
-        torch.save({**state, "steps": len(history), "wandb_run": None if tracker.disabled else tracker.path},
+        torch.save({**state, "steps": len(history), "wandb_run": None if tracker.disabled else tracker.path,
+                    "device": device, "gpu": gpu_name(device)},           # resumed only where it was written
                    out_dir / CHECKPOINT_TEMP)
         os.replace(out_dir / CHECKPOINT_TEMP, out_dir / "checkpoint.pt")
 

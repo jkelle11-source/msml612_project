@@ -1,6 +1,7 @@
 """The paired sweep's results store (M6-2): every run's test scores, kept only if the runs are paired.
 
-    uv run python -m diffusion.results --tag dry-run         # writes results/dry-run.json
+    uv run python -m diffusion.results --tag sweep                       # writes results/sweep.json
+    uv run python -m diffusion.results --tag dry-run --seeds 42 43       # writes results/dry-run.json
 
 Reads every finished run with the tag from the config's ``tracking`` project on wandb, where
 ``diffusion.run`` streams each training run and ``diffusion.score`` adds each test scoring to the
@@ -15,7 +16,10 @@ without their output folders. Writes ``results/<tag>.json``:
 - ``configs[regime]``: the config every run of the regime trained with, extension toggles aside;
 - ``gpu``: the one GPU every run trained and was scored on (``protocol.paired_gpu``);
 - ``unscored``: the runs still missing a 10% holdout, whose score is null meanwhile, so the store
-  can be written while the sweep runs.
+  can be written while the sweep runs;
+- ``missing``: the cells ``sweep.regimes`` plans at ``protocol.run_seeds`` (``--seeds`` for fewer:
+  ``42 43`` for the dry run) with no finished run: one still training, one wandb lists as crashed
+  or failed, or a seed the sweep never reached, so M7-2's table never drops a cell unnoticed.
 
 The store is written only if the runs are paired (PROJECT_PLAN §3.3). Within a regime and seed,
 every variant's pairing hashes (``diffusion.run``, ``summary.pairing``) must be equal: the batches
@@ -25,8 +29,8 @@ ext1 and ext1+2, Ext 2's in ext2 and ext1+2). Every run of a regime must have th
 for the toggles (how a run is validated aside: it does not touch training) and come from the same
 git commit, and every run must have trained, and every holdout been scored, on
 ``protocol.paired_gpu``, the same for all. Every scoring must have used the frozen sampler and
-holdout of ``configs/config.yaml``, as the gate requires of its runs, and its ``protocol.tf32``
-(a run's training TF32 is part of its config, so is checked with it). Refused besides: two runs in
+holdout of ``configs/config.yaml``, as the gate requires of its runs, and its ``protocol.tf32``,
+which every run must have trained with too. Refused besides: two runs in
 one cell, which wandb allows (a rerun gets the same name). Untag the one to leave out.
 """
 
@@ -64,6 +68,10 @@ def fetch(tag):
 def frozen_protocol(path=CONFIG_PATH):
     """The frozen ``protocol`` block every scoring is checked against (``configs/config.yaml``)."""
     return yaml.safe_load(Path(path).read_text())["protocol"]
+
+def sweep_plan(path=CONFIG_PATH):
+    """``{regime: [variant, ...]}``: the cells the sweep trains (``configs/config.yaml``'s ``sweep.regimes``)."""
+    return yaml.safe_load(Path(path).read_text())["sweep"]["regimes"]
 
 def frozen_sampler(protocol):
     """The sampler settings a protocol scoring records (``diffusion.score``: 100 draws, batch 16)."""
@@ -123,8 +131,11 @@ def problems(runs, protocol=None):
             found += [f"{run['name']}'s {holdout} was scored on {scores.get('gpu')}, not a {gpu}"
                       for holdout, scores in scored_holdouts(run["summary"]).items() if scores.get("gpu") != gpu]
 
-    sampler = frozen_sampler(protocol)
+    sampler, tf32 = frozen_sampler(protocol), protocol.get("tf32", False)
     for run in runs:
+        trained = run["config"]["protocol"].get("tf32", False)         # none: a config from before M6-2, float32
+        if trained != tf32:
+            found.append(f"{run['name']} trained with tf32 {trained}, not the protocol's {tf32}")
         for holdout, scores in scored_holdouts(run["summary"]).items():
             try:
                 settings = holdout_settings(protocol, holdout.split("/")[0])
@@ -137,9 +148,9 @@ def problems(runs, protocol=None):
             if scores.get("holdout_settings") != settings:
                 found.append(f"{run['name']}'s {holdout} was scored on holdout {scores.get('holdout_settings')}, "
                              f"not the frozen {settings}")
-            if scores.get("tf32") != protocol.get("tf32", False):
+            if scores.get("tf32") != tf32:
                 found.append(f"{run['name']}'s {holdout} was scored with tf32 {scores.get('tf32')}, "
-                             f"not the protocol's {protocol.get('tf32', False)}")
+                             f"not the protocol's {tf32}")
 
     for regime, group in regimes.items():
         configs = [flatten(shared_config(run["config"])) for run in group]
@@ -180,8 +191,16 @@ def unpaired(regime, seed, hashes):
                          f"at seed {seed}: {have}")
     return found
 
-def record(runs, tag, protocol=None):
-    """The store of ``runs`` (``fetch``'s dicts); raises ``ValueError`` listing what unpairs them."""
+def record(runs, tag, protocol=None, plan=None, seeds=None):
+    """The store of ``runs`` (``fetch``'s dicts); raises ``ValueError`` listing what unpairs them.
+
+    ``plan`` is the sweep's cells, ``{regime: [variant, ...]}`` (default: ``sweep_plan``'s), and
+    ``seeds`` the seeds it trains them at (default: ``protocol.run_seeds``): ``missing`` lists every
+    planned cell at them with no finished run, a seed with none at all too (review of #58).
+    """
+    protocol = frozen_protocol() if protocol is None else protocol
+    plan = sweep_plan() if plan is None else plan
+    seeds = protocol["run_seeds"] if seeds is None else seeds
     if not runs:
         raise ValueError(f"no finished run is tagged {tag!r}")
     found = problems(runs, protocol)
@@ -191,7 +210,7 @@ def record(runs, tag, protocol=None):
     runs = sorted(runs, key=lambda run: (run["config"]["regime"], order.index(run["config"]["variant"]),
                                          run["config"]["seed"]))
     store = {"tag": tag, "units": UNITS, "gpu": runs[0]["config"]["protocol"]["paired_gpu"],
-             "configs": {}, "runs": {}, "unscored": []}
+             "configs": {}, "runs": {}, "unscored": [], "missing": []}
     for run in runs:
         config, scores = run["config"], scored_holdouts(run["summary"])
         store["configs"].setdefault(config["regime"], shared_config(config))
@@ -204,20 +223,26 @@ def record(runs, tag, protocol=None):
                        for holdout in sorted(set(HEADLINE) | set(scores))},
         }
         store["unscored"] += [f"{run['name']}: {holdout}" for holdout in HEADLINE if holdout not in scores]
+    store["missing"] = [f"{variant}_{regime}_seed{seed}" for regime, variants in plan.items() for seed in seeds
+                        for variant in variants if str(seed) not in store["runs"].get(regime, {}).get(variant, {})]
     return store
 
 def main(argv=None, fetch=fetch):
     parser = argparse.ArgumentParser(description="Collect the paired sweep's test scores from wandb, checked (M6-2).")
     parser.add_argument("--tag", required=True, help="the runs' wandb tag, e.g. dry-run or sweep")
     parser.add_argument("--out", type=Path, help="store path (default results/<tag>.json)")
+    parser.add_argument("--seeds", type=int, nargs="+",
+                        help="the seeds the runs were planned at, for its missing runs (default protocol.run_seeds; "
+                             "42 43 for the dry run)")
     args = parser.parse_args(argv)
 
-    store = record(fetch(args.tag), args.tag)
+    store = record(fetch(args.tag), args.tag, seeds=args.seeds)
     out = args.out or RESULTS / f"{args.tag}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(store, indent=1) + "\n")
     n_runs = sum(len(seeds) for variants in store["runs"].values() for seeds in variants.values())
-    print(f"wrote {out}: {n_runs} paired runs on {store['gpu']}, {len(store['unscored'])} holdout(s) not scored yet")
+    print(f"wrote {out}: {n_runs} paired runs on {store['gpu']}, {len(store['unscored'])} holdout(s) not scored yet, "
+          f"{len(store['missing'])} planned run(s) missing")
     return store
 
 if __name__ == "__main__":
