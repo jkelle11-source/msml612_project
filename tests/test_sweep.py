@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import json
+import shutil
 import subprocess
 
 import pytest
@@ -10,7 +11,7 @@ from conftest import CONFIG
 from data.physionet import save_dataset
 from diffusion.run import train, variant_name
 from diffusion.score import score
-from diffusion.sweep import cells, compare, current_commit, main, reproduces, sweep, uncommitted
+from diffusion.sweep import cells, compare, current_commit, final_scoring, main, reproduces, sweep, uncommitted
 
 SOME = [("random", "base", 42), ("random", "ext1", 42), ("block-aware", "base", 42)]
 NAMES = ["base_random_seed42", "ext1_random_seed42", "base_block-aware_seed42"]
@@ -60,6 +61,15 @@ def test_the_cells_run_regime_by_regime_then_seed_by_seed():
     for bad in ({"regimes": ["block"]}, {"variants": ["ext3"]}):
         with pytest.raises(ValueError):
             cells(CONFIG, **bad)
+
+def test_variants_alone_run_only_in_the_regimes_that_plan_them():
+    assert cells(CONFIG, variants=["ext2"], seeds=[44]) == [("random", "ext2", 44)]          # never block-aware
+    assert cells(CONFIG, variants=["ext1"], seeds=[44]) == [("random", "ext1", 44), ("block-aware", "ext1", 44)]
+    assert cells(CONFIG, variants=["ext2", "base"], seeds=[44]) == [
+        ("random", "ext2", 44), ("random", "base", 44), ("block-aware", "base", 44)]
+    with pytest.raises(ValueError, match="no regime in sweep.regimes plans 'ext1blind': name its regime"):
+        cells(CONFIG, variants=["ext1blind"])                               # M8-4 names block-aware
+    assert cells(CONFIG, ["random"], ["ext1blind"], [42]) == [("random", "ext1blind", 42)]   # named: any variant
 
 # --- each cell: trained, checked, scored, attached --------------------------------------
 
@@ -239,6 +249,57 @@ def test_uncommitted_names_the_changed_tracked_files_alone(tmp_path):
     outside.mkdir()
     (outside / ".git").write_text("not a repository\n")                    # git fails here: nothing to report
     assert uncommitted(outside) == []
+
+NOT_FROZEN = {
+    "with fewer draws": lambda scores: scores["sampler"].update(eval_n_samples=1),
+    "on another holdout": lambda scores: scores["holdout_settings"].update(block_eval_masker_seed=7),
+    "with the other TF32 setting": lambda scores: scores.update(tf32=not scores["tf32"]),
+    "before the settings were recorded": lambda scores: scores.pop("sampler"),
+}
+
+@pytest.mark.parametrize("change", NOT_FROZEN.values(), ids=NOT_FROZEN.keys())
+def test_a_scoring_not_done_the_frozen_way_is_done_again(change, config_path, small_dataset, tmp_path):
+    [run_dir] = go(config_path, small_dataset, tmp_path / "out", SOME[:1])
+    path = run_dir / "scores_test_block_0.1.json"
+    frozen = json.loads(path.read_text())
+    by_hand = copy.deepcopy(frozen)
+    change(by_hand)                                                         # a scoring by hand, say
+    path.write_text(json.dumps(by_hand))
+    go(config_path, small_dataset, tmp_path / "out", SOME[:1])
+    redone = json.loads(path.read_text())
+    assert {k: v for k, v in redone.items() if k != "seconds"} == {k: v for k, v in frozen.items() if k != "seconds"}
+
+def test_a_paired_sweep_keeps_only_a_scoring_done_on_the_paired_gpu(config_path, small_dataset, tmp_path):
+    [run_dir] = go(config_path, small_dataset, tmp_path / "out", SOME[:1])  # unpaired, on the CPU: gpu null
+    protocol = yaml.safe_load(config_path.read_text())["protocol"]
+    path = run_dir / "scores_test_block_0.1.json"
+    assert json.loads(path.read_text())["gpu"] is None
+    assert final_scoring(run_dir, "block", 0.1, protocol, paired=False) is not None       # an unpaired check keeps it
+    assert final_scoring(run_dir, "block", 0.1, protocol, paired=True) is None            # a paired sweep does not
+    scores = json.loads(path.read_text()) | {"gpu": protocol["paired_gpu"]}
+    path.write_text(json.dumps(scores))
+    assert final_scoring(run_dir, "block", 0.1, protocol, paired=True) == scores
+
+def test_a_paired_sweep_refuses_a_finished_run_trained_on_another_gpu(config_path, small_dataset, tmp_path,
+                                                                       monkeypatch):
+    out = tmp_path / "out"
+    [run_dir] = go(config_path, small_dataset, out, SOME[:1])               # an --unpaired session's, on the CPU
+    config = yaml.safe_load(config_path.read_text())
+    gpu = config["protocol"]["paired_gpu"]
+    monkeypatch.setattr("diffusion.sweep.uncommitted", lambda: [])
+    for module in ("diffusion.run", "diffusion.score"):
+        monkeypatch.setattr(f"{module}.gpu_name", lambda device: gpu)       # then a paired session, on the GPU
+    paired = dict(paired=True, wandb_mode="disabled", config_path=config_path, log=quiet)
+    before = {path.name: path.read_bytes() for path in run_dir.iterdir()}
+    with pytest.raises(ValueError, match=f"trained on no GPU, not on the paired {gpu}"):
+        sweep(config, small_dataset, out, "test", "cpu", SOME[:1], ["block"], **paired)
+    assert {path.name: path.read_bytes() for path in run_dir.iterdir()} == before          # kept, not scored again
+    shutil.rmtree(run_dir)                                                  # moved out: the cell is trained again
+    sweep(config, small_dataset, out, "test", "cpu", SOME[:1], ["block"], **paired)
+    assert json.loads((run_dir / "summary.json").read_text())["gpu"] == gpu
+    before = {path.name: path.read_bytes() for path in run_dir.iterdir()}
+    sweep(config, small_dataset, out, "test", "cpu", SOME[:1], ["block"], **paired)        # its own: kept
+    assert {path.name: path.read_bytes() for path in run_dir.iterdir()} == before
 
 def test_a_scoring_without_its_median_beside_it_is_done_again(config_path, small_dataset, tmp_path):
     [run_dir] = go(config_path, small_dataset, tmp_path / "out", SOME[:1])

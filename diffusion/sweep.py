@@ -8,21 +8,22 @@ A cell is a regime, a variant and a seed. The config's ``sweep`` block names eac
 ``protocol.run_seeds`` (42-46): 30 cells. They run regime by regime in that order, then seed by
 seed, so a sweep cut short leaves whole seeds behind it, and the block-aware runs come after the 20
 headline ones (PROJECT_PLAN §8). ``--regime``, ``--variants`` and ``--seeds`` run some of them;
-``--variants`` takes any variant, e.g. ``--regime block-aware --variants ext1blind --seeds 42 43 44``
-for M8-4.
+``--variants`` alone runs each variant in the regimes that plan it, and with ``--regime`` takes any
+variant, e.g. ``--regime block-aware --variants ext1blind --seeds 42 43 44`` for M8-4.
 
 Each cell, in ``<out>/<run name>`` (e.g. ``<out>/ext1_block-aware_seed42``):
 
 1. is trained with ``diffusion.run.run(..., paired=True, resume=True)``, tagged with ``--tag``. A run
    that a lost session stopped goes on from its last epoch; a finished one (``summary.json``) is kept,
-   once its saved config is checked to be the cell's;
+   once its saved config is checked to be the cell's and, in a paired sweep, its GPU the paired one;
 2. has its pairing hashes checked against those of the regime's other variants at its seed already
    in ``<out>`` (``diffusion.results.unpaired``), so the sweep stops at the first cell that unpairs,
    not when the store is written after the last;
 3. is scored on test under each of ``sweep.holdouts`` (``--holdouts``) with
    ``diffusion.score.score(..., paired=True)``, unless ``<out>`` already holds a scoring of its final
-   weights with its median imputation beside it (``span_mae`` reads it), and each scoring is added to
-   its wandb summary (``attach_to_wandb``), where the results store reads it.
+   weights done the frozen way (the protocol's sampler, holdout and TF32, on the paired GPU) with its
+   median imputation beside it (``span_mae`` reads it), and each scoring is added to its wandb summary
+   (``attach_to_wandb``), where the results store reads it.
 
 So the same command, run again in a new session, finishes what the last one started. On Colab, put
 ``<out>`` on Google Drive: a session's own disk goes with it. ``<out>/sweep.json`` records the tag
@@ -47,18 +48,19 @@ from pathlib import Path
 import yaml
 
 from data.physionet import load_dataset
-from diffusion.results import unpaired
+from diffusion.results import frozen_protocol, frozen_sampler, unpaired
 from diffusion.run import (CONFIG_PATH, DATASET_PATH, NOT_A_RUN, OUTPUTS, ROOT, VARIANTS, pick_device,
                            require_paired_gpu, run, run_name, with_variant)
-from diffusion.score import HOLDOUTS, attach_to_wandb, score, scores_name
+from diffusion.score import HOLDOUTS, attach_to_wandb, holdout_settings, score, scores_name
 from diffusion.train import REGIMES
 
 def cells(config, regimes=None, variants=None, seeds=None):
     """``[(regime, variant, seed), ...]`` in the order the sweep runs them: regime, then seed, then variant.
 
     By default every regime in ``sweep.regimes`` with its variants, at every seed in
-    ``protocol.run_seeds``; ``regimes``, ``variants`` and ``seeds`` narrow it (``variants`` may name a
-    variant the regime does not list).
+    ``protocol.run_seeds``; ``regimes``, ``variants`` and ``seeds`` narrow it. ``variants`` alone keeps
+    each to the regimes that plan it (review of #58: ``ext2`` is never trained block-aware unasked);
+    with ``regimes`` it may name a variant they do not list (M8-4's ``ext1blind``).
     """
     plan = config["sweep"]["regimes"]
     for regime in regimes or ():
@@ -69,9 +71,16 @@ def cells(config, regimes=None, variants=None, seeds=None):
     for variant in variants or ():
         if variant not in VARIANTS:
             raise ValueError(f"variant must be one of {list(VARIANTS)}, not {variant!r}")
+        if not regimes and not any(variant in planned for planned in plan.values()):
+            raise ValueError(f"no regime in sweep.regimes plans {variant!r}: name its regime")
     seeds = seeds or config["protocol"]["run_seeds"]
-    return [(regime, variant, seed) for regime in regimes or plan for seed in seeds
-            for variant in variants or plan[regime]]
+
+    def chosen(regime):                                         # the regime's variants to run
+        if variants is None:
+            return plan[regime]
+        return variants if regimes else [variant for variant in variants if variant in plan[regime]]
+
+    return [(regime, variant, seed) for regime in regimes or plan for seed in seeds for variant in chosen(regime)]
 
 def cell_config(config, regime, variant, epochs=None):
     """The config a cell trains with: ``config`` set to the variant and regime, and to ``epochs`` if given."""
@@ -116,16 +125,25 @@ def claim(out, tag):
                          f"{here['commit']}: check out {started['commit']} to go on (the results store refuses "
                          "a regime trained from two commits)")
 
-def final_scoring(run_dir, holdout, fraction):
-    """``run_dir``'s test scoring of ``holdout`` if it scored the run's final weights and its median
-    imputation is beside it (``span_mae`` reads it, and Google Drive may have kept one without the
-    other when a session was lost); else None."""
+def final_scoring(run_dir, holdout, fraction, protocol, paired):
+    """``run_dir``'s test scoring of ``holdout`` if it is one to keep; else None, to score it again.
+
+    One to keep scored the run's final weights the frozen way: with ``protocol``'s sampler, holdout
+    and TF32 setting and, in a paired sweep, on ``protocol.paired_gpu``, as the results store checks,
+    so a scoring by hand (another GPU, a quick sampler) is done again rather than kept for the store
+    to refuse (review of #58). And its median imputation is beside it: ``span_mae`` reads it, and
+    Google Drive may have kept one without the other when a session was lost.
+    """
     name = scores_name("test", holdout, fraction)
     path = run_dir / f"scores_{name}.json"
     if not (path.exists() and (run_dir / f"median_{name}.npy").exists()):
         return None
     scores = json.loads(path.read_text())
-    return scores if scores["model_sha256"] == sha256(run_dir / "model.pt") else None
+    frozen = (scores.get("sampler") == frozen_sampler(protocol)
+              and scores.get("holdout_settings") == holdout_settings(protocol, holdout)
+              and scores.get("tf32") == protocol.get("tf32", False)
+              and (not paired or scores.get("gpu") == protocol["paired_gpu"]))
+    return scores if frozen and scores["model_sha256"] == sha256(run_dir / "model.pt") else None
 
 def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -156,7 +174,7 @@ def sweep(config, dataset, out, tag, device, todo, holdouts, epochs=None, paired
                                "The results store checks only the commit: commit them or undo them")
     out = Path(out)
     claim(out, tag)
-    fraction = config["protocol"]["eval_holdout_fraction"]
+    fraction, frozen = config["protocol"]["eval_holdout_fraction"], frozen_protocol(config_path)
     run_dirs = []
     for i, (regime, variant, seed) in enumerate(todo, start=1):
         cell = cell_config(config, regime, variant, epochs)
@@ -172,13 +190,18 @@ def sweep(config, dataset, out, tag, device, todo, holdouts, epochs=None, paired
                                                                         if k not in NOT_A_RUN}:
                 raise ValueError(f"{run_dir} holds a run trained with another config than the cell's "
                                  "(another --epochs?): give another folder")
+            trained_on, wanted = json.loads((run_dir / "summary.json").read_text())["gpu"], cell["protocol"]["paired_gpu"]
+            if paired and trained_on != wanted:                 # an --unpaired session's (review of #58)
+                raise ValueError(f"{run_dir} holds a run trained on {trained_on or 'no GPU'}, not on the paired "
+                                 f"{wanted} (an --unpaired session's?): move it out of {out}, and the sweep trains "
+                                 "the cell again")
             indented("trained")
         else:
             run(cell, dataset, seed, device, run_dir, log=indented, wandb_mode=wandb_mode, tags=[tag],
                 paired=paired, resume=True)
         check_pairing(out, config, regime, seed)
         for holdout in holdouts:
-            scores = final_scoring(run_dir, holdout, fraction)
+            scores = final_scoring(run_dir, holdout, fraction, frozen, paired)
             if scores is None:
                 scores = score(run_dir, dataset, device, holdout, config_path=config_path, log=indented,
                                paired=paired)
@@ -236,7 +259,8 @@ def main(argv=None):
     parser.add_argument("--seeds", type=int, nargs="+", help="run seeds (default protocol.run_seeds)")
     parser.add_argument("--regime", choices=list(REGIMES), help="only this regime's cells")
     parser.add_argument("--variants", nargs="+", choices=list(VARIANTS),
-                        help="only these variants; any variant, e.g. ext1blind for M8-4")
+                        help="only these variants, in each regime that plans them; with --regime any variant, "
+                             "e.g. ext1blind for M8-4")
     parser.add_argument("--holdouts", nargs="+", choices=HOLDOUTS,
                         help="the test holdouts to score (default sweep.holdouts)")
     parser.add_argument("--config", type=Path, default=CONFIG_PATH)
@@ -272,7 +296,8 @@ def main(argv=None):
     sweep(config, load_dataset(args.dataset), out, args.tag, device, todo, args.holdouts or config["sweep"]["holdouts"],
           args.epochs, paired=not args.unpaired, wandb_mode=args.wandb, config_path=args.config,
           log=lambda line: print(line, flush=True))
-    print(f"done: collect and check them with  uv run python -m diffusion.results --tag {args.tag}", flush=True)
+    seeds = "" if args.seeds is None else " --seeds " + " ".join(map(str, args.seeds))
+    print(f"done: collect and check them with  uv run python -m diffusion.results --tag {args.tag}{seeds}", flush=True)
 
 if __name__ == "__main__":
     main()
