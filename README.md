@@ -1234,7 +1234,8 @@ drive.flush_and_unmount()   # before ending the session yourself
 | M8-4's grid check, if triggered | `--tag sweep --out <Drive>/sweep --regime block-aware --variants base ext1 --seeds 42 43 44 --holdouts offgrid` | 6 scorings, no training | about 3.9 |
 
 The hours are the timing test's ([The timing test](#the-timing-test-m6-2)). Then
-`uv run python -m diffusion.results --tag dry-run` collects and checks the runs (below), and
+`uv run python -m diffusion.results --tag dry-run --seeds 42 43` collects and checks the runs
+(below), and
 `--compare` checks the rerun:
 
 ```text
@@ -1302,8 +1303,8 @@ summary). Runs without `paired` (health checks, debugging) still go anywhere.
 different Colab sessions need no shared folder:
 
 ```text
-uv run python -m diffusion.results --tag dry-run      # results/dry-run.json
-uv run python -m diffusion.results --tag sweep        # results/sweep.json, as M7-1's runs land
+uv run python -m diffusion.results --tag dry-run --seeds 42 43    # results/dry-run.json
+uv run python -m diffusion.results --tag sweep                    # results/sweep.json, as M7-1's runs land
 ```
 
 It reads every finished run with the tag and writes `results/<tag>.json`:
@@ -1313,12 +1314,12 @@ RMSE, scoring GPU and per-variable MAE of every holdout scored (`random/0.1`, `b
 knows, such as M6-3's off-grid one); `configs[regime]` the config the regime's runs share,
 toggles aside; `gpu` the paired GPU; `unscored` the runs still missing a 10% holdout, whose
 scores are null meanwhile, so the store can be written while the sweep runs; and `missing` the
-cells `sweep.regimes` plans with no finished run yet, at each seed the store has runs at (one
-still training, or one wandb lists as crashed or failed), so M7-2's table never drops a cell
-unnoticed. The per-variable
-MAE is there for Ext 2's high-autocorrelation variables (HR, SysABP; PROJECT_PLAN §4.2) and M9-2,
-so no run folder has to outlive its Colab session. It writes nothing, and lists every reason,
-unless:
+cells `sweep.regimes` plans at `protocol.run_seeds` with no finished run yet (one still
+training, one wandb lists as crashed or failed, or a seed the sweep never reached), so M7-2's
+table never drops a cell unnoticed. `--seeds` checks fewer seeds, `42 43` for the dry run. The
+per-variable MAE is there for Ext 2's high-autocorrelation variables (HR, SysABP; PROJECT_PLAN
+§4.2) and M9-2, so no run folder has to outlive its Colab session. It writes nothing, and lists
+every reason, unless:
 
 - within each regime and seed, every variant's data order, train masks, diffusion draws and
   shared starting weights hash the same, and each encoder's starting weights hash the same in
@@ -1351,12 +1352,13 @@ Tests:
   that is not the final weights its `summary.json` records is refused before any draw, writing
   nothing, and a run from before the summary recorded them is scored unchecked.
 - `tests/test_results.py`: the store's layout, configs, per-variable MAE, unscored holdouts,
-  missing planned runs, robustness rates and a holdout of another name; each way runs can be
-  unpaired refused on its own (diffusion draws, a sampler, holdout or TF32 setting other than the
-  protocol's in scoring or in training, a second commit in a regime among them); validation settings, output folders and each regime's commit allowed to
-  differ; a pairing block wandb flattened read the same; and real runs through `diffusion.run`,
-  `diffusion.score` and `attach_to_wandb` stored, with one relabeled to another seed caught by
-  its data-order hash.
+  missing planned runs (a seed with no run at all among them), robustness rates and a holdout of
+  another name; each way runs can be unpaired refused on its own (diffusion draws, a sampler,
+  holdout or TF32 setting other than the protocol's in scoring or in training, a config from
+  before TF32 was recorded counting as off, a second commit in a regime among them); validation
+  settings, output folders and each regime's commit allowed to differ; a pairing block wandb
+  flattened read the same; and real runs through `diffusion.run`, `diffusion.score` and
+  `attach_to_wandb` stored, with one relabeled to another seed caught by its data-order hash.
 
 ---
 

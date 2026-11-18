@@ -1,6 +1,7 @@
 """The paired sweep's results store (M6-2): every run's test scores, kept only if the runs are paired.
 
-    uv run python -m diffusion.results --tag dry-run         # writes results/dry-run.json
+    uv run python -m diffusion.results --tag sweep                       # writes results/sweep.json
+    uv run python -m diffusion.results --tag dry-run --seeds 42 43       # writes results/dry-run.json
 
 Reads every finished run with the tag from the config's ``tracking`` project on wandb, where
 ``diffusion.run`` streams each training run and ``diffusion.score`` adds each test scoring to the
@@ -16,9 +17,9 @@ without their output folders. Writes ``results/<tag>.json``:
 - ``gpu``: the one GPU every run trained and was scored on (``protocol.paired_gpu``);
 - ``unscored``: the runs still missing a 10% holdout, whose score is null meanwhile, so the store
   can be written while the sweep runs;
-- ``missing``: the cells ``sweep.regimes`` plans with no finished run, at each seed the store has
-  runs at (one still training, or one wandb lists as crashed or failed), so M7-2's table never
-  drops a cell unnoticed. A seed with no run at all is not listed: the dry run trains two.
+- ``missing``: the cells ``sweep.regimes`` plans at ``protocol.run_seeds`` (``--seeds`` for fewer:
+  ``42 43`` for the dry run) with no finished run: one still training, one wandb lists as crashed
+  or failed, or a seed the sweep never reached, so M7-2's table never drops a cell unnoticed.
 
 The store is written only if the runs are paired (PROJECT_PLAN §3.3). Within a regime and seed,
 every variant's pairing hashes (``diffusion.run``, ``summary.pairing``) must be equal: the batches
@@ -190,12 +191,16 @@ def unpaired(regime, seed, hashes):
                          f"at seed {seed}: {have}")
     return found
 
-def record(runs, tag, protocol=None, plan=None):
+def record(runs, tag, protocol=None, plan=None, seeds=None):
     """The store of ``runs`` (``fetch``'s dicts); raises ``ValueError`` listing what unpairs them.
 
-    ``plan`` is the sweep's cells, ``{regime: [variant, ...]}`` (default: ``sweep_plan``'s).
+    ``plan`` is the sweep's cells, ``{regime: [variant, ...]}`` (default: ``sweep_plan``'s), and
+    ``seeds`` the seeds it trains them at (default: ``protocol.run_seeds``): ``missing`` lists every
+    planned cell at them with no finished run, a seed with none at all too (review of #58).
     """
+    protocol = frozen_protocol() if protocol is None else protocol
     plan = sweep_plan() if plan is None else plan
+    seeds = protocol["run_seeds"] if seeds is None else seeds
     if not runs:
         raise ValueError(f"no finished run is tagged {tag!r}")
     found = problems(runs, protocol)
@@ -218,7 +223,6 @@ def record(runs, tag, protocol=None, plan=None):
                        for holdout in sorted(set(HEADLINE) | set(scores))},
         }
         store["unscored"] += [f"{run['name']}: {holdout}" for holdout in HEADLINE if holdout not in scores]
-    seeds = sorted({run["config"]["seed"] for run in runs})
     store["missing"] = [f"{variant}_{regime}_seed{seed}" for regime, variants in plan.items() for seed in seeds
                         for variant in variants if str(seed) not in store["runs"].get(regime, {}).get(variant, {})]
     return store
@@ -227,9 +231,12 @@ def main(argv=None, fetch=fetch):
     parser = argparse.ArgumentParser(description="Collect the paired sweep's test scores from wandb, checked (M6-2).")
     parser.add_argument("--tag", required=True, help="the runs' wandb tag, e.g. dry-run or sweep")
     parser.add_argument("--out", type=Path, help="store path (default results/<tag>.json)")
+    parser.add_argument("--seeds", type=int, nargs="+",
+                        help="the seeds the runs were planned at, for its missing runs (default protocol.run_seeds; "
+                             "42 43 for the dry run)")
     args = parser.parse_args(argv)
 
-    store = record(fetch(args.tag), args.tag)
+    store = record(fetch(args.tag), args.tag, seeds=args.seeds)
     out = args.out or RESULTS / f"{args.tag}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(store, indent=1) + "\n")
