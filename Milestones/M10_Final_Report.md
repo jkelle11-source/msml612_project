@@ -14,8 +14,8 @@
 
 ## Coordination notes
 - **Reproducibility is a graded line** (§7, "clean reproducible code," 20 pts). The README's command→result table is the artifact that proves it: a grader runs one command per variant and sees the reported number. Fixed/logged seeds and docstrings are part of the same score.
-- **The report structure is already fixed (§8)** — Introduction, Related Work, Method (Ext 1 honest framing, Ext 2 TSLO + true Time2Vec + why no attention bias, Ext 3 if done), Experiments (normalization, dual-mask, paired 5-seed, headline paired-Δ ± SE, ablation, per-variable, runtime, coverage), Discussion (main effects vs. exploratory interaction; nulls as findings), Limitations, Conclusion/future work.
-- **Nulls stay stated as findings** (§3.5, §7). The Discussion frames flat contrasts as rigor, and Limitations names the real ones: patient-level exchangeability, grid vs. native-timestamp TSLO, reduced scale vs. published, single dataset, and synthetic block missingness (one window shape on a fixed grid of 3-hour slots, which the block-aware regime also trains on).
+- **The report structure is already fixed (§8)** — Introduction (the reproduction and the runtime plot stated up front, §7), Related Work, Method (Ext 1 honest framing, Ext 2 TSLO + true Time2Vec + why no attention bias, Ext 3 if done), Experiments (normalization, dual-mask, paired 5-seed, headline paired-Δ ± SE with 95% CIs and the extensions' gates, ablation, per-variable, runtime, coverage), Discussion (main effects vs. exploratory interaction; nulls as findings), Limitations, Conclusion/future work.
+- **Nulls stay stated as findings** (§3.5, §7). The Discussion frames flat contrasts as rigor, and Limitations names the real ones: patient-level exchangeability, grid vs. native-timestamp TSLO, reduced scale vs. published, single dataset, synthetic block missingness (one window shape on a fixed grid of 3-hour slots, which the block-aware regime also trains on), and holdouts that never depend on the values: every scored value is a recorded value hidden at random, so informative missingness (MAR, MNAR) is untested, and testing it is future work on a simulated mechanism (§8).
 - Cite the reused CSDI implementation and all references (§9) — this is its own graded line (10 pts).
 
 ---
@@ -53,13 +53,13 @@
 **Context.** The graded final report, following the fixed §8 structure. Josh + Sankha write it (Jake in support via the repo/reproducibility artifacts and figures), with all three doing a final review. The report's spine is the honest-performance story: reproduction + runtime as guaranteed wins, extension effects (including nulls) reported rigorously on top (§7).
 
 **Deliverables**
-- Final report following §8: Introduction, Related Work, Method (Ext 1/2/3), Experiments (normalization, dual-mask, paired 5-seed, headline paired-Δ ± SE, ablation, per-variable, runtime, coverage), Discussion, Limitations, Conclusion/future work.
+- Final report following §8: Introduction (the reproduction and the runtime plot up front, §7), Related Work, Method (Ext 1/2/3), Experiments (normalization, dual-mask, paired 5-seed, headline paired-Δ ± SE with 95% CIs and the extensions' gates, ablation, per-variable, runtime, coverage), Discussion, Limitations (including the value-independent holdouts), Conclusion/future work.
 - All figures/tables sourced from the frozen results (`M9-1`, `M9-2`, `M8-2`, `M9-3`).
 - Full reference list (§9) and the reused-CSDI citation.
 
 **Definition of Done**
 - [ ] Final report submitted by **Wed Dec 10**.
 - [ ] Structure matches §8; every results claim traces to a committed number/figure.
-- [ ] Nulls stated as findings; limitations section complete.
+- [ ] Nulls stated as findings, each with its 95% CI and its extension's gate; limitations section complete, including the value-independent holdouts.
 - [ ] References complete; reused CSDI implementation cited.
 - [ ] Reviewed by all three before submission.

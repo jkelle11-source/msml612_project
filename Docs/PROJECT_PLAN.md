@@ -81,6 +81,7 @@ Our reproduced base CSDI must reach **≤ ~0.24 MAE @ 10% masked** (within ~10% 
 ### 3.5 Effect claims
 - **Main effects** (Ext 1 vs. base; Ext 2 vs. base) are **confirmatory**, reported per-effect with paired SE.
 - The **interaction** (Ext 1+2 vs. each alone) is **exploratory** — with four means inside a ~0.02–0.03 window, 5 seeds may not resolve it, and we will not assert an interaction the error bars can't support.
+- **A null says what it rules out, and whether the extension was used** (added Nov 20, during the sweep; it adds reporting and changes no verdict rule). Each paired Δ in the headline and final tables carries its 95% CI beside its ± SE (t with n − 1 degrees of freedom: ±2.78 SE at 5 seeds, ±4.30 SE at 3), so a contrast labelled "no significant effect" also states the largest gain its CI still allows. Each extension's output gate starts at 0, so the extension starts as base (§4.1, §4.2); it is read from every run's final `model.pt` (`mask_encoder.gate`, `time_encoder.gate`) and reported beside the extension's Δ as mean ± SE over seeds. A gate that moved away from 0 shows the model used the encoder, so a null measures what the encoder adds; a gate still near 0 shows the model learned to ignore it.
 
 ### 3.6 Head/`d_model` divisibility
 Fix **`n_heads = 8`** — upstream CSDI's setting, so the gate run matches the published configuration — across the `d_model ∈ {64, 128, 256}` sweep (head_dim = 8/16/32, all valid). State the rule so the ablation doesn't silently break.
@@ -221,7 +222,7 @@ Nominal cadence ~3 hrs/student/week.
 
 **Week 7 · Nov 12 – Nov 18 — Full paired 5-seed training**
 - **A:** Full training (upstream's fixed 200 epochs, final weights scored, §3.1) for all four variants × seeds 42–46 (20 runs), plus base and Ext 1 in the block-aware regime × seeds 42–46 (10 runs): 30 in total. Then base's final weights in the random regime are scored at 50% and 90% too, the robustness columns of §6's reproduced-CSDI row (10 passes); this comes last and is the first cut, to seeds 42–44 as in the gate, if compute runs short.
-- **B:** Populate the **headline table** — mean ± SE and **paired Δ vs. base with its SE**; stratify by missingness type, scoring every run under both frozen holdouts (random `EvalMasker`, block `BlockEvalMasker`, §3.1). Main effects confirmatory, interaction exploratory.
+- **B:** Populate the **headline table** — mean ± SE and **paired Δ vs. base with its SE** and 95% CI, each extension's gate beside its Δ (§3.5); stratify by missingness type, scoring every run under both frozen holdouts (random `EvalMasker`, block `BlockEvalMasker`, §3.1). Main effects confirmatory, interaction exploratory.
 - **C:** Qualitative trajectories (5 patients × 3 variables: HR, serum sodium, GCS); temporal coherence vs. mean/forward-fill.
 
 **Week 8 · Nov 19 – Nov 25 — Ablation + runtime**
@@ -237,7 +238,7 @@ Three **one-factor sensitivity studies** on the **best** variant, plus mask-enco
 | Ext 1 attribution checks, only if triggered (§4.1) | — | Ext 1-blind | 3 | 3† |
 
 \*If compute is tight, sweep `T` at a single `d_model` and state it. Total ≈ 35–40 runs, not 180. †Block-aware, plus 6 off-grid scoring passes of Week 7's block-aware runs (no retraining). Cells whose paired-Δ error bars overlap are reported **null**, not dropped.
-- **A:** Inference-latency profile per variant × `d_model`; **MAE-vs-inference-time plot** (the runtime contribution — see §7).
+- **A:** Inference-latency profile per variant × `d_model`; **MAE-vs-inference-time plot** (the runtime contribution — see §7). It comes before the conformal stretch: if Week 8 runs late, the plot is finished first.
 - **Ext 1 track, only if Week 7's block-aware Ext 1 contrast separated:** §4.1's control (Ext 1-blind, block-aware, seeds 42–44) and grid check (off-grid scoring of the block-aware base and Ext 1 runs, seeds 42–44), about 8.5 h of compute on the sweep's GPU (§8) in parallel with the ablation; otherwise recorded as not triggered.
 - ⚠️ **Conformal gate check** at end of week (§4.3).
 
@@ -306,9 +307,9 @@ Two honest notes for the report: (1) expected extension gains (~0.01–0.02) are
 
 **The high-performance strategy (deliberate, not spin).** This rubric line pays for *performance*, and rigorously reporting a null does not obviously earn it. We resolve the tension by guaranteeing at least one true positive performance story and framing the rest as method quality:
 1. **Lead with benchmark reproduction** — hitting ~0.22 @10% *is* a strong, gradeable result on its own.
-2. **Make the runtime/compute-quality plot prominent** — "running time" is explicitly named in this rubric line; the MAE-vs-latency curve is a contribution most teams won't have.
+2. **Make the runtime/compute-quality plot prominent** — "running time" is explicitly named in this rubric line; the MAE-vs-latency curve is a contribution most teams won't have. It leads the presentation and the report's introduction beside the reproduction, and it is finished before the conformal stretch starts.
 3. **Evaluate each extension in its best honest regime as a *primary* result** — block missingness for Ext 1, high-autocorrelation variables for Ext 2 — giving each its best legitimate shot at an SE-separated gain.
-4. **State the significance bar up front**, so a flat pooled result reads as rigor, not failure.
+4. **State the significance bar up front**, so a flat pooled result reads as rigor, not failure. Each null carries its 95% CI and its extension's gate (§3.5), so it says what gain it rules out and whether the extension was used.
 
 Go in eyes-open: if every extension comes back null, the benchmark match + runtime analysis must carry the 25 points — and they can.
 
@@ -320,13 +321,13 @@ Go in eyes-open: if every extension comes back null, the benchmark match + runti
 Proposal (Oct 8) · Interim Report (Oct 29) · Presentation (Dec 2) · Final Report (Dec 10) · Modular PyTorch repo (four CLI-toggled variants, tests, reproducible scripts, cited CSDI source) · Baseline suite · Reproduced+gated CSDI · Ext 1 · Ext 2 · Full model · Restructured ablation + runtime plot · Conformal module (stretch).
 
 ### Final Report structure
-1. Introduction — imputation in clinical TS; limits of deterministic methods; why diffusion.
+1. Introduction — imputation in clinical TS; limits of deterministic methods; why diffusion; the reproduction and the MAE-vs-inference-time plot stated up front (§7).
 2. Related Work — CSDI, BRITS, V-RIN, Time2Vec, conformal; our contribution distinguished from each.
 3. Method — CSDI background; Ext 1 (honest framing, dual-axis encoder); Ext 2 (TSLO + true Time2Vec, why no attention bias); Ext 3 (studentized patient-level conformal, if done).
-4. Experiments — dataset, **normalization**, dual-mask protocol (random and block holdouts, two training regimes), **paired 5-seed** design, baselines, headline table (paired Δ ± SE), ablation, per-variable, runtime, coverage.
+4. Experiments — dataset, **normalization**, dual-mask protocol (random and block holdouts, two training regimes), **paired 5-seed** design, baselines, headline table (paired Δ ± SE with 95% CIs, and the extensions' gates; §3.5), ablation, per-variable, runtime, coverage.
 5. Discussion — main effects vs. exploratory interaction; where/why extensions help; nulls stated as findings.
-6. Limitations — patient-level exchangeability; grid vs. native-timestamp choice for TSLO; reduced scale vs. published; single dataset; block missingness is synthetic (one window shape, on a fixed grid of 16 three-hour slots, imposed on held-out values), and the block-aware regime trains on that same shape and grid, which Ext 1's learned hour embedding can pick up (§4.1, grid check); known data-entry errors kept in the raw data to match upstream (10 pH values such as 733–735, 73 Temp values such as −17.8, one K of 22.9, two PaO2 values of 0 and 7.47, the second a pH swapped with that hour's PaO2 of 187), which widen pH's and Temp's scaling so the two count for less than they should in pooled standardized MAE, make their per-variable MAE unreliable, and inflate RMSE wherever a bad value is scored or carried forward (README, Dataset); in any model that predicts across features at the same hour, a visible bad pH also spreads into that hour's PaCO2 and PaO2 guesses (BRITS misses a PaCO2 by 6,796 standardized units next to a pH of 735; README, Learned baseline); CSDI's attention does not spread it across features, but carries it along pH in time by a seed-dependent amount (on the gate runs, seed 42 misses a held-out pH of 7.33 by 153 standardized units three hours after a visible 735, which is 64% of its squared error; README, The reproduction gate).
-7. Conclusion & future work (per-feature TSLO attention bias; native-timestamp irregular grid).
+6. Limitations — patient-level exchangeability; grid vs. native-timestamp choice for TSLO; reduced scale vs. published; single dataset; the holdouts never depend on the values: every scored value is a recorded value hidden by a coin flip (random holdout) or a randomly placed slot (block holdout), so both are missing completely at random by construction, and informative missingness, where whether a value is missing depends on other recorded values (MAR) or on the value itself (MNAR, e.g. a lab not ordered because it would have been normal), is untested; real gaps have no ground truth to score, so testing it needs a simulated mechanism, whose results would hold only for that mechanism; block missingness is synthetic (one window shape, on a fixed grid of 16 three-hour slots, imposed on held-out values), and the block-aware regime trains on that same shape and grid, which Ext 1's learned hour embedding can pick up (§4.1, grid check); known data-entry errors kept in the raw data to match upstream (10 pH values such as 733–735, 73 Temp values such as −17.8, one K of 22.9, two PaO2 values of 0 and 7.47, the second a pH swapped with that hour's PaO2 of 187), which widen pH's and Temp's scaling so the two count for less than they should in pooled standardized MAE, make their per-variable MAE unreliable, and inflate RMSE wherever a bad value is scored or carried forward (README, Dataset); in any model that predicts across features at the same hour, a visible bad pH also spreads into that hour's PaCO2 and PaO2 guesses (BRITS misses a PaCO2 by 6,796 standardized units next to a pH of 735; README, Learned baseline); CSDI's attention does not spread it across features, but carries it along pH in time by a seed-dependent amount (on the gate runs, seed 42 misses a held-out pH of 7.33 by 153 standardized units three hours after a visible 735, which is 64% of its squared error; README, The reproduction gate).
+7. Conclusion & future work (per-feature TSLO attention bias; native-timestamp irregular grid; evaluation under informative missingness, on a simulated MAR or MNAR holdout).
 
 ### Risk register
 | Risk | Likelihood | Mitigation |
