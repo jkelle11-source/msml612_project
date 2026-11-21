@@ -40,10 +40,10 @@
 **Definition of Done**
 - [x] All 30 cells complete (or any incomplete cell is documented with cause + plan; a block-aware regime cut to 3 seeds is stated as exploratory).
 - [x] Results land in the structured store keyed by `(variant, regime, seed)`.
-- [ ] Runs are resumable from checkpoints; the manifest reproduces any cell.
+- [x] Runs are resumable from checkpoints; the manifest reproduces any cell.
 - [x] Pairing integrity confirmed (per-seed shared RNG across variants within each regime, per `M6-2`).
-- [ ] Every run's manifest entry names the GPU `M6-2` picked, for training and for scoring (§3.3).
-- [ ] Every extension run's manifest entry records its final gate (§3.5).
+- [x] Every run's manifest entry names the GPU `M6-2` picked, for training and for scoring (§3.3).
+- [x] Every extension run's manifest entry records its final gate (§3.5).
 - [x] Base (random regime) scored at 50% and 90% on 5 seeds, or on 42–44 with the cut stated; mean ± SE recorded for §6's reproduced-CSDI row.
 
 ---
