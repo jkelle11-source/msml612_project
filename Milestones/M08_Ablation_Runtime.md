@@ -29,7 +29,7 @@
   †Block-aware regime, plus 6 off-grid scoring passes of M7's block-aware runs (no retraining); about 8.5 h of compute (§8), on a session of its own on the sweep's GPU (§3.3), in parallel with the ablation.
 - **Ext 1's attribution checks run only if triggered** (§4.1, fixed before any result). `M7-2` says whether Ext 1's block-aware contrast separates from zero; if it does not, there is no gain to attribute and `M8-4` closes with that one line.
 - **`n_heads = 8` is fixed across the `d_model` sweep** (upstream CSDI's value; head_dim 8/16/32, all valid) so divisibility doesn't silently break the ablation (§3.6).
-- **Runtime is a first-class result, not an afterthought** (§7). The MAE-vs-latency curve is one of the guaranteed high-performance stories even if every extension comes back null.
+- **Runtime is a first-class result, not an afterthought** (§7). The MAE-vs-latency curve is one of the guaranteed high-performance stories even if every extension comes back null. If Week 8 runs late, the curve is finished before the conformal stretch (`M9-3`) starts: it carries part of the high-performance line, and the stretch is optional.
 - **Every run and every latency on the sweep's GPU** (§3.3, settled at the `M5-3` review; `M6-2`'s timing test picked Colab's G4 runtime, an `NVIDIA A100-SXM4-80GB`, with TF32 on). Ablation cells are compared with each other and the attribution checks with M7's runs, so they share M7's GPU; a latency compares only with latencies timed on the same GPU.
 - **Conformal gate is a real decision with a real deadline** — end of this week (§4.3). If the combined model isn't stable at ≤ ~0.24 @10%, cut conformal cleanly; it does not weaken the core project.
 
@@ -66,7 +66,7 @@
 - **Blocked by:** `M7-1`
 - **Blocks:** `M9-1`
 
-**Context.** The runtime contribution (§7) — explicitly rewarded by the rubric's high-performance line and rarely produced by other teams. Profile inference latency per variant × `d_model` and plot MAE against inference time, so the accuracy/compute trade-off is visible. Jake owns it (training/inference-engine track).
+**Context.** The runtime contribution (§7) — explicitly rewarded by the rubric's high-performance line and rarely produced by other teams. Profile inference latency per variant × `d_model` and plot MAE against inference time, so the accuracy/compute trade-off is visible. It comes before the conformal stretch (`M9-3`): if Week 8 runs late, this plot is finished first. Jake owns it (training/inference-engine track).
 
 **Deliverables**
 - Inference-latency measurements per variant × `d_model` (fixed hardware, warm-started, averaged over enough batches to be stable).
@@ -77,6 +77,7 @@
 - [ ] Latency measured on fixed hardware with a documented protocol (warmup, repeats).
 - [ ] MAE-vs-inference-time plot produced and committed.
 - [ ] Trade-off interpretation written for the final report/presentation.
+- [ ] Finished before `M9-3`'s conformal work starts.
 
 ---
 
