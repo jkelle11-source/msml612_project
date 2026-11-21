@@ -39,12 +39,12 @@
 
 **Definition of Done**
 - [x] All 30 cells complete (or any incomplete cell is documented with cause + plan; a block-aware regime cut to 3 seeds is stated as exploratory).
-- [ ] Results land in the structured store keyed by `(variant, regime, seed)`.
+- [x] Results land in the structured store keyed by `(variant, regime, seed)`.
 - [ ] Runs are resumable from checkpoints; the manifest reproduces any cell.
 - [x] Pairing integrity confirmed (per-seed shared RNG across variants within each regime, per `M6-2`).
 - [ ] Every run's manifest entry names the GPU `M6-2` picked, for training and for scoring (§3.3).
 - [ ] Every extension run's manifest entry records its final gate (§3.5).
-- [ ] Base (random regime) scored at 50% and 90% on 5 seeds, or on 42–44 with the cut stated; mean ± SE recorded for §6's reproduced-CSDI row.
+- [x] Base (random regime) scored at 50% and 90% on 5 seeds, or on 42–44 with the cut stated; mean ± SE recorded for §6's reproduced-CSDI row.
 
 ---
 
@@ -63,7 +63,7 @@
 - Stratified view: every variant and baseline under both frozen holdouts, random (`EvalMasker`) and block (`BlockEvalMasker`, `M2-4`), at the same 10% rate, so Ext 1's and Ext 2's honest regimes read separately.
 - **Ext 1's block contrast:** paired Δ ± SE of Ext 1 vs. base in the block-aware training regime, scored on the block holdout (§3.1, §4.1), with the random regime's block-holdout Δ beside it as a carry-over check. Whether it separates from zero is the trigger for Ext 1's attribution checks (`M8-4`), stated in one line as soon as it is known.
 - A written verdict per contrast: SE-separated effect vs. "no significant effect," each null also stating the largest gain its 95% CI allows.
-- Each extension's final gate, mean ± SE over seeds per regime, from `M7-1`'s manifest, beside its Δ (§3.5): a gate that moved away from 0 shows the model used the encoder.
+- Each extension's final gate from `M7-1`'s manifest, beside its Δ (§3.5): the mean of its size, |gate|, ± SE over seeds per regime, with each seed's signed value. The sign means nothing, and Ext 1's gates differ in sign across seeds, so a signed mean would hide gates that moved. A gate that moved away from 0 shows the model used the encoder.
 
 **Definition of Done**
 - [ ] Table reports mean ± SE for all four variants and all baselines in standardized units.
