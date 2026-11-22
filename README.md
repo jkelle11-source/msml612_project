@@ -44,6 +44,7 @@ diffusion/     # training data feed, loop and random streams around the
                #   The sweep's checked results store (results.py).          [M6-2]
                #   The GPU timing test (timing.py).                         [M6-2]
                #   The sweep's driver (sweep.py); resuming a run (run.py).  [M6-2]
+               #   The sweep's run manifest (manifest.py).                  [M7-1]
 eval/          # EvalMasker / TrainMasker + masked, standardized metrics;
                #   EvalSampler (frozen-noise evaluation pass).              [M1-3]
                #   Mean and forward-fill baselines.                         [M2-3]
@@ -53,6 +54,7 @@ results/       # recorded results (baselines.json).                         [M2-
                #   Ext 1's overfit check (ext1_overfit.json).               [M4-2]
                #   Ext 2's health check (ext2_health.json).                 [M5-2]
                #   Single-seed health runs (health_seed42.json).            [M5-3]
+               #   The sweep's runs (sweep.json, sweep_manifest.json).      [M7-1]
 configs/       # frozen protocol config (config.yaml).
 Docs/          # project plan + shared notes (e.g. CSDI_Objective.md).
 Milestones/    # per-milestone GitHub issue breakdown (M00-M10).
@@ -1242,7 +1244,9 @@ drive.flush_and_unmount()   # before ending the session yourself
 | M8-4's control, if triggered | `--tag sweep --out <Drive>/sweep --regime block-aware --variants ext1blind --seeds 42 43 44 --holdouts block` | 3 | about 4.5 |
 | M8-4's grid check, if triggered | `--tag sweep --out <Drive>/sweep --regime block-aware --variants base ext1 --seeds 42 43 44 --holdouts offgrid` | 6 scorings, no training | about 3.9 |
 
-The hours are the timing test's ([The timing test](#the-timing-test-m6-2)). Then
+The hours are the timing test's ([The timing test](#the-timing-test-m6-2)). The sweep's 67.5 h
+includes base's ten 50% and 90% scoring passes (about 6.5 h), which run after the driver, and the
+finished sweep measured 67.5 h ([The run manifest](#the-run-manifest-m7-1)). Then
 `uv run python -m diffusion.results --tag dry-run --seeds 42 43` collects and checks the runs
 (below), and
 `--compare` checks the rerun:
@@ -1373,6 +1377,52 @@ Tests:
   `attach_to_wandb` stored, with one relabeled to another seed caught by its data-order hash.
 
 ---
+
+## The run manifest (M7-1)
+
+The finished sweep has two records. `results/sweep.json`, the results store above, holds each
+run's scores from wandb. `results/sweep_manifest.json` holds what the store does not: each run's
+config, GPUs, time, weights and gates, read from the sweep's folder. Copy that folder from Drive
+(`MyDrive/msml612/sweep`) to `outputs/sweep`, then:
+
+```text
+uv run python -m diffusion.manifest --tag sweep     # writes results/sweep_manifest.json
+```
+
+It is keyed as the store is, `runs[regime][variant][seed]`, so M7-2 can join the two files. It
+writes nothing, and lists every problem, unless all 30 runs are finished, match their cells' configs
+and were trained and scored on the paired GPU.
+
+| Field | What it holds |
+| --- | --- |
+| `config` | the run's `config.yaml` in full |
+| `gpu` | the GPU it trained on and each scoring's |
+| `seconds` | training, validation and each scoring; epochs lost with a crashed session are not counted |
+| `weights` | `model.pt`'s path and SHA-256 (the weights are in the Drive folder, not in Git or wandb) |
+| `gates` | each extension's final gate (PROJECT_PLAN §3.5); base has none |
+| `rerun` | the command that trains and scores the cell again |
+
+**Rerunning a cell.** On the paired GPU, run the cell's `rerun` with `<another folder>` replaced by
+a new folder. It checks out the sweep's commit, trains the cell, and scores it as the sweep did,
+including the 50% and 90% scorings of base's random-regime cells. Then compare the two folders,
+which exits non-zero if any number differs:
+
+```text
+uv run python -m diffusion.sweep --regime random --variants base --seeds 42 --out outputs/sweep --compare <another folder>
+```
+
+**What the sweep cost**, measured on the A100 with TF32 on:
+
+| Part | Passes | Hours |
+| --- | --- | --- |
+| Training, 30 runs of 200 epochs | | 15.2 |
+| Validation | | 7.1 |
+| Test scoring at 10%, both holdouts | 60 | 38.9 |
+| Base's scoring at 50% and 90% | 10 | 6.3 |
+| **Total** | | **67.5** |
+
+Tests (`tests/test_manifest.py`): an entry worked out by hand, each refusal, a rerun's extra scoring
+steps run through `diffusion.score`'s real command line, and one real sweep run when its folder is here.
 
 ## Ext 1's attribution checks (M6-3)
 
