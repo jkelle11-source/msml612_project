@@ -92,7 +92,7 @@
        "batch_size": 64
       }
      },
-     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants base --seeds 42",
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants base --seeds 42 && uv run python -m diffusion.score <another folder>/base_random_seed42 --holdout random --fraction 0.5 --paired && uv run python -m diffusion.score <another folder>/base_random_seed42 --holdout random --fraction 0.9 --paired",
      "gpu": {
       "train": "NVIDIA A100-SXM4-80GB",
       "scoring": {
@@ -198,7 +198,7 @@
        "batch_size": 64
       }
      },
-     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants base --seeds 43",
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants base --seeds 43 && uv run python -m diffusion.score <another folder>/base_random_seed43 --holdout random --fraction 0.5 --paired && uv run python -m diffusion.score <another folder>/base_random_seed43 --holdout random --fraction 0.9 --paired",
      "gpu": {
       "train": "NVIDIA A100-SXM4-80GB",
       "scoring": {
@@ -304,7 +304,7 @@
        "batch_size": 64
       }
      },
-     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants base --seeds 44",
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants base --seeds 44 && uv run python -m diffusion.score <another folder>/base_random_seed44 --holdout random --fraction 0.5 --paired && uv run python -m diffusion.score <another folder>/base_random_seed44 --holdout random --fraction 0.9 --paired",
      "gpu": {
       "train": "NVIDIA A100-SXM4-80GB",
       "scoring": {
@@ -410,7 +410,7 @@
        "batch_size": 64
       }
      },
-     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants base --seeds 45",
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants base --seeds 45 && uv run python -m diffusion.score <another folder>/base_random_seed45 --holdout random --fraction 0.5 --paired && uv run python -m diffusion.score <another folder>/base_random_seed45 --holdout random --fraction 0.9 --paired",
      "gpu": {
       "train": "NVIDIA A100-SXM4-80GB",
       "scoring": {
@@ -516,7 +516,7 @@
        "batch_size": 64
       }
      },
-     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants base --seeds 46",
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants base --seeds 46 && uv run python -m diffusion.score <another folder>/base_random_seed46 --holdout random --fraction 0.5 --paired && uv run python -m diffusion.score <another folder>/base_random_seed46 --holdout random --fraction 0.9 --paired",
      "gpu": {
       "train": "NVIDIA A100-SXM4-80GB",
       "scoring": {

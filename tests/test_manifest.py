@@ -15,7 +15,8 @@ PROTOCOL = {"paired_gpu": GPU}
 COMMIT = "abc1234"
 GATES = {"base": {}, "ext1": {"mask_encoder.gate": 0.25}, "ext2": {"time_encoder.gate": -0.5},
          "ext1+2": {"mask_encoder.gate": 0.25, "time_encoder.gate": -0.5}}
-SCORING_SECONDS = {"random/0.1": 7.0, "block/0.1": 8.0, "random/0.5": 9.0}
+SCORING_SECONDS = {"random/0.1": 7.0, "block/0.1": 8.0, "random/0.5": 9.0, "random/0.9": 10.0}
+ALL_SCORINGS = ("random/0.1", "block/0.1", "random/0.5", "random/0.9")
 
 def make_run(folder, variant="ext1", regime="random", seed=42, gates=None, epochs=(0, 1, 2), gpu=GPU,
              scoring_gpu=GPU, summary_sha=None, scoring_sha=None, holdouts=("random/0.1", "block/0.1")):
@@ -48,10 +49,12 @@ def test_an_entry_worked_out_by_hand(tmp_path):
                                 "scoring": {"random/0.1": 7.0, "block/0.1": 8.0, "random/0.5": 9.0}}
     assert found["gpu"] == {"train": GPU, "scoring": {"random/0.1": GPU, "block/0.1": GPU, "random/0.5": GPU}}
     assert found["gates"] == {"mask_encoder_gate": 0.25}
-    assert found["weights"] == {"path": str((run_dir / "model.pt").resolve()),      # outside the repo: as it is
+    assert found["weights"] == {"path": "<outside the repo>/ext1_random_seed42/model.pt",
                                 "sha256": hashlib.sha256((run_dir / "model.pt").read_bytes()).hexdigest()}
     assert found["rerun"] == ("git checkout abc1234 && uv run python -m diffusion.sweep --tag rerun "
-                              "--out <another folder> --regime random --variants ext1 --seeds 42")
+                              "--out <another folder> --regime random --variants ext1 --seeds 42 "
+                              "&& uv run python -m diffusion.score <another folder>/ext1_random_seed42 "
+                              "--holdout random --fraction 0.5 --paired")
     assert found["config"]["train"]["regime"] == "random" and found["config"]["model"]["use_mask_embedding"]
 
 @pytest.mark.parametrize("variant, gates", [("base", {}), ("ext2", {"time_encoder_gate": -0.5}),
@@ -62,6 +65,42 @@ def test_each_variant_has_its_own_gates(tmp_path, variant, gates):
 def test_a_path_in_the_repo_is_written_relative_to_it():
     from diffusion.manifest import shown
     assert shown(ROOT / "outputs" / "sweep" / "base_random_seed42" / "model.pt") == "outputs/sweep/base_random_seed42/model.pt"
+
+def test_a_path_outside_the_repo_keeps_no_home_folder(tmp_path):
+    from diffusion.manifest import shown
+    run = tmp_path / "home" / "someone" / "sweep" / "base_random_seed42"
+    assert shown(run / "model.pt", parts=2) == "<outside the repo>/base_random_seed42/model.pt"
+    assert shown(run.parent) == "<outside the repo>/sweep"
+
+def test_a_rerun_adds_a_step_only_for_what_the_driver_does_not_score(tmp_path):
+    base = make_run(tmp_path, "base", holdouts=ALL_SCORINGS)
+    ext1 = make_run(tmp_path, "ext1")
+    steps = entry(base, "random", "base", 42, PROTOCOL, COMMIT)["rerun"].split(" && ")
+    assert steps[2:] == [f"uv run python -m diffusion.score <another folder>/base_random_seed42 "
+                         f"--holdout random --fraction {fraction} --paired" for fraction in ("0.5", "0.9")]
+    assert len(entry(ext1, "random", "ext1", 42, PROTOCOL, COMMIT)["rerun"].split(" && ")) == 2
+
+def test_a_reruns_scoring_steps_run_on_the_real_command_line(tmp_path, monkeypatch):
+    """Each step, through ``diffusion.score``'s parser, asks for a scores file the original run has."""
+    import shlex
+    import diffusion.score as scoring
+    run_dir = make_run(tmp_path, "base", holdouts=ALL_SCORINGS)
+    again = tmp_path / "again"
+    called = []
+    def fake_score(folder, _dataset, _device, holdout, fraction, split, **options):
+        called.append((folder, f"scores_{scoring.scores_name(split, holdout, fraction)}.json", options["paired"]))
+        return {}
+    monkeypatch.setattr(scoring, "pick_device", lambda _: "cpu")
+    monkeypatch.setattr(scoring, "load_dataset", lambda _: None)
+    monkeypatch.setattr(scoring, "attach_to_wandb", lambda *_: False)
+    monkeypatch.setattr(scoring, "score", fake_score)
+    for step in entry(run_dir, "random", "base", 42, PROTOCOL, COMMIT)["rerun"].split(" && ")[2:]:
+        argv = shlex.split(step.replace("<another folder>", str(again)))
+        assert argv[:5] == ["uv", "run", "python", "-m", "diffusion.score"]
+        scoring.main(argv[5:])
+    assert called == [(again / run_dir.name, name, True)
+                      for name in ("scores_test_random_0.5.json", "scores_test_random_0.9.json")]
+    assert all((run_dir / name).exists() for _, name, _ in called)
 
 @pytest.mark.parametrize("built, cell, refusal", [
     ({"epochs": (0, 1, 1)}, {}, "epochs are not 0-2, each once"),

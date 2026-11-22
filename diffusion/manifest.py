@@ -12,7 +12,8 @@ never logs it, and the sweep's weights are not uploaded. Writes ``results/<tag>_
 - ``runs[regime][variant][seed]``, keyed as the store is, so M7-2 joins the two files:
   - ``run``, ``wandb_run``, and ``config``, the run's ``config.yaml`` in full;
   - ``rerun``: the command that trains and scores the cell again, at the commit, into another folder
-    under another tag (``<out>/sweep.json`` refuses a second tag), for ``diffusion.sweep --compare``;
+    under another tag (``<out>/sweep.json`` refuses a second tag), for ``diffusion.sweep --compare``,
+    with a ``diffusion.score`` step for each scoring the driver does not do (base's 50% and 90%);
   - ``gpu``: the GPU it trained on (``summary.json``) and each scoring's (``scores_test_*.json``);
   - ``seconds``: training, the sum of ``curve.json``'s epoch ``seconds``; validation, the sum of its
     ``val_seconds``; and each scoring's ``seconds``. ``curve.json`` keeps one row per epoch, so a
@@ -21,7 +22,7 @@ never logs it, and the sweep's weights are not uploaded. Writes ``results/<tag>_
   - ``weights``: the final weights' path (``model.pt``; ``checkpoint.pt`` is only for resuming, and
     holds an earlier epoch) and their SHA-256;
   - ``gates``: each extension's gate in ``model.pt`` (``diffusion.health.GATES``), which starts at 0;
-    one that has moved away from 0 shows the model uses that encoder (PROJECT_PLAN §3.5). Base has none.
+    its size is how far training scaled the encoder's output up (PROJECT_PLAN §3.5). Base has none.
 
 Every run ``sweep.cells`` plans must be in the folder, finished (``summary.json``), and consistent:
 its config is its cell's, ``model.pt`` is the weights its summary and every scoring name, its curve has
@@ -51,14 +52,25 @@ NOTES = {
     "gates": "each extension's final gate, read from model.pt; it starts at 0 (PROJECT_PLAN §3.5)",
 }
 
-def shown(path):
-    """``path`` relative to the repo when inside it, so no one's home folder goes into the manifest."""
+def shown(path, parts=1):
+    """``path`` relative to the repo when inside it; outside it, only its last ``parts`` names, so no
+    one's home folder goes into the manifest."""
     path = Path(path).resolve()
-    return str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path)
+    if path.is_relative_to(ROOT):
+        return str(path.relative_to(ROOT))
+    return "<outside the repo>/" + "/".join(path.parts[-parts:])
 
-def rerun_command(commit, regime, variant, seed):
-    return (f"git checkout {commit} && uv run python -m diffusion.sweep --tag rerun --out <another folder> "
-            f"--regime {regime} --variants {variant} --seeds {seed}")
+def rerun_command(commit, regime, variant, seed, run, extra=()):
+    """The command that trains and scores a cell again. The driver scores the headline holdouts; each
+    scoring in ``extra`` (``holdout/fraction``, such as base's ``random/0.5``) is its own step, so the
+    rerun's folder holds the same scores files and ``diffusion.sweep --compare`` can match them."""
+    command = (f"git checkout {commit} && uv run python -m diffusion.sweep --tag rerun --out <another folder> "
+               f"--regime {regime} --variants {variant} --seeds {seed}")
+    for name in extra:
+        holdout, fraction = name.split("/")
+        command += (f" && uv run python -m diffusion.score <another folder>/{run} "
+                    f"--holdout {holdout} --fraction {fraction} --paired")
+    return command
 
 def entry(run_dir, regime, variant, seed, protocol, commit):
     """One run's manifest entry, read from its folder; raises ``ValueError`` listing everything wrong with it."""
@@ -120,9 +132,10 @@ def entry(run_dir, regime, variant, seed, protocol, commit):
 
     if problems:
         raise ValueError(f"{run_dir.name}: " + "; ".join(problems))
+    extra = [name for name in gpu["scoring"] if name not in HEADLINE]
     return {"run": run_dir.name, "wandb_run": summary.get("wandb_run"), "config": config,
-            "rerun": rerun_command(commit, regime, variant, seed), "gpu": gpu, "seconds": seconds,
-            "weights": {"path": shown(run_dir / "model.pt"), "sha256": sha}, "gates": gates}
+            "rerun": rerun_command(commit, regime, variant, seed, run_dir.name, extra), "gpu": gpu, "seconds": seconds,
+            "weights": {"path": shown(run_dir / "model.pt", parts=2), "sha256": sha}, "gates": gates}
 
 def manifest(out, tag, config):
     """Every run ``sweep.cells(config)`` plans, from the sweep folder ``out``; raises ``ValueError`` listing
