@@ -16,7 +16,7 @@
 ## Coordination notes
 - **This is the buffer week (§5).** Thanksgiving falls Nov 26; keep scope tight and use the slack to absorb any Week-7/8 spillover rather than adding new work.
 - **Conformal must not repeat CSDI's sin** (§4.3). If attempted: split calibration/test **by patient**, aggregate the nonconformity score at the **patient** level, and use **studentized** scores (`s = |x_true − μ̂| / (σ̂ + ε)`) with adaptive intervals from the K=50 posterior draws. Report coverage (target ≥ 90%), mean width, and **coverage stratified by patient missingness rate**. Position-level coverage is a secondary check, not the guarantee.
-- **The presentation leads with the guaranteed wins** (§7): benchmark reproduction and the MAE-vs-latency curve first, then each extension in its best honest regime, with the significance bar stated up front so nulls read as rigor.
+- **The presentation leads with the guaranteed wins** (§7): benchmark reproduction and the MAE-vs-latency curve first, then each extension in its best honest regime, with the significance bar stated up front so nulls read as rigor, each with its 95% CI and its extension's gate (§3.5).
 
 ---
 
@@ -31,13 +31,13 @@
 **Context.** Consolidate the headline sweep, the ablation, and the runtime study into the single final results table the report and slides cite. Sankha owns it on the eval/stats track. This is where the confirmatory main effects and the exploratory interaction get their final, frozen numbers.
 
 **Deliverables**
-- Final table: all four variants (mean ± SE @10%, paired Δ ± SE), best-config selection justified, baselines included, block/random stratification retained, and Ext 1's block-aware-regime contrast (§3.1) reported beside it, with its attribution checks from `M8-4` (Ext 1 vs. Ext 1-blind, and the off-grid Δ) beside that when they ran, or the note that they were not triggered.
-- A one-paragraph results summary stating which effects are SE-separated and which are null.
+- Final table: all four variants (mean ± SE @10%, paired Δ ± SE with its 95% CI), best-config selection justified, baselines included, block/random stratification retained, and Ext 1's block-aware-regime contrast (§3.1) reported beside it, with its attribution checks from `M8-4` (Ext 1 vs. Ext 1-blind, and the off-grid Δ) beside that when they ran, or the note that they were not triggered.
+- A one-paragraph results summary stating which effects are SE-separated and which are null, each null with the largest gain its 95% CI allows, and each extension's gate (§3.5).
 
 **Definition of Done**
 - [ ] Final numbers frozen and consistent with the raw results store.
 - [ ] Best config per variant justified from the ablation.
-- [ ] Effect verdicts (separated vs. null) stated explicitly.
+- [ ] Effect verdicts (separated vs. null) stated explicitly; each null with its 95% CI.
 
 ---
 
@@ -91,7 +91,7 @@
 **Context.** The graded presentation. Lead with the guaranteed high-performance wins — benchmark reproduction and the MAE-vs-latency curve — then each extension in its best honest regime, with the significance bar stated up front (§7). Shared work with assigned speaking parts.
 
 **Deliverables**
-- Slide deck covering: problem/motivation, method (CSDI + the two extensions), reproduction + gate, headline paired-Δ results, ablation + runtime plot, uncertainty (conformal or fan plots), honest nulls and limitations.
+- Slide deck covering: problem/motivation, method (CSDI + the two extensions), reproduction + gate, headline paired-Δ results, ablation + runtime plot, uncertainty (conformal or fan plots), honest nulls (each with its 95% CI and its extension's gate, §3.5) and limitations, the value-independent holdouts among them (§8).
 - Assigned speaking parts and at least one full rehearsal.
 
 **Definition of Done**

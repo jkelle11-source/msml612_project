@@ -1,0 +1,3155 @@
+{
+ "tag": "sweep",
+ "commit": "20a470d30a393f02e199e1d37e5ba6a216d16279",
+ "folder": "outputs/sweep",
+ "gpu": "NVIDIA A100-SXM4-80GB",
+ "notes": {
+  "seconds.train": "sum of curve.json's epoch seconds; a resumed run's lost epochs are not counted",
+  "seconds.validation": "sum of curve.json's val_seconds (validation is for the curves only, PROJECT_PLAN \u00a73.1)",
+  "seconds.scoring": "each scoring's seconds, from its scores_test_<holdout>_<fraction>.json",
+  "gates": "each extension's final gate, read from model.pt; it starts at 0 (PROJECT_PLAN \u00a73.5)"
+ },
+ "runs": {
+  "random": {
+   "base": {
+    "42": {
+     "run": "base_random_seed42",
+     "wandb_run": "DATA612/msml612-csdi/4k2ks3rm",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": false,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants base --seeds 42 && uv run python -m diffusion.score <another folder>/base_random_seed42 --holdout random --fraction 0.5 --paired && uv run python -m diffusion.score <another folder>/base_random_seed42 --holdout random --fraction 0.9 --paired",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.5": "NVIDIA A100-SXM4-80GB",
+       "random/0.9": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1528.0,
+      "validation": 849.5,
+      "scoring": {
+       "block/0.1": 2308.1,
+       "random/0.1": 2302.4,
+       "random/0.5": 2305.0,
+       "random/0.9": 2231.9
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/base_random_seed42/model.pt",
+      "sha256": "b8bf56c3012f3c42fac1c498fb478161a0941b5f0d8fe76a031bc61fbf5904e5"
+     },
+     "gates": {}
+    },
+    "43": {
+     "run": "base_random_seed43",
+     "wandb_run": "DATA612/msml612-csdi/2d8i2zi8",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": false,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants base --seeds 43 && uv run python -m diffusion.score <another folder>/base_random_seed43 --holdout random --fraction 0.5 --paired && uv run python -m diffusion.score <another folder>/base_random_seed43 --holdout random --fraction 0.9 --paired",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.5": "NVIDIA A100-SXM4-80GB",
+       "random/0.9": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1495.2,
+      "validation": 847.7,
+      "scoring": {
+       "block/0.1": 2327.2,
+       "random/0.1": 2316.7,
+       "random/0.5": 2244.2,
+       "random/0.9": 2236.0
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/base_random_seed43/model.pt",
+      "sha256": "d70ca9b22fce4d5968f058bae40e985ced80b2170c63eb2a15ab94815156fb3f"
+     },
+     "gates": {}
+    },
+    "44": {
+     "run": "base_random_seed44",
+     "wandb_run": "DATA612/msml612-csdi/20kybtvr",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": false,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants base --seeds 44 && uv run python -m diffusion.score <another folder>/base_random_seed44 --holdout random --fraction 0.5 --paired && uv run python -m diffusion.score <another folder>/base_random_seed44 --holdout random --fraction 0.9 --paired",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.5": "NVIDIA A100-SXM4-80GB",
+       "random/0.9": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1512.2,
+      "validation": 848.9,
+      "scoring": {
+       "block/0.1": 2378.4,
+       "random/0.1": 2401.8,
+       "random/0.5": 2265.0,
+       "random/0.9": 2265.3
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/base_random_seed44/model.pt",
+      "sha256": "df51b068c57ea895b1aa30dea1151a37b79a372787400d174ecdca6bf92c1f8e"
+     },
+     "gates": {}
+    },
+    "45": {
+     "run": "base_random_seed45",
+     "wandb_run": "DATA612/msml612-csdi/xit3fs1x",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": false,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants base --seeds 45 && uv run python -m diffusion.score <another folder>/base_random_seed45 --holdout random --fraction 0.5 --paired && uv run python -m diffusion.score <another folder>/base_random_seed45 --holdout random --fraction 0.9 --paired",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.5": "NVIDIA A100-SXM4-80GB",
+       "random/0.9": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1523.5,
+      "validation": 848.7,
+      "scoring": {
+       "block/0.1": 2369.1,
+       "random/0.1": 2350.3,
+       "random/0.5": 2266.0,
+       "random/0.9": 2277.9
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/base_random_seed45/model.pt",
+      "sha256": "2a4ed5d2fa508fb5a3e37a95c454fbc74787357fc9a353c3887c855a27dc1e29"
+     },
+     "gates": {}
+    },
+    "46": {
+     "run": "base_random_seed46",
+     "wandb_run": "DATA612/msml612-csdi/m5cw755h",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": false,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants base --seeds 46 && uv run python -m diffusion.score <another folder>/base_random_seed46 --holdout random --fraction 0.5 --paired && uv run python -m diffusion.score <another folder>/base_random_seed46 --holdout random --fraction 0.9 --paired",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.5": "NVIDIA A100-SXM4-80GB",
+       "random/0.9": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1492.2,
+      "validation": 847.6,
+      "scoring": {
+       "block/0.1": 2316.3,
+       "random/0.1": 2347.1,
+       "random/0.5": 2281.1,
+       "random/0.9": 2245.1
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/base_random_seed46/model.pt",
+      "sha256": "133319e3c1bd02d5574081d7b85b5501278b0dbd4de5b8c1219ca2844d77e49d"
+     },
+     "gates": {}
+    }
+   },
+   "ext1": {
+    "42": {
+     "run": "ext1_random_seed42",
+     "wandb_run": "DATA612/msml612-csdi/4bjer76e",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": true,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants ext1 --seeds 42",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1958.0,
+      "validation": 848.4,
+      "scoring": {
+       "block/0.1": 2332.3,
+       "random/0.1": 2329.1
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext1_random_seed42/model.pt",
+      "sha256": "f3cbe6e8b0fc23175bc58f798d903bb65a0ab3b7906f8ed9cc47be9c1de906e3"
+     },
+     "gates": {
+      "mask_encoder_gate": -0.17820066213607788
+     }
+    },
+    "43": {
+     "run": "ext1_random_seed43",
+     "wandb_run": "DATA612/msml612-csdi/m0zv1dp4",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": true,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants ext1 --seeds 43",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1940.3,
+      "validation": 846.8,
+      "scoring": {
+       "block/0.1": 2334.1,
+       "random/0.1": 2323.2
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext1_random_seed43/model.pt",
+      "sha256": "11cee2c627c8b70b9931c094560733bc3e4d1132032316f603249afc29d3df88"
+     },
+     "gates": {
+      "mask_encoder_gate": -0.18392077088356018
+     }
+    },
+    "44": {
+     "run": "ext1_random_seed44",
+     "wandb_run": "DATA612/msml612-csdi/vbtfnyzx",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": true,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants ext1 --seeds 44",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 2008.2,
+      "validation": 850.2,
+      "scoring": {
+       "block/0.1": 2377.2,
+       "random/0.1": 2395.8
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext1_random_seed44/model.pt",
+      "sha256": "57a38c226e2cd278150534f1758d4261addc5f9a3307bb5fa65e6b272de732d8"
+     },
+     "gates": {
+      "mask_encoder_gate": -0.19671066105365753
+     }
+    },
+    "45": {
+     "run": "ext1_random_seed45",
+     "wandb_run": "DATA612/msml612-csdi/rmbmpqr6",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": true,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants ext1 --seeds 45",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 2010.8,
+      "validation": 853.1,
+      "scoring": {
+       "block/0.1": 2392.1,
+       "random/0.1": 2427.1
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext1_random_seed45/model.pt",
+      "sha256": "9011a59728231d00eb85b45a656792e7e27bb9564bd9dafc43b09eabcbbe60d9"
+     },
+     "gates": {
+      "mask_encoder_gate": 0.15959930419921875
+     }
+    },
+    "46": {
+     "run": "ext1_random_seed46",
+     "wandb_run": "DATA612/msml612-csdi/f32m6rri",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": true,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants ext1 --seeds 46",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 2057.7,
+      "validation": 853.4,
+      "scoring": {
+       "block/0.1": 2279.3,
+       "random/0.1": 2285.7
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext1_random_seed46/model.pt",
+      "sha256": "fa8a8662aae4111dfba986c918909bb24c58e7395c54bc8f6242d8a43c3bf128"
+     },
+     "gates": {
+      "mask_encoder_gate": 0.29857733845710754
+     }
+    }
+   },
+   "ext2": {
+    "42": {
+     "run": "ext2_random_seed42",
+     "wandb_run": "DATA612/msml612-csdi/ms006lih",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": false,
+       "use_time_encoding": true,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants ext2 --seeds 42",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1682.1,
+      "validation": 848.0,
+      "scoring": {
+       "block/0.1": 2317.0,
+       "random/0.1": 2313.4
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext2_random_seed42/model.pt",
+      "sha256": "912d61b23fe7dc020965a420208f108489f51da3c776a07d7b466285a9b6c991"
+     },
+     "gates": {
+      "time_encoder_gate": -0.051656268537044525
+     }
+    },
+    "43": {
+     "run": "ext2_random_seed43",
+     "wandb_run": "DATA612/msml612-csdi/i6ga5sze",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": false,
+       "use_time_encoding": true,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants ext2 --seeds 43",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1672.1,
+      "validation": 847.2,
+      "scoring": {
+       "block/0.1": 2357.7,
+       "random/0.1": 2318.1
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext2_random_seed43/model.pt",
+      "sha256": "29323f6e4e73c7cd479ebfbceafa8ae8cbcc26c83ecce94bb7420464fe512a56"
+     },
+     "gates": {
+      "time_encoder_gate": -0.050971437245607376
+     }
+    },
+    "44": {
+     "run": "ext2_random_seed44",
+     "wandb_run": "DATA612/msml612-csdi/l9qzsbxp",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": false,
+       "use_time_encoding": true,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants ext2 --seeds 44",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1745.4,
+      "validation": 852.1,
+      "scoring": {
+       "block/0.1": 2370.9,
+       "random/0.1": 2384.0
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext2_random_seed44/model.pt",
+      "sha256": "77a5440e88ec544ff82ebde78767cd3c574fecca5928ba212ffd6d124f2ed440"
+     },
+     "gates": {
+      "time_encoder_gate": -0.039708156138658524
+     }
+    },
+    "45": {
+     "run": "ext2_random_seed45",
+     "wandb_run": "DATA612/msml612-csdi/zh7ygq28",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": false,
+       "use_time_encoding": true,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants ext2 --seeds 45",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1737.3,
+      "validation": 852.3,
+      "scoring": {
+       "block/0.1": 2379.3,
+       "random/0.1": 2379.5
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext2_random_seed45/model.pt",
+      "sha256": "38cb51fa3ed4bb0079a9252084ad482bb8f49f6cda5490e950d479b3f349c1cf"
+     },
+     "gates": {
+      "time_encoder_gate": -0.05754527077078819
+     }
+    },
+    "46": {
+     "run": "ext2_random_seed46",
+     "wandb_run": "DATA612/msml612-csdi/z9ktlqw9",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": false,
+       "use_time_encoding": true,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants ext2 --seeds 46",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1709.2,
+      "validation": 849.1,
+      "scoring": {
+       "block/0.1": 2315.0,
+       "random/0.1": 2325.6
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext2_random_seed46/model.pt",
+      "sha256": "51a20ab107072aa61db5a417c03544cf0a77391ee1f325cdcde780a40cd519d1"
+     },
+     "gates": {
+      "time_encoder_gate": -0.050270821899175644
+     }
+    }
+   },
+   "ext1+2": {
+    "42": {
+     "run": "ext1+2_random_seed42",
+     "wandb_run": "DATA612/msml612-csdi/tniejqpq",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": true,
+       "use_time_encoding": true,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants ext1+2 --seeds 42",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 2156.2,
+      "validation": 849.8,
+      "scoring": {
+       "block/0.1": 2332.2,
+       "random/0.1": 2328.3
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext1+2_random_seed42/model.pt",
+      "sha256": "4ae9c99347cef2b11761f305a6902dff27a88690f262b07761f3ee6232835ac5"
+     },
+     "gates": {
+      "mask_encoder_gate": -0.1731400489807129,
+      "time_encoder_gate": -0.03745139017701149
+     }
+    },
+    "43": {
+     "run": "ext1+2_random_seed43",
+     "wandb_run": "DATA612/msml612-csdi/hti7t2sj",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": true,
+       "use_time_encoding": true,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants ext1+2 --seeds 43",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 2120.1,
+      "validation": 847.1,
+      "scoring": {
+       "block/0.1": 2324.5,
+       "random/0.1": 2314.0
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext1+2_random_seed43/model.pt",
+      "sha256": "d0aee4002adb74173eef7db0ea5b9f4893fd563c9787eb72f9f2cdfb747177ac"
+     },
+     "gates": {
+      "mask_encoder_gate": -0.16509275138378143,
+      "time_encoder_gate": -0.03555808216333389
+     }
+    },
+    "44": {
+     "run": "ext1+2_random_seed44",
+     "wandb_run": "DATA612/msml612-csdi/8oz9lb74",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": true,
+       "use_time_encoding": true,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants ext1+2 --seeds 44",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 2177.1,
+      "validation": 850.2,
+      "scoring": {
+       "block/0.1": 2416.7,
+       "random/0.1": 2386.7
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext1+2_random_seed44/model.pt",
+      "sha256": "96b4beceb2f6c9f5cadea6bd4dc47a3a7c6438b84a3f5f0b5596670ccca21f55"
+     },
+     "gates": {
+      "mask_encoder_gate": -0.1984875500202179,
+      "time_encoder_gate": -0.04886005446314812
+     }
+    },
+    "45": {
+     "run": "ext1+2_random_seed45",
+     "wandb_run": "DATA612/msml612-csdi/irp8j3t4",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": true,
+       "use_time_encoding": true,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants ext1+2 --seeds 45",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 2182.8,
+      "validation": 850.9,
+      "scoring": {
+       "block/0.1": 2371.1,
+       "random/0.1": 2356.8
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext1+2_random_seed45/model.pt",
+      "sha256": "7ecf0dbd23f68ecccb898aca37a91d4159f4d4194430f23be74edf4523245ec4"
+     },
+     "gates": {
+      "mask_encoder_gate": 0.17281152307987213,
+      "time_encoder_gate": -0.03815874084830284
+     }
+    },
+    "46": {
+     "run": "ext1+2_random_seed46",
+     "wandb_run": "DATA612/msml612-csdi/9bcinmzr",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": true,
+       "use_time_encoding": true,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "random"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime random --variants ext1+2 --seeds 46",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 2185.6,
+      "validation": 851.3,
+      "scoring": {
+       "block/0.1": 2305.0,
+       "random/0.1": 2328.1
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext1+2_random_seed46/model.pt",
+      "sha256": "da243ffbf7cd842850bcf618c062f227ed1b140d44dbd67de9c76f57d5ac7e9a"
+     },
+     "gates": {
+      "mask_encoder_gate": 0.3014749586582184,
+      "time_encoder_gate": -0.04212266579270363
+     }
+    }
+   }
+  },
+  "block-aware": {
+   "base": {
+    "42": {
+     "run": "base_block-aware_seed42",
+     "wandb_run": "DATA612/msml612-csdi/yu7pksuq",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": false,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "block-aware"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime block-aware --variants base --seeds 42",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1561.5,
+      "validation": 846.5,
+      "scoring": {
+       "block/0.1": 2303.9,
+       "random/0.1": 2325.3
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/base_block-aware_seed42/model.pt",
+      "sha256": "2eafd91117e867ba8311a7c10221c0f9a6e275948fcd5b1cb5e87af7625b7738"
+     },
+     "gates": {}
+    },
+    "43": {
+     "run": "base_block-aware_seed43",
+     "wandb_run": "DATA612/msml612-csdi/7lwg3kw0",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": false,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "block-aware"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime block-aware --variants base --seeds 43",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1580.0,
+      "validation": 847.3,
+      "scoring": {
+       "block/0.1": 2325.2,
+       "random/0.1": 2310.9
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/base_block-aware_seed43/model.pt",
+      "sha256": "1e81b2b861ac835161a877e161d2180263c7f09171a2f037cfe17ba8b6832e90"
+     },
+     "gates": {}
+    },
+    "44": {
+     "run": "base_block-aware_seed44",
+     "wandb_run": "DATA612/msml612-csdi/v5ytrw1x",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": false,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "block-aware"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime block-aware --variants base --seeds 44",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1589.9,
+      "validation": 848.1,
+      "scoring": {
+       "block/0.1": 2307.0,
+       "random/0.1": 2315.0
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/base_block-aware_seed44/model.pt",
+      "sha256": "d405206a3ea884a1d9c9c4546fd53eca224b7198de9487e4ef87e0fa21347a0d"
+     },
+     "gates": {}
+    },
+    "45": {
+     "run": "base_block-aware_seed45",
+     "wandb_run": "DATA612/msml612-csdi/xou0tqxo",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": false,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "block-aware"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime block-aware --variants base --seeds 45",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1596.0,
+      "validation": 848.0,
+      "scoring": {
+       "block/0.1": 2316.0,
+       "random/0.1": 2321.6
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/base_block-aware_seed45/model.pt",
+      "sha256": "8579adb84728b7b609d35867a2af3ba4cd30769e6b0ca07bdfe8947809d4dd07"
+     },
+     "gates": {}
+    },
+    "46": {
+     "run": "base_block-aware_seed46",
+     "wandb_run": "DATA612/msml612-csdi/c2xj1xwb",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": false,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "block-aware"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime block-aware --variants base --seeds 46",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1503.1,
+      "validation": 845.1,
+      "scoring": {
+       "block/0.1": 2289.9,
+       "random/0.1": 2282.3
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/base_block-aware_seed46/model.pt",
+      "sha256": "c3f9035df08d9fc5b6e69bf59be02004bb4f6ccddf6683994d5e576f249ac0c7"
+     },
+     "gates": {}
+    }
+   },
+   "ext1": {
+    "42": {
+     "run": "ext1_block-aware_seed42",
+     "wandb_run": "DATA612/msml612-csdi/djqgbxn2",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": true,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "block-aware"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime block-aware --variants ext1 --seeds 42",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 2029.0,
+      "validation": 847.8,
+      "scoring": {
+       "block/0.1": 2316.5,
+       "random/0.1": 2306.4
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext1_block-aware_seed42/model.pt",
+      "sha256": "6a6e7cd97ea85022ca66b7ae7c82442f5f8a09a9fe14a9f90b86b4c308841021"
+     },
+     "gates": {
+      "mask_encoder_gate": -0.1355489194393158
+     }
+    },
+    "43": {
+     "run": "ext1_block-aware_seed43",
+     "wandb_run": "DATA612/msml612-csdi/r7n97w2l",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": true,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "block-aware"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime block-aware --variants ext1 --seeds 43",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 2118.3,
+      "validation": 854.3,
+      "scoring": {
+       "block/0.1": 2339.2,
+       "random/0.1": 2340.9
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext1_block-aware_seed43/model.pt",
+      "sha256": "e34dd8be166744ca69ce74e32ceff1a70dfecc7906e0234127206eb43ab875b4"
+     },
+     "gates": {
+      "mask_encoder_gate": 0.17730776965618134
+     }
+    },
+    "44": {
+     "run": "ext1_block-aware_seed44",
+     "wandb_run": "DATA612/msml612-csdi/417upx8q",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": true,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "block-aware"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime block-aware --variants ext1 --seeds 44",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 2046.1,
+      "validation": 847.9,
+      "scoring": {
+       "block/0.1": 2327.0,
+       "random/0.1": 2345.1
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext1_block-aware_seed44/model.pt",
+      "sha256": "97b949b35af8fe7182de47276beab7887fb37cfdc0c854f7965384ae26b305df"
+     },
+     "gates": {
+      "mask_encoder_gate": -0.18990296125411987
+     }
+    },
+    "45": {
+     "run": "ext1_block-aware_seed45",
+     "wandb_run": "DATA612/msml612-csdi/mlxend2u",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": true,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "block-aware"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime block-aware --variants ext1 --seeds 45",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 2003.3,
+      "validation": 847.5,
+      "scoring": {
+       "block/0.1": 2286.7,
+       "random/0.1": 2273.5
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext1_block-aware_seed45/model.pt",
+      "sha256": "dae6c9032ea80062e0bb14837a54a68cbb1ef14322e84f715b8ae414d34d34b7"
+     },
+     "gates": {
+      "mask_encoder_gate": -0.1801653355360031
+     }
+    },
+    "46": {
+     "run": "ext1_block-aware_seed46",
+     "wandb_run": "DATA612/msml612-csdi/gy482ko0",
+     "config": {
+      "protocol": {
+       "eval_masker_seed": 2012,
+       "block_eval_masker_seed": 8080,
+       "block_window_hours": 3,
+       "offgrid_block_eval_masker_seed": 9090,
+       "offgrid_block_offset_hours": 1,
+       "eval_holdout_fraction": 0.1,
+       "robustness_fractions": [
+        0.5,
+        0.9
+       ],
+       "eval_n_samples": 100,
+       "eval_sampling_seed": 2021,
+       "eval_batch_size": 16,
+       "run_seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+       ],
+       "paired_gpu": "NVIDIA A100-SXM4-80GB",
+       "tf32": true,
+       "gate_mae_at_10pct": 0.24,
+       "gate_min_seeds": 3
+      },
+      "data": {
+       "n_timesteps": 48,
+       "n_features": 35,
+       "normalization": "zscore_train_only",
+       "split_seed": 612
+      },
+      "model": {
+       "n_heads": 8,
+       "d_model_sweep": [
+        64,
+        128,
+        256
+       ],
+       "timeemb": 128,
+       "featureemb": 16,
+       "is_unconditional": 0,
+       "use_mask_embedding": true,
+       "use_time_encoding": false,
+       "mask_embedding_blind": false,
+       "time_encoding_dk": 16
+      },
+      "diffusion": {
+       "layers": 4,
+       "channels": 64,
+       "diffusion_embedding_dim": 128,
+       "schedule": "quad",
+       "beta_start": 0.0001,
+       "beta_end": 0.5,
+       "num_steps": 50,
+       "is_linear": false
+      },
+      "train": {
+       "epochs": 200,
+       "batch_size": 16,
+       "lr": 0.001,
+       "weight_decay": 1e-06,
+       "lr_milestones": [
+        0.75,
+        0.9
+       ],
+       "lr_gamma": 0.1,
+       "clip_grad_norm": null,
+       "regime": "block-aware"
+      },
+      "validation": {
+       "every_n_epochs": 10,
+       "n_samples": 5,
+       "batch_size": 64
+      }
+     },
+     "rerun": "git checkout 20a470d30a393f02e199e1d37e5ba6a216d16279 && uv run python -m diffusion.sweep --tag rerun --out <another folder> --regime block-aware --variants ext1 --seeds 46",
+     "gpu": {
+      "train": "NVIDIA A100-SXM4-80GB",
+      "scoring": {
+       "block/0.1": "NVIDIA A100-SXM4-80GB",
+       "random/0.1": "NVIDIA A100-SXM4-80GB"
+      }
+     },
+     "seconds": {
+      "train": 1973.0,
+      "validation": 846.7,
+      "scoring": {
+       "block/0.1": 2291.9,
+       "random/0.1": 2290.8
+      }
+     },
+     "weights": {
+      "path": "outputs/sweep/ext1_block-aware_seed46/model.pt",
+      "sha256": "4ab0d18a57961b02cab869e749cedd35a8e8a860d3f8be709b5c7d01b5995a17"
+     },
+     "gates": {
+      "mask_encoder_gate": 0.1787887066602707
+     }
+    }
+   }
+  }
+ }
+}
