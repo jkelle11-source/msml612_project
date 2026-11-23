@@ -1,5 +1,6 @@
 {
  "variant": "ext1+2",
+ "variant_note": "lowest mean test MAE, not separated from base",
  "seed": 42,
  "draws": 100,
  "holdout": "random/0.1",
@@ -234,6 +235,11 @@
    "HR": 13.573,
    "Na": 3.215,
    "GCS": 3.512
+  },
+  "linear_interpolation": {
+   "HR": 4.411,
+   "Na": 1.943,
+   "GCS": 0.62
   }
  },
  "test_held_out": {

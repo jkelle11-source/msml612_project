@@ -1,10 +1,10 @@
 """M7-3's trajectory figure, from ``results/trajectories/trajectories.npz`` (``diffusion.trajectories``).
 
-    python -m diffusion.trajectories_plot          # writes results/trajectories/trajectories.png and .pdf
+    uv run --group plots python -m diffusion.trajectories_plot    # writes results/trajectories/trajectories.png and .pdf
 
-Needs only numpy and matplotlib, which this repo's environment does not install, so run it from the
-repo root with any Python that has them (Python 3.10 or later). Five patients (rows) by HR, serum
-sodium and GCS (columns), in clinical units, over the 48 hours:
+Needs only numpy and matplotlib, which the optional ``plots`` dependency group adds to this repo's
+environment. Five patients (rows) by HR, serum sodium and GCS (columns), in clinical units, over the
+48 hours:
 
 - visible values (what the model was shown): filled black dots;
 - held-out values (what the holdout scores): open black rings;
@@ -52,9 +52,11 @@ def figure(data, record=None):
             ax.plot(hours, data["forward_fill"][i, :, j], color=FORWARD_FILL, linewidth=1.6, drawstyle="steps-post")
             ax.plot(hours, data["mean_imputation"][i, :, j], color=MEAN, linewidth=1.6, linestyle=(0, (5, 3)))
             visible, held_out = data["visible"][i, :, j], data["held_out"][i, :, j]
-            ax.plot(hours[visible], data["truth"][i, visible, j], "o", color=INK, markersize=3.5, zorder=5)
+            # Not clipped: a value at hour 0 or 47 sits on the axis edge and would show as half a marker.
+            ax.plot(hours[visible], data["truth"][i, visible, j], "o", color=INK, markersize=3.5, zorder=5,
+                    clip_on=False)
             ax.plot(hours[held_out], data["truth"][i, held_out, j], "o", markerfacecolor="white",
-                    markeredgecolor=INK, markeredgewidth=1.6, markersize=8, zorder=6)
+                    markeredgecolor=INK, markeredgewidth=1.6, markersize=8, zorder=6, clip_on=False)
             if variable == "GCS":
                 ax.set_ylim(2.3, 15.7)
                 ax.set_yticks([3, 6, 9, 12, 15])
@@ -85,7 +87,8 @@ def figure(data, record=None):
     ]
     fig.legend(handles=legend, loc="outside upper center", ncol=4, frameon=False, fontsize=9, labelcolor=INK)
     if record is not None:
-        fig.suptitle(f"{record['variant']} (seed {record['seed']}, {record['draws']} draws), "
+        note = f"{record['variant_note']}; " if record.get("variant_note") else ""
+        fig.suptitle(f"{record['variant']} ({note}seed {record['seed']}, {record['draws']} draws), "
                      f"test split, 10% random holdout", color=MUTED, fontsize=10, y=-0.005, va="top")
     return fig
 
