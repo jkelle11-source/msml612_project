@@ -45,6 +45,7 @@ diffusion/     # training data feed, loop and random streams around the
                #   The GPU timing test (timing.py).                         [M6-2]
                #   The sweep's driver (sweep.py); resuming a run (run.py).  [M6-2]
                #   The sweep's run manifest (manifest.py).                  [M7-1]
+               #   Trajectories and their figure (trajectories*.py).        [M7-3]
 eval/          # EvalMasker / TrainMasker + masked, standardized metrics;
                #   EvalSampler (frozen-noise evaluation pass).              [M1-3]
                #   Mean and forward-fill baselines.                         [M2-3]
@@ -55,6 +56,7 @@ results/       # recorded results (baselines.json).                         [M2-
                #   Ext 2's health check (ext2_health.json).                 [M5-2]
                #   Single-seed health runs (health_seed42.json).            [M5-3]
                #   The sweep's runs (sweep.json, sweep_manifest.json).      [M7-1]
+               #   Trajectory figure and its read (trajectories/).          [M7-3]
 configs/       # frozen protocol config (config.yaml).
 Docs/          # project plan + shared notes (e.g. CSDI_Objective.md).
 Milestones/    # per-milestone GitHub issue breakdown (M00-M10).
@@ -1562,6 +1564,56 @@ Tests:
 - `tests/test_variants.py`: `ext1blind` is in `VARIANTS`, trains through its flags and
   `--variant`, and runs forward, backward and sampling on Set A like the other four.
 
+## Reconstructed trajectories (M7-3)
+
+Five test patients by HR, serum sodium and GCS, imputed by Ext 1+2 (PROJECT_PLAN §3.5: the lowest
+mean test MAE, not separated from base) against mean imputation and forward fill, on the frozen 10%
+random holdout. The figure is
+[`results/trajectories/trajectories.png`](results/trajectories/trajectories.png) (and `.pdf`). The
+written read, for the final report, is
+[`results/trajectories/observations.md`](results/trajectories/observations.md).
+
+The sweep's weights are not in Git or wandb. Copy the variant's five run folders from Drive
+(`MyDrive/msml612/sweep`) to `outputs/sweep`, keeping their names, then run the steps:
+
+```text
+uv run python -m diffusion.trajectories                       # results/trajectories/trajectories.npz and .json
+uv run --group plots python -m diffusion.trajectories_plot    # results/trajectories/trajectories.png and .pdf
+uv run python -m diffusion.trajectories --draw-check          # results/trajectories/draw_check.json
+```
+
+- **`diffusion.trajectories`** checks every seed's `model.pt` against its SHA-256 in
+  `results/sweep_manifest.json`, and refuses to go on if one is missing or differs.
+  - **Patients:** chosen by a fixed rule: among the test patients with at least one held-out value
+    and at least two visible values in each variable (137 of 800), five evenly spaced in the test
+    split's order.
+  - **Draws:** 100 draws for those five from one seed's weights (`--seed 42`), with the frozen sampling
+    seed. Each seed's protocol median (`median_test_random_0.1.npy`) is kept beside them.
+  - **Test-split MAE:** per variable in clinical units over all 800 patients, for each seed, the two
+    baselines, and linear interpolation between the visible values. Interpolation is not a protocol
+    baseline and is not plotted: it is the simplest guess that reads both sides of a gap.
+  - **Curves:** every curve keeps the visible values and takes the model's draws only in between. The
+    sampler's output at a visible value is never scored and is not an imputation: there, it is off by
+    hundreds to thousands of units.
+  - **Variant:** `--variant` (default `ext1+2`, §3.5's pick) names the variant.
+- **`diffusion.trajectories --draw-check`** writes `results/trajectories/draw_check.json` and leaves
+  the five patients' data alone. It draws for all 137 eligible patients and records how many held-out
+  values the 5–95% band covers, and how far the draws move over 1 to 12 hours against how far the
+  charted values really move. It took about 31 minutes on an M4 Pro.
+- **`diffusion.trajectories_plot`** needs only numpy and matplotlib, which the optional `plots`
+  dependency group installs (`uv run --group plots ...`). Visible values are filled dots and held-out
+  values open rings. The diffusion median is solid blue, with its 5–95% band and three single draws.
+  Forward fill is orange steps, and mean imputation dashed aqua. Each method has a line style of its
+  own as well as a colour.
+
+Tests (`tests/test_trajectories.py`): weights that differ from the manifest's, or are missing,
+refused; the patient rule, linear interpolation, band coverage, lag changes and draw correlation
+worked out by hand; z-scores undone; and, on fake patients charted every hour, tiny ext1+2 runs at
+two seeds through every step. They recompute each curve, panel score, test score and band count
+independently, and check that the draws come from the chosen seed's weights with the frozen noise.
+The figure test checks which data each curve and marker draws, and is skipped where matplotlib is
+missing (`uv run --group plots pytest` includes it).
+
 ---
 
 ## Environment
@@ -1718,6 +1770,15 @@ Tests:
 ---
 
 ## Dataset
+
+**Source and license.** [PhysioNet/CinC Challenge 2012, v1.0.0](https://physionet.org/content/challenge-2012/1.0.0/)
+(Silva, Moody, Mark and Celi), under the
+[Open Data Commons Attribution License v1.0](https://opendatacommons.org/licenses/by/1-0/). The five
+patients' values in `results/trajectories/` are derived from it. Cite the challenge paper (Silva,
+Moody, Scott, Celi and Mark, *Predicting In-Hospital Mortality of Patients in ICU: The
+PhysioNet/Computing in Cardiology Challenge 2012*, Computing in Cardiology, 2012) and PhysioNet's
+standard citation (Pollard et al., *PhysioNet as a global platform for biomedical research*, Nature
+Health 1(8), 792–795, 2026, [doi:10.1038/s44360-026-00096-z](https://doi.org/10.1038/s44360-026-00096-z)).
 
 The raw Set A files and the processed dataset are git-ignored, so each machine builds its own
 copy (M1-1). Download PhysioNet/CinC Challenge 2012 Set A and extract it so the record files

@@ -1,0 +1,152 @@
+{
+ "variant": "ext1+2",
+ "seed": 42,
+ "draws": 100,
+ "holdout": "random/0.1",
+ "split": "test",
+ "units": "raw clinical units (train-split z-scores undone)",
+ "patients": {
+  "rule": "at least one held-out value and at least 2 visible values in each variable; 5 evenly spaced among the eligible, in the test split's order",
+  "n": 137
+ },
+ "band_5_95": {
+  "HR": {
+   "inside": 500,
+   "held_out": 583,
+   "fraction": 0.858
+  },
+  "Na": {
+   "inside": 128,
+   "held_out": 153,
+   "fraction": 0.837
+  },
+  "GCS": {
+   "inside": 271,
+   "held_out": 303,
+   "fraction": 0.894
+  },
+  "all": {
+   "inside": 899,
+   "held_out": 1039,
+   "fraction": 0.865
+  }
+ },
+ "mean_abs_change": {
+  "HR": {
+   "1": {
+    "draws": 6.213,
+    "median": 1.933,
+    "real": 5.398,
+    "hidden_pairs": 249,
+    "charted_pairs": 5749
+   },
+   "2": {
+    "draws": 6.867,
+    "median": 3.098,
+    "real": 6.617,
+    "hidden_pairs": 234,
+    "charted_pairs": 5632
+   },
+   "4": {
+    "draws": 8.219,
+    "median": 5.14,
+    "real": 8.214,
+    "hidden_pairs": 178,
+    "charted_pairs": 5347
+   },
+   "8": {
+    "draws": 9.288,
+    "median": 6.613,
+    "real": 10.013,
+    "hidden_pairs": 145,
+    "charted_pairs": 4841
+   },
+   "12": {
+    "draws": 11.426,
+    "median": 9.688,
+    "real": 11.203,
+    "hidden_pairs": 129,
+    "charted_pairs": 4332
+   }
+  },
+  "Na": {
+   "1": {
+    "draws": 2.309,
+    "median": 0.314,
+    "real": 2.818,
+    "hidden_pairs": 5473,
+    "charted_pairs": 11
+   },
+   "2": {
+    "draws": 2.304,
+    "median": 0.366,
+    "real": 1.7,
+    "hidden_pairs": 5384,
+    "charted_pairs": 30
+   },
+   "4": {
+    "draws": 2.34,
+    "median": 0.489,
+    "real": 2.0,
+    "hidden_pairs": 5178,
+    "charted_pairs": 63
+   },
+   "8": {
+    "draws": 2.46,
+    "median": 0.749,
+    "real": 2.638,
+    "hidden_pairs": 4704,
+    "charted_pairs": 69
+   },
+   "12": {
+    "draws": 2.625,
+    "median": 1.021,
+    "real": 3.119,
+    "hidden_pairs": 4229,
+    "charted_pairs": 67
+   }
+  },
+  "GCS": {
+   "1": {
+    "draws": 0.672,
+    "median": 0.182,
+    "real": 0.434,
+    "hidden_pairs": 2758,
+    "charted_pairs": 820
+   },
+   "2": {
+    "draws": 0.725,
+    "median": 0.309,
+    "real": 0.546,
+    "hidden_pairs": 3059,
+    "charted_pairs": 1240
+   },
+   "4": {
+    "draws": 0.875,
+    "median": 0.538,
+    "real": 0.689,
+    "hidden_pairs": 3368,
+    "charted_pairs": 1793
+   },
+   "8": {
+    "draws": 1.226,
+    "median": 0.958,
+    "real": 0.996,
+    "hidden_pairs": 2985,
+    "charted_pairs": 1533
+   },
+   "12": {
+    "draws": 1.525,
+    "median": 1.289,
+    "real": 1.236,
+    "hidden_pairs": 2645,
+    "charted_pairs": 1333
+   }
+  }
+ },
+ "draw_residual_lag1_correlation": {
+  "HR": 0.383,
+  "Na": 0.163,
+  "GCS": 0.236
+ }
+}
