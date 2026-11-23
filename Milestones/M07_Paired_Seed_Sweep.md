@@ -92,6 +92,6 @@
 - A short qualitative read: where diffusion tracks the true dynamics and where it doesn't.
 
 **Definition of Done**
-- [ ] Plots produced for the 5×3 set from the best variant's checkpoints.
+- [ ] Plots produced for the 5×3 set from the best variant's checkpoints (§3.5: Ext 1+2, the lowest mean test MAE, not separated from base).
 - [ ] Observed vs. imputed vs. baselines clearly distinguished.
 - [ ] Written observations committed for reuse in the final report.
