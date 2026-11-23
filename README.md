@@ -45,6 +45,7 @@ diffusion/     # training data feed, loop and random streams around the
                #   The GPU timing test (timing.py).                         [M6-2]
                #   The sweep's driver (sweep.py); resuming a run (run.py).  [M6-2]
                #   The sweep's run manifest (manifest.py).                  [M7-1]
+               #   Trajectories and their figure (trajectories*.py).        [M7-3]
 eval/          # EvalMasker / TrainMasker + masked, standardized metrics;
                #   EvalSampler (frozen-noise evaluation pass).              [M1-3]
                #   Mean and forward-fill baselines.                         [M2-3]
@@ -55,6 +56,7 @@ results/       # recorded results (baselines.json).                         [M2-
                #   Ext 2's health check (ext2_health.json).                 [M5-2]
                #   Single-seed health runs (health_seed42.json).            [M5-3]
                #   The sweep's runs (sweep.json, sweep_manifest.json).      [M7-1]
+               #   Trajectory figure and its read (trajectories/).          [M7-3]
 configs/       # frozen protocol config (config.yaml).
 Docs/          # project plan + shared notes (e.g. CSDI_Objective.md).
 Milestones/    # per-milestone GitHub issue breakdown (M00-M10).
@@ -1561,6 +1563,48 @@ Tests:
   weights changed since, refused.
 - `tests/test_variants.py`: `ext1blind` is in `VARIANTS`, trains through its flags and
   `--variant`, and runs forward, backward and sampling on Set A like the other four.
+
+## Reconstructed trajectories (M7-3)
+
+Five test patients by HR, serum sodium and GCS, imputed by the best variant against mean imputation
+and forward fill, on the frozen 10% random holdout. The figure is
+[`results/trajectories/trajectories.png`](results/trajectories/trajectories.png) (and `.pdf`). The
+written read, for the final report, is
+[`results/trajectories/observations.md`](results/trajectories/observations.md).
+
+The sweep's weights are not in Git or wandb. Copy the variant's five run folders from Drive
+(`MyDrive/msml612/sweep`) to `outputs/sweep`, keeping their names, then run the two steps:
+
+```text
+uv run python -m diffusion.trajectories                  # results/trajectories/trajectories.npz and .json
+python -m diffusion.trajectories_plot                    # results/trajectories/trajectories.png and .pdf
+```
+
+- **`diffusion.trajectories`** checks every seed's `model.pt` against its SHA-256 in
+  `results/sweep_manifest.json`, and refuses to go on if one is missing or differs.
+  - **Patients:** chosen by a fixed rule: among the test patients with at least one held-out value
+    and at least two visible values in each variable (137 of 800), five evenly spaced in the test
+    split's order.
+  - **Draws:** 100 draws for those five from one seed's weights (`--seed 42`), with the frozen sampling
+    seed. Each seed's protocol median (`median_test_random_0.1.npy`) is kept beside them.
+  - **Test-split MAE:** per variable in clinical units over all 800 patients, for each seed and for
+    the two baselines.
+  - **Curves:** every curve keeps the visible values and takes the model's draws only in between. The
+    sampler's output at a visible value is never scored and is not an imputation: there, it is off by
+    thousands of units.
+  - **Variant:** `--variant` (default `ext1+2`, the lowest mean test MAE at 10%) names the variant.
+    M7-2's paired verdict decides which variant is the best one.
+- **`diffusion.trajectories_plot`** needs only numpy and matplotlib, which this repo's environment
+  does not install. Run it from the repo root with any Python 3.10+ that has them. Visible values are
+  filled dots and held-out values open rings. The diffusion median is solid blue, with its 5–95% band
+  and three single draws. Forward fill is orange steps, and mean imputation dashed aqua. Each method
+  has a line style of its own as well as a colour.
+
+Tests (`tests/test_trajectories.py`): weights that differ from the manifest's, or are missing,
+refused; the patient rule worked out by hand; z-scores undone; and, on fake patients charted every
+hour, a tiny ext1+2 run through both steps. They check the shapes, the clinical units, the frozen
+holdout, the visible values kept on every curve, and the record's scores. The figure test is skipped
+where matplotlib is missing.
 
 ---
 
