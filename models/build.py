@@ -19,6 +19,8 @@ def build_model(conf, device):
     blind = conf["model"].get("mask_embedding_blind", False)
     if blind and not conf["model"]["use_mask_embedding"]:
         raise ValueError("model.mask_embedding_blind blinds Extension 1's encoder: it needs model.use_mask_embedding")
+    # Ext 1's encoder depth (M8-1). A config saved before M8-1 has no such key: 2, the depth it was built with.
+    mask_encoder_layers = conf["model"].get("mask_encoder_layers", 2)
 
     model = CSDI_Physio(config_to_dict(conf),
                         device,
@@ -36,6 +38,7 @@ def build_model(conf, device):
         model.mask_encoder = MissingnessEncoder(n_features = conf["data"]["n_features"],
                                                 n_timesteps = conf["data"]["n_timesteps"],
                                                 d_model = conf["diffusion"]["channels"],
+                                                n_layers = mask_encoder_layers,
                                                 blind = blind
                                                 )
 

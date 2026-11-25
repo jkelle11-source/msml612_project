@@ -47,6 +47,7 @@ diffusion/     # training data feed, loop and random streams around the
                #   The sweep's run manifest (manifest.py).                  [M7-1]
                #   Trajectories and their figure (trajectories*.py).        [M7-3]
                #   The headline table: paired Δ ± SE, CI (headline.py).     [M7-2]
+               #   The ablation's driver (ablation.py).                     [M8-1]
 eval/          # EvalMasker / TrainMasker + masked, standardized metrics;
                #   EvalSampler (frozen-noise evaluation pass).              [M1-3]
                #   Mean and forward-fill baselines.                         [M2-3]
@@ -885,8 +886,10 @@ the four variants:
   the variant is `ext1+2` and a run is named `ext1+2_<regime>_seed<seed>`. Ext 1 has no config
   key of its own: `d_model` is `diffusion.channels` (64; the `d_model` sweep resizes both
   encoders with it), `n_features` and `n_timesteps` come from `data` (35 and 48), and its 2 heads
-  and 2 layer pairs are `MissingnessEncoder`'s defaults. M8-1's mask-encoder-layers study will
-  need a config key for the layers.
+  are `MissingnessEncoder`'s default. Its depth is `model.mask_encoder_layers` (M8-1): 2 layer
+  pairs, the class's default, which every run before M8-1 was built with; a config saved before
+  M8-1 has no such key and builds 2. M8-1's encoder-layers study varies it
+  ([The ablation](#the-ablation-m8-1)).
 - **Shapes.** `CSDI_base.get_mask_emb` gives the encoder the conditioning mask, permuted from
   upstream's `(B, K, L)` to our `(B, T, D)` = `(B, 48, 35)`. It returns `mask_emb`,
   `(B, T, D, d_model)` = `(B, 48, 35, 64)`, already scaled by its gate (`mask_encoder.gate` in
@@ -1559,6 +1562,84 @@ Tests (`tests/test_headline.py`):
 
 Run against 22 deliberately broken versions of `diffusion/headline.py`, the unit tests caught all 22
 without the committed-record tests.
+
+## The ablation (M8-1)
+
+`diffusion/ablation.py` trains and scores M8-1's three one-factor studies (PROJECT_PLAN §5): not a
+grid, each moves one setting away from the sweep's on the best variant, Ext 1+2 (M7-2), at seeds
+42–44 in the random regime, every other setting the sweep's:
+
+| Study (`--study`) | Setting | Values | Variants | Scored on | Runs trained |
+| --- | --- | --- | --- | --- | --- |
+| `d_model` | `diffusion.channels`, `n_heads` fixed at 8 (§3.6) | 64 / 128 / 256 | Ext 1+2 | random | 6 |
+| `steps` | `diffusion.num_steps` (T), each a full retrain | 50 / 100 / 200 | Ext 1+2 | random | 6 |
+| `encoder_layers` | `model.mask_encoder_layers` | 1 / 2 / 3 | Ext 1, Ext 1+2 | random, block | 12 |
+
+The sweep's own value of each setting (64, 50, 2) is not trained again: the sweep's runs at seeds
+42–44 are those cells, so each study trains its other two values. Each value trains into
+`<out>/<study>_<value>` (e.g. `<out>/d_model_128`) through the sweep's driver, `sweep.sweep`, so
+everything [Running the paired sweep](#running-the-paired-sweep-m6-2) says holds: a lost session's run
+goes on from its checkpoint, every run trains and is scored on `protocol.paired_gpu` from committed
+code, each folder's `sweep.json` holds its tag and commit, and in the encoder-layers study Ext 1's and
+Ext 1+2's pairing hashes are checked against each other at each seed. Ablation runs validate every
+50 epochs (`ablation.VALIDATE_EVERY`), not the sweep's 10: every stream is reseeded at each epoch's
+start, so validation leaves training unchanged (tested), and at T = 200 the sweep's 20 passes would
+take about an hour a run. A lost session redoes at most 50 epochs, about 9 minutes of training.
+
+The ablation's runs come from a later commit than the sweep's (20a470d), since the encoder's depth
+key changed `models/build.py`. Before they are compared with the sweep's runs, a **rerun check**
+trains one sweep cell again from the ablation's commit, into a folder of its own, and checks it
+reproduces the sweep's numbers exactly (`--compare`). If it does not, the sweep's value is trained
+again in each study rather than reused.
+
+On Colab's G4 runtime, after the setup in [Environment](#environment), with the sweep's folder added
+to My Drive as a shortcut (`SWEEP`; read only, nothing is written to it):
+
+```text
+OUT = "/content/drive/MyDrive/msml612/ablation"
+SWEEP = "/content/drive/MyDrive/<the sweep's folder>"
+# 1. the rerun check (about 2 h): the same numbers as the sweep's run, or the reuse is off
+!uv run python -m diffusion.sweep --tag rerun-check --regime random --variants ext1+2 --seeds 42 --out {OUT}/rerun-check
+!uv run python -m diffusion.sweep --compare {SWEEP} --regime random --variants ext1+2 --seeds 42 --out {OUT}/rerun-check
+# 2. the studies, d_model first (M8-2's MAE-vs-latency plot needs it); each command, run again, goes on
+!uv run python -m diffusion.ablation --study d_model --tag ablation --out {OUT}
+!uv run python -m diffusion.ablation --study encoder_layers --tag ablation --out {OUT}
+!uv run python -m diffusion.ablation --study steps --tag ablation --out {OUT}
+drive.flush_and_unmount()   # before ending the session yourself
+```
+
+A later session checks out the commit in any study folder's `sweep.json` first, as the sweep's
+sessions do. Two sessions on two accounts can run two studies at once: the studies share no folder.
+
+Estimated cost on the G4 A100 with TF32, from the timing test's per-epoch, per-pass and per-batch
+seconds at `d_model` 64 and T = 50 ([The timing test](#the-timing-test-m6-2)): validation and scoring
+draws take T denoising steps each, so they scale with T, and training does not. How `d_model` scales
+was not timed; the first `d_model` run's epoch and scoring times say.
+
+| | Runs | Hours |
+| --- | --- | --- |
+| Rerun check (both holdouts, validated every 10) | 1 | 2.1 |
+| `d_model` 128 / 256 | 6 | 8 at 64's speed, more as width grows |
+| `steps` 100 / 200 | 6 | 16 |
+| `encoder_layers` 1 / 3 | 12 | 23 |
+| **Total** | **25** | **about 50–65** |
+
+At 8–9 compute units an hour, about 420–560 units. The ablation's table (each value's paired Δ
+against the sweep's value, with its read without the bad-value patients, §3.5) is M8-1's next step.
+
+Tests (`tests/test_ablation.py`, and additions to `tests/test_build_model.py` and `tests/test_run.py`):
+
+- Each study trains its two values besides the sweep's, and a config whose setting is none of the
+  study's values is refused; the `d_model` values are `model.d_model_sweep`.
+- A value's config differs from the sweep's in that one setting and how often it validates, with
+  `n_heads` 8 throughout.
+- T leaves every starting weight as it was, and the encoder's depth all but that encoder's own.
+- Training a study writes each value's runs into a folder of its own, with the value and the
+  validation interval in each saved config, an encoder of that depth in each `model.pt`, and both
+  scorings; the command line trains nothing off the paired GPU.
+- The encoder's depth comes from `model.mask_encoder_layers`, and a config saved before it builds
+  exactly what it trained with.
+- How often a run validates leaves its training history, final weights and pairing hashes unchanged.
 
 ## Ext 1's attribution checks (M6-3)
 
