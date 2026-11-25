@@ -67,14 +67,14 @@
 - Each extension's final gate from `M7-1`'s manifest, beside its Δ (§3.5): the mean of its size, |gate|, ± SE over seeds per regime, with each seed's signed value. The sign means nothing, and Ext 1's gates differ in sign across seeds, so a signed mean would hide gates that moved. Describe how far each gate moved from 0, with no threshold for "used" or "ignored": the verdict comes from the Δ and its 95% CI, not the gate.
 
 **Definition of Done**
-- [ ] Table reports mean ± SE for all four variants and all baselines in standardized units.
-- [ ] Paired Δ ± SE computed correctly (paired, not independent-means) and spot-checked by hand on one contrast.
-- [ ] Block/random stratification present: paired Δ ± SE reported under each holdout.
-- [ ] Block-aware Ext 1 vs. base contrast reported; no Δ pairs runs across the two regimes.
-- [ ] Whether that contrast separates from zero stated, so `M8-4` knows whether to run.
-- [ ] Every null explicitly labeled "no significant effect," none dropped or spun.
-- [ ] Each paired Δ carries its 95% CI, and each null states the largest gain its CI allows.
-- [ ] Each extension's gate reported beside its Δ.
+- [x] Table reports mean ± SE for all four variants and all baselines in standardized units.
+- [x] Paired Δ ± SE computed correctly (paired, not independent-means) and spot-checked by hand on one contrast.
+- [x] Block/random stratification present: paired Δ ± SE reported under each holdout.
+- [x] Block-aware Ext 1 vs. base contrast reported; no Δ pairs runs across the two regimes.
+- [x] Whether that contrast separates from zero stated, so `M8-4` knows whether to run.
+- [x] Every null explicitly labeled "no significant effect," none dropped or spun.
+- [x] Each paired Δ carries its 95% CI, and each null states the largest gain its CI allows.
+- [x] Each extension's gate reported beside its Δ.
 
 ---
 
