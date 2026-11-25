@@ -124,6 +124,6 @@
 - The sweep's folder is on the Google Drive of whoever ran M7: they share it as an editor with whoever runs M8-4, who adds it to their own Drive as a shortcut in My Drive and passes that path as `--out`. In a folder of its own, Ext 1-blind would be checked against nothing until the store is written.
 
 **Definition of Done**
-- [ ] Trigger decision recorded from `M7-2`'s numbers.
-- [ ] If triggered: both contrasts reported as paired Δ ± SE; overlapping bars stated as no significant effect.
-- [ ] Ext 1's claim worded per §4.1: "adds signal beyond the raw mask channel" only if Ext 1 beats Ext 1-blind, and "block missingness" in general only if the gain holds off the grid, judged against the block holdout's Δ over the same hours (1–45).
+- [x] Trigger decision recorded from `M7-2`'s numbers.
+- [x] If triggered: both contrasts reported as paired Δ ± SE; overlapping bars stated as no significant effect.
+- [x] Ext 1's claim worded per §4.1: "adds signal beyond the raw mask channel" only if Ext 1 beats Ext 1-blind, and "block missingness" in general only if the gain holds off the grid, judged against the block holdout's Δ over the same hours (1–45).
