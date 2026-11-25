@@ -48,6 +48,7 @@ diffusion/     # training data feed, loop and random streams around the
                #   Trajectories and their figure (trajectories*.py).        [M7-3]
                #   The headline table: paired Δ ± SE, CI (headline.py).     [M7-2]
                #   The ablation's driver (ablation.py).                     [M8-1]
+               #   The ablation's table (ablation_table.py).                [M8-1]
 eval/          # EvalMasker / TrainMasker + masked, standardized metrics;
                #   EvalSampler (frozen-noise evaluation pass).              [M1-3]
                #   Mean and forward-fill baselines.                         [M2-3]
@@ -1647,8 +1648,45 @@ was not timed; the first `d_model` run's epoch and scoring times say.
 | `encoder_layers` 1 / 3 | 12 | 23 |
 | **Total** | **25** | **about 50–65** |
 
-At 8–9 compute units an hour, about 420–560 units. The ablation's table (each value's paired Δ
-against the sweep's value, with its read without the bad-value patients, §3.5) is M8-1's next step.
+At 8–9 compute units an hour, about 420–560 units.
+
+**The table.** `diffusion/ablation_table.py` sets each value against the sweep's, seed by seed, and
+writes `results/ablation.json` (every number, and each ablation run's manifest entry: config, rerun
+command, GPU, seconds, weights, gates) and `results/ablation.md` (a table per study). It reads the run
+folders, not wandb, since the read without the bad-value patients needs each run's saved median. It
+trains and samples nothing, so a Colab CPU runtime is enough: the first cell above (Drive, the
+dataset), then a clone of `main`, which holds the table, and `uv sync --locked`:
+
+```text
+!uv run python -m diffusion.ablation_table --ablation {OUT} --sweep-dir {SWEEP} --dataset {DATASET}
+!uv run python -m diffusion.ablation_table --ablation {OUT} --sweep-dir {SWEEP} --dataset {DATASET} --studies d_model   # one study, done first
+```
+
+`--ablation` takes two folders if two accounts ran the studies; the rerun check is read from
+`<first folder>/rerun-check`. For each study, variant and holdout it gives each value's test MAE at
+10% (mean ± SE over seeds 42–44), and for each value but the sweep's the paired Δ against the sweep's
+value ± SE, its 95% CI (t at 2 df, ±4.303 SE) and its verdict by M7-2's ±1 SE bar
+(`headline.verdict`): "no significant effect" when the bar crosses 0, never dropped. At 3 seeds a
+contrast with no true effect clears ±1 SE 42% of the time, and nothing corrects for the 12 contrasts.
+Beside each Δ is the same Δ without the test patients whose record holds a known bad value, planned
+before any M8 run (PROJECT_PLAN §3.5), so a secondary result here; it changes no verdict. It writes
+nothing, and lists every problem, unless:
+
+- every run finished with a consistent folder (`manifest.entry`: final weights, curve, toggles,
+  regime, the GPU it trained and was scored on), and each of its study's holdouts was scored the
+  frozen way with its median beside it (`sweep.final_scoring`), a median giving exactly its MAE;
+- the sweep's runs in `--sweep-dir` are the ones `results/sweep_manifest.json` records (the same
+  final weights, the folder started from its commit), so each study's third value is M7-2's runs;
+- the ablation's folders share one tag and commit, and the rerun check was trained from that commit
+  and reproduces the sweep's `ext1+2_random_seed42` exactly (`sweep.reproduces`): only then do the
+  sweep's runs, from its own commit, stand for each study's third value;
+- each run's config is the sweep run's at its variant and seed but for the study's setting (a sweep
+  config with no encoder-depth key is depth 2), validation aside;
+- each run's pairing hashes are the sweep run's but for those its study changes on purpose
+  (`ablation_table.MOVES`): every starting weight for `d_model`, Ext 1's encoder's for its depth, and
+  none for T. The diffusion hash is of the stream's generator state after each step, and a timestep
+  drawn from range(T) takes the generator as far whatever T is, so a T run makes the sweep run's very
+  draws (tested: T 10 and 12 hash the same).
 
 Tests (`tests/test_ablation.py`, and additions to `tests/test_build_model.py` and `tests/test_run.py`):
 
@@ -1663,6 +1701,23 @@ Tests (`tests/test_ablation.py`, and additions to `tests/test_build_model.py` an
 - The encoder's depth comes from `model.mask_encoder_layers`, and a config saved before it builds
   exactly what it trained with.
 - How often a run validates leaves its training history, final weights and pairing hashes unchanged.
+
+Tests of the table (`tests/test_ablation_table.py`), on real tiny runs (the sweep's Ext 1 and Ext 1+2,
+the encoder-layers study and the rerun check, at seeds 42–44):
+
+- Each Δ is the value's scored MAE minus the sweep's, seed by seed, with its mean, SE and verdict.
+- The read without the bad-value patients, recomputed with numpy from the saved medians.
+- The sweep's runs from a commit of their own, with configs saved before the depth key; a T study
+  scored on the random holdout alone, against those configs.
+- Each study changes exactly the pairing hashes `MOVES` names: trained at two widths and two Ts too.
+- Refused: an unpaired run, another learning rate, another GPU, a run not finished, a value not
+  trained, a scoring done another way, a median that was not scored, a sweep folder holding other
+  weights than its manifest or started from another commit, a study folder without its `sweep.json`
+  or from another commit, and a rerun check missing, from another commit, or not reproducing; and
+  no refusal blames the rerun check for another's problem.
+- The command line writes the record and its tables.
+
+Thirteen deliberately broken versions of `diffusion/ablation_table.py` each fail a test.
 
 ## Ext 1's attribution checks (M6-3)
 
