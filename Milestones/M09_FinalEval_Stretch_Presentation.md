@@ -33,11 +33,12 @@
 **Deliverables**
 - Final table: all four variants (mean ± SE @10%, paired Δ ± SE with its 95% CI), best-config selection justified, baselines included, block/random stratification retained, and Ext 1's block-aware-regime contrast (§3.1) reported beside it, with its attribution checks from `M8-4` (Ext 1 vs. Ext 1-blind, and the off-grid Δ) beside that when they ran, or the note that they were not triggered.
 - A one-paragraph results summary stating which effects are SE-separated and which are null, each null with the largest gain its 95% CI allows, and each extension's gate (§3.5).
+- Beside each paired Δ, the same Δ without the test patients whose record holds a known bad value (added Nov 25, §3.5). It is post-hoc for the sweep's contrasts (M7-2's `results/headline.json`, labelled so) and planned for M8's. Verdicts stay on all patients.
 
 **Definition of Done**
 - [ ] Final numbers frozen and consistent with the raw results store.
 - [ ] Best config per variant justified from the ablation.
-- [ ] Effect verdicts (separated vs. null) stated explicitly; each null with its 95% CI.
+- [ ] Effect verdicts (separated vs. null) stated explicitly; each null with its 95% CI, and each Δ with its without-bad-values read beside it.
 
 ---
 

@@ -62,7 +62,8 @@
 - **Paired Δ vs. base ± SE** for each extension and for the combined model, each with its 95% CI (t with n − 1 degrees of freedom: ±2.78 SE at 5 seeds, ±4.30 SE at 3; §3.5).
 - Stratified view: every variant and baseline under both frozen holdouts, random (`EvalMasker`) and block (`BlockEvalMasker`, `M2-4`), at the same 10% rate, so Ext 1's and Ext 2's honest regimes read separately.
 - **Ext 1's block contrast:** paired Δ ± SE of Ext 1 vs. base in the block-aware training regime, scored on the block holdout (§3.1, §4.1), with the random regime's block-holdout Δ beside it as a carry-over check. Whether it separates from zero is the trigger for Ext 1's attribution checks (`M8-4`), stated in one line as soon as it is known.
-- A written verdict per contrast: SE-separated effect vs. "no significant effect," each null also stating the largest gain its 95% CI allows.
+- A written verdict per contrast: SE-separated effect vs. "no significant effect," each null also stating the largest gain its 95% CI allows. The error bar is ±1 SE, and the CI changes no verdict (§3.5, settled at M7-2).
+- A post-hoc read, labelled as such and changing no verdict (added Nov 25, §3.5): every contrast repeated without the 12 test patients whose record holds a known bad value (§8), shown beside its Δ.
 - Each extension's final gate from `M7-1`'s manifest, beside its Δ (§3.5): the mean of its size, |gate|, ± SE over seeds per regime, with each seed's signed value. The sign means nothing, and Ext 1's gates differ in sign across seeds, so a signed mean would hide gates that moved. Describe how far each gate moved from 0, with no threshold for "used" or "ignored": the verdict comes from the Δ and its 95% CI, not the gate.
 
 **Definition of Done**

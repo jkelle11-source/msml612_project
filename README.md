@@ -46,6 +46,7 @@ diffusion/     # training data feed, loop and random streams around the
                #   The sweep's driver (sweep.py); resuming a run (run.py).  [M6-2]
                #   The sweep's run manifest (manifest.py).                  [M7-1]
                #   Trajectories and their figure (trajectories*.py).        [M7-3]
+               #   The headline table: paired Δ ± SE, CI (headline.py).     [M7-2]
 eval/          # EvalMasker / TrainMasker + masked, standardized metrics;
                #   EvalSampler (frozen-noise evaluation pass).              [M1-3]
                #   Mean and forward-fill baselines.                         [M2-3]
@@ -57,6 +58,7 @@ results/       # recorded results (baselines.json).                         [M2-
                #   Single-seed health runs (health_seed42.json).            [M5-3]
                #   The sweep's runs (sweep.json, sweep_manifest.json).      [M7-1]
                #   Trajectory figure and its read (trajectories/).          [M7-3]
+               #   The headline table (headline.json, headline.md).         [M7-2]
 configs/       # frozen protocol config (config.yaml).
 Docs/          # project plan + shared notes (e.g. CSDI_Objective.md).
 Milestones/    # per-milestone GitHub issue breakdown (M00-M10).
@@ -1425,6 +1427,138 @@ uv run python -m diffusion.sweep --regime random --variants base --seeds 42 --ou
 
 Tests (`tests/test_manifest.py`): an entry worked out by hand, each refusal, a rerun's extra scoring
 steps run through `diffusion.score`'s real command line, and one real sweep run when its folder is here.
+
+## The headline table (M7-2)
+
+```text
+uv run python -m diffusion.headline                   # writes results/headline.json and results/headline.md
+uv run python -m diffusion.headline --skip-post-hoc   # if outputs/sweep is not here: no post-hoc read
+```
+
+It reads the results store (`results/sweep.json`), the manifest (`results/sweep_manifest.json`, for
+the gates) and the baselines' records (`results/baselines.json`, `results/learned_baseline.json`). It
+writes every number to `results/headline.json` and the tables, with one verdict per contrast, to
+[`results/headline.md`](results/headline.md). Both files are generated, so don't edit them by hand;
+the tests fail if either stops matching its inputs. The cited rows (BRITS, V-RIN and CSDI from CSDI's
+Table 3, and the CFMI reimplementation) are in `diffusion.headline.CITED`.
+
+**The rules** (PROJECT_PLAN §3.3, §3.5):
+
+- **Paired.** Each Δ is the per-seed difference of two variants trained in the same regime at the same
+  seed. Its SE is the SD of the five differences over √5, not a combination of the two means' SEs. A
+  contrast is refused if one variant lacks a seed, and none mixes the random and block-aware regimes.
+- **The verdict is the ±1 SE error bar**, as the plan wrote it ("SE-separated"; settled at M7-2). A Δ
+  whose Δ ± SE crosses 0 is "no significant effect". One whose bar clears 0 is SE-separated, as a gain
+  (lower MAE) or a harm. That bar is a weak test: at 5 seeds, a contrast with no true effect clears
+  it 37% of the time (P(|t| > 1) at 4 degrees of freedom). The 16 contrasts are not corrected for
+  multiple comparisons, and they share runs, so they are not independent.
+- **The 95% CI** goes beside each verdict: Δ ± 2.776 SE, Student's t at 4 degrees of freedom. Each
+  verdict says whether the CI excludes 0, and if it doesn't, the largest gain the CI allows. The CI
+  changes no verdict.
+- **Gates** go beside each extension's Δ vs. base: mean |gate| ± SE over seeds, then each seed's
+  signed value. The sign means nothing, and no threshold reads a gate as used or ignored.
+
+**Mean ± SE**, test MAE at 10% in standardized units, seeds 42–46 (baselines and cited rows in
+`results/headline.md`):
+
+| Model | Random 10% | Block 10% |
+| --- | --- | --- |
+| Forward fill | 0.4487 | 0.4786 |
+| BRITS (ours) | 0.2667 ± 0.0010 | 0.4692 ± 0.0023 |
+| CSDI (paper) | 0.217 ± 0.001 | — |
+| CSDI base (ours), random regime | 0.2197 ± 0.0012 | 0.3691 ± 0.0006 |
+| + Ext 1, random regime | 0.2195 ± 0.0010 | 0.3706 ± 0.0008 |
+| + Ext 2, random regime | 0.2228 ± 0.0028 | 0.3704 ± 0.0015 |
+| + Ext 1+2, random regime | 0.2186 ± 0.0005 | 0.3685 ± 0.0007 |
+| CSDI base (ours), block-aware regime | 0.2224 ± 0.0013 | 0.3671 ± 0.0008 |
+| + Ext 1, block-aware regime | 0.2220 ± 0.0005 | 0.3678 ± 0.0004 |
+
+Our ± covers training randomness only. The test split is fixed, so every run scores the same 800
+patients. CSDI's standard errors also cover which patients were tested, because each of its five
+trials tested a different fifth of them (its Appendix E.2.1).
+
+**The contrasts vs. base the plan names** (negative Δ is a gain). The confirmatory ones are §3.5's
+two main effects and Ext 1's block contrast (bold); `results/headline.md` has all 16, the interaction
+included. **Without the 12 (post-hoc)** is the same Δ ± SE (95% CI) leaving out the 12 test patients
+whose record holds a known bad value. It was chosen after the results were seen, so it changes no
+verdict, and a CI there that excludes 0 is not a claim.
+
+| Contrast | Regime, holdout | Δ ± SE | 95% CI | Without the 12 (post-hoc) | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| **Ext 1 − base** | random, random | −0.0002 ± 0.0018 | −0.0053 to +0.0049 | −0.0008 ± 0.0009 (−0.0032 to +0.0016) | no significant effect |
+| **Ext 2 − base** | random, random | +0.0031 ± 0.0019 | −0.0021 to +0.0083 | +0.0005 ± 0.0008 (−0.0017 to +0.0027) | SE-separated harm; CI includes 0 |
+| Ext 1+2 − base | random, random | −0.0011 ± 0.0013 | −0.0047 to +0.0024 | −0.0011 ± 0.0003 (−0.0021 to −0.0001) | no significant effect |
+| **Ext 1 − base** (block contrast) | block-aware, block | +0.0007 ± 0.0009 | −0.0018 to +0.0031 | +0.0007 ± 0.0008 (−0.0016 to +0.0030) | no significant effect |
+| Ext 1 − base (carry-over check) | random, block | +0.0015 ± 0.0012 | −0.0019 to +0.0049 | +0.0004 ± 0.0004 (−0.0008 to +0.0016) | SE-separated harm; CI includes 0 |
+| Ext 2 − base, HR (§4.2) | random, random | +0.0008 ± 0.0005 | −0.0005 to +0.0021 | +0.0008 ± 0.0004 (−0.0004 to +0.0020) | SE-separated harm; CI includes 0 |
+| Ext 2 − base, SysABP (§4.2) | random, random | +0.0001 ± 0.0005 | −0.0014 to +0.0016 | 0.0000 ± 0.0005 (−0.0013 to +0.0013) | no significant effect |
+
+**M8-4 does not run.** Ext 1's block contrast (block-aware regime, block holdout) is +0.0007 ± 0.0009,
+with a 95% CI of −0.0018 to +0.0031. That is no significant effect, and §4.1 says a null needs no control.
+
+**Hand spot-check** (DoD) of that contrast, from `results/sweep.json`'s block-holdout MAEs at six decimals:
+
+| Seed | Base | Ext 1 | Ext 1 − base |
+| --- | --- | --- | --- |
+| 42 | 0.365710 | 0.368236 | +0.002526 |
+| 43 | 0.365290 | 0.368275 | +0.002985 |
+| 44 | 0.368031 | 0.367964 | −0.000067 |
+| 45 | 0.369532 | 0.368313 | −0.001219 |
+| 46 | 0.366966 | 0.366032 | −0.000934 |
+
+- **Mean:** 0.003291 / 5 = +0.000658.
+- **Spread:** the deviations from it are +0.001868, +0.002327, −0.000725, −0.001877 and −0.001592.
+  Their squares sum to 1.5488 × 10⁻⁵, so the variance is that over 4, 3.872 × 10⁻⁶, and the SD is 0.001968.
+- **SE:** 0.001968 / √5 = 0.000880.
+- **CI:** +0.000658 ± 2.776 × 0.000880 = −0.0018 to +0.0031, as `results/headline.json` has it.
+
+**What the table says:**
+
+1. **No extension gains anywhere, and the CIs rule out the gains the plan hoped for.** §6 targeted
+   −0.01 to −0.02. The largest gain any confirmatory CI allows is 0.0053 (Ext 1, random regime), and
+   0.0018 for Ext 1 in its own regime, the block contrast. Ext 1+2 stays §3.5's best variant: the
+   lowest mean test MAE, not separated from base.
+2. **The four contrasts vs. base that separate are all harms, and the known bad values account for
+   most of them.** They are Ext 2 on the random holdout, Ext 1 and Ext 2 on the random regime's block
+   holdout, and Ext 2 on HR. Ext 2's +0.0031 is mostly seed 42 (+0.0095). There, Ext 2's pH MAE is 0.737 against base's 0.308, because
+   it carries a visible pH of 735 further into the pH values around it (PROJECT_PLAN §8). The post-hoc
+   read leaves out the 12 test patients whose record holds a known bad value (431 of 26,027 targets).
+   Without them, Ext 2's Δ is +0.0005 ± 0.0008, and the random regime's block-holdout harms shrink to
+   +0.0004 ± 0.0004 (Ext 1) and 0.0000 ± 0.0004 (Ext 2). Ext 2's HR harm (+0.0008 ± 0.0005) is not
+   pH: it is the same without the 12 (+0.0008 ± 0.0004). It is 1.7 SE, and the CI includes 0.
+3. **The exploratory interaction separates, but only through those 12 patients.** The term
+   (Ext 1+2 − Ext 2) − (Ext 1 − base) is −0.0041 ± 0.0014 on the random holdout and −0.0034 ± 0.0006
+   on the block holdout, and both CIs exclude 0. Without the 12 patients it falls to −0.0007 ± 0.0010
+   and −0.0006 ± 0.0006. How far a run carries the bad pH varies from run to run, not with any
+   extension: on the random holdout, pH MAE ranges from 0.03 to 0.74 across the 20 runs. The term picks
+   up that Ext 1+2's runs happened to carry it less. It is not a property of the two ideas combined,
+   and we don't assert it (§3.5).
+4. **The post-hoc read changes no verdict.** It was chosen on Nov 25, after the results were in.
+   One CI there excludes 0: Ext 1+2 − base on the random holdout, −0.0011 ± 0.0003, 95% CI −0.0021
+   to −0.0001, negative at all five seeds. That is a post-hoc observation, not a gain we claim. From
+   M8 on, the same cut is planned before the results and reported beside every paired Δ (PROJECT_PLAN
+   §3.5), so there it is a planned secondary read, not a post-hoc one.
+5. **Gates.** Training moved Ext 1's gate to 0.14–0.30 in size at every seed: mean |gate| 0.203 ±
+   0.025 in the random regime and 0.172 ± 0.009 in the block-aware regime, with signs that differ
+   across seeds. Ext 2's gate went to 0.04–0.06, negative at every seed, mean |gate| 0.050 ± 0.003. The
+   Δs, not the gates, say whether either helped, and neither did.
+
+Tests (`tests/test_headline.py`):
+
+- Hand-worked examples: a paired Δ, SE and CI; an interaction term; a gate summary.
+- Pairing: by seed even when the variants rank their seeds differently, and a seed one variant lacks
+  is refused. No contrast crosses regimes.
+- The t values against a numerical integration of Student's t, and the ±1 SE rule deciding where the
+  CI would not. Every verdict's wording, and M8-4's trigger.
+- Refusals: an incomplete store, a manifest of other runs, baselines on another holdout, and a median
+  that is not the scored one.
+- The post-hoc read on a tiny dataset, pooled and per variable, recomputed by scoring the kept patients
+  on their own; each table row shows its own contrast's post-hoc Δ, and a read missing a contrast is refused.
+- The committed record and markdown against their inputs; the post-hoc read too when `outputs/sweep`
+  is here.
+
+Run against 22 deliberately broken versions of `diffusion/headline.py`, the unit tests caught all 22
+without the committed-record tests.
 
 ## Ext 1's attribution checks (M6-3)
 

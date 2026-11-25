@@ -51,11 +51,12 @@
 - Mask-encoder layers `∈ {1, 2, 3}` for the two encoder-bearing variants, 3 seeds, reported under the block holdout (`BlockEvalMasker`, Ext 1's primary regime) as well as the random one.
 - Before that study, a config key for the mask encoder's layer count: `models.build_model` builds `MissingnessEncoder` with its default `n_layers = 2` (layer pairs, one temporal and one feature layer each), so nothing yet varies it. Default it to 2 so earlier runs are unchanged, and have it reach each run's saved config (README, Ext 1's hand-off note, `M5-3`).
 - Results folded into the results store with paired-Δ ± SE; null cells labeled.
+- Beside each paired Δ, the same Δ without the test patients whose record holds a known bad value (`diffusion.headline.bad_value_patients`; added Nov 25, §3.5, before any M8 run). It is planned, not post-hoc, and the verdict stays on all patients. It needs each run's saved median (`median_test_<holdout>_0.1.npy`), as M7-2's did.
 
 **Definition of Done**
 - [ ] All three studies complete at ~35–40 total runs (or the reduced `T` design is documented).
 - [ ] `n_heads = 8` held constant across the `d_model` sweep.
-- [ ] Each study reports paired-Δ ± SE; overlapping cells labeled null.
+- [ ] Each study reports paired-Δ ± SE, with its Δ without the bad-value patients beside it (§3.5); overlapping cells labeled null.
 - [ ] Results reproducible from the run manifest.
 
 ---
