@@ -1575,6 +1575,9 @@ grid, each moves one setting away from the sweep's on the best variant, Ext 1+2 
 | `steps` | `diffusion.num_steps` (T), each a full retrain | 50 / 100 / 200 | Ext 1+2 | random | 6 |
 | `encoder_layers` | `model.mask_encoder_layers` | 1 / 2 / 3 | Ext 1, Ext 1+2 | random, block | 12 |
 
+One factor at a time, so T is swept at the sweep's `d_model` (64) alone, and `d_model` at its T
+(50): the plan's reduced design, stated as §5 asks, not a `d_model` × T grid.
+
 The sweep's own value of each setting (64, 50, 2) is not trained again: the sweep's runs at seeds
 42–44 are those cells, so each study trains its other two values. Each value trains into
 `<out>/<study>_<value>` (e.g. `<out>/d_model_128`) through the sweep's driver, `sweep.sweep`, so
@@ -1592,24 +1595,44 @@ trains one sweep cell again from the ablation's commit, into a folder of its own
 reproduces the sweep's numbers exactly (`--compare`). If it does not, the sweep's value is trained
 again in each study rather than reused.
 
-On Colab's G4 runtime, after the setup in [Environment](#environment), with the sweep's folder added
-to My Drive as a shortcut (`SWEEP`; read only, nothing is written to it):
+On Colab's G4 runtime, as the sweep's notebooks (`notebooks/M7-1_Full_Sweep_*.ipynb`) do it, with
+the sweep's folder added to My Drive as a shortcut (`SWEEP`; read only, nothing is written to it) and
+a copy of the dataset on Drive (`DATASET`), the one the sweep trained on, whose SHA-256 the first
+cell checks:
 
 ```text
-OUT = "/content/drive/MyDrive/msml612/ablation"
-SWEEP = "/content/drive/MyDrive/<the sweep's folder>"
+from google.colab import drive, userdata
+import hashlib, os, pathlib
+drive.mount("/content/drive")
+os.environ["WANDB_API_KEY"] = userdata.get("WANDB_API_KEY")
+COMMIT = "<the commit #64 merged as>"   # every ablation session, on every account, trains from it
+OUT = pathlib.Path("/content/drive/MyDrive/msml612/ablation")
+SWEEP = pathlib.Path("/content/drive/MyDrive/<the sweep's folder>")
+DATASET = pathlib.Path("/content/drive/MyDrive/msml612/physionet_set_a.npz")
+assert hashlib.sha256(DATASET.read_bytes()).hexdigest() == \
+    "ce6ec696eee3440a08ff6cd81b311b2a4050487c396dfed66e93edc7d7458070", "not the dataset the sweep trained on"
+!nvidia-smi --query-gpu=name --format=csv,noheader
+```
+
+```text
+!git clone -q https://github.com/jkelle11-source/msml612_project.git
+%cd /content/msml612_project
+!git checkout -q {COMMIT}
+!uv sync --locked
 # 1. the rerun check (about 2 h): the same numbers as the sweep's run, or the reuse is off
-!uv run python -m diffusion.sweep --tag rerun-check --regime random --variants ext1+2 --seeds 42 --out {OUT}/rerun-check
+!uv run python -m diffusion.sweep --tag rerun-check --regime random --variants ext1+2 --seeds 42 --out {OUT}/rerun-check --dataset {DATASET}
 !uv run python -m diffusion.sweep --compare {SWEEP} --regime random --variants ext1+2 --seeds 42 --out {OUT}/rerun-check
 # 2. the studies, d_model first (M8-2's MAE-vs-latency plot needs it); each command, run again, goes on
-!uv run python -m diffusion.ablation --study d_model --tag ablation --out {OUT}
-!uv run python -m diffusion.ablation --study encoder_layers --tag ablation --out {OUT}
-!uv run python -m diffusion.ablation --study steps --tag ablation --out {OUT}
+!uv run python -m diffusion.ablation --study d_model --tag ablation --out {OUT} --dataset {DATASET}
+!uv run python -m diffusion.ablation --study encoder_layers --tag ablation --out {OUT} --dataset {DATASET}
+!uv run python -m diffusion.ablation --study steps --tag ablation --out {OUT} --dataset {DATASET}
 drive.flush_and_unmount()   # before ending the session yourself
 ```
 
-A later session checks out the commit in any study folder's `sweep.json` first, as the sweep's
-sessions do. Two sessions on two accounts can run two studies at once: the studies share no folder.
+Every session checks out the one `COMMIT`, not `main`'s newest: each study folder's `sweep.json`
+refuses another commit, and the table refuses studies from two, so a merge into `main` between
+sessions (the table's own PR, say) would otherwise split the ablation. Two sessions on two accounts
+can run two studies at once, from the same `COMMIT`: the studies share no folder.
 
 Estimated cost on the G4 A100 with TF32, from the timing test's per-epoch, per-pass and per-batch
 seconds at `d_model` 64 and T = 50 ([The timing test](#the-timing-test-m6-2)): validation and scoring
