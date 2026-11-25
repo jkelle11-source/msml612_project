@@ -28,9 +28,10 @@ The rules (PROJECT_PLAN §3.3, §3.5):
   if it is SE-separated (§4.1).
 
 The **post-hoc read** (``post_hoc``; chosen on Nov 25 after the results were seen, so it changes no
-verdict) repeats every pooled contrast without the 12 test patients whose record holds a known bad
-value (``data.physionet.known_bad_values``; README, Dataset), as ``results/gate.json`` does for the
-gate. It needs each run's saved median (``median_test_<holdout>_0.1.npy``) in the sweep's folder
+verdict) repeats every contrast, pooled and per variable, without the 12 test patients whose record
+holds a known bad value (``data.physionet.known_bad_values``; README, Dataset), as ``results/gate.json``
+does for the gate; ``results/headline.md`` shows each beside its Δ. From M8 on the same cut
+(``bad_value_patients``) is planned before the results (PROJECT_PLAN §3.5). It needs each run's saved median (``median_test_<holdout>_0.1.npy``) in the sweep's folder
 (``--sweep-dir``, default ``outputs/sweep``, copied from Drive) and the dataset, and refuses a median
 whose MAE is not exactly the store's, which would be another scoring's.
 """
@@ -46,7 +47,7 @@ from data.physionet import known_bad_values, load_dataset
 from diffusion.results import HEADLINE, RESULTS, UNITS, sweep_plan
 from diffusion.run import CONFIG_PATH, DATASET_PATH, OUTPUTS, VARIANTS
 from diffusion.score import holdout_masker
-from eval import masked_mae
+from eval import masked_mae, per_variable_mae
 
 # The 97.5% point of Student's t by degrees of freedom: a 95% CI is Δ ± t·SE (PROJECT_PLAN §3.5)
 T975 = {1: 12.706205, 2: 4.302653, 3: 3.182446, 4: 2.776445, 5: 2.570582, 6: 2.446912, 7: 2.364624,
@@ -301,7 +302,7 @@ def bad_value_patients(dataset):
     return known_bad_values(dataset)[dataset["test_idx"]].any(axis=(1, 2))
 
 def post_hoc(store, sweep_dir, dataset, protocol):
-    """Every pooled contrast again without the test patients whose record holds a known bad value.
+    """Every contrast again without the test patients whose record holds a known bad value.
 
     Post-hoc (chosen after the results were seen) and changes no verdict. Each run's saved median must
     give exactly the store's MAE, so it is the median that was scored.
@@ -326,17 +327,18 @@ def post_hoc(store, sweep_dir, dataset, protocol):
                     if masked_mae(median, values, target) != run["scores"][holdout]["mae"]:
                         problems.append(f"{run['run']}'s median_test_{name}_{fraction}.npy does not give the store's MAE")
                         continue
-                    clean["runs"][regime][variant][seed]["scores"][holdout]["mae"] = masked_mae(median, values, kept)
+                    scores = clean["runs"][regime][variant][seed]["scores"][holdout]
+                    scores["mae"] = masked_mae(median, values, kept)
+                    scores["per_variable_mae"] = {str(feature): None if np.isnan(mae) else float(mae) for feature, mae
+                                                  in zip(dataset["features"], per_variable_mae(median, values, kept))}
     if problems:
         raise ValueError("; ".join(problems))
     rows = []
     for group, regime, holdout, weights, variable in CONTRASTS:
-        if variable is not None:
-            continue
-        without = paired(contrast_values(clean, regime, holdout, weights))
-        rows.append({"group": group, "name": contrast_name(weights), "regime": regime, "holdout": holdout,
-                     "delta": paired(contrast_values(store, regime, holdout, weights)), "delta_without": without,
-                     "se_separated_without": abs(without["mean"]) > without["se"],
+        without = paired(contrast_values(clean, regime, holdout, weights, variable))
+        rows.append({"group": group, "name": contrast_name(weights, variable), "regime": regime, "holdout": holdout,
+                     "variable": variable, "delta": paired(contrast_values(store, regime, holdout, weights, variable)),
+                     "delta_without": without, "se_separated_without": abs(without["mean"]) > without["se"],
                      "ci_excludes_0_without": without["ci95"][0] > 0 or without["ci95"][1] < 0})
     return {"note": "post-hoc, chosen on Nov 25 after the results were seen; changes no verdict",
             "excluded": {"rule": "test patients whose record holds a known bad value (data.physionet.known_bad_values)",
@@ -410,13 +412,26 @@ def markdown(record):
         "means nothing.", "",
         f"**M8-4:** {record['m8_4']['line']}",
     ]
+    hoc = record.get("post_hoc")
+    without = without_by_contrast(record)
+    if hoc is not None:
+        lines += ["", f"**Without the {len(hoc['excluded']['record_ids'])} (post-hoc)** is the same Δ ± SE, with its "
+                  f"95% CI, leaving out the {len(hoc['excluded']['record_ids'])} test patients whose record holds a known "
+                  "bad value (last section). It was chosen after the results were seen, so it **changes no verdict**, "
+                  "and a CI there that excludes 0 is not a claim."]
+    extra = f" Without the {len(hoc['excluded']['record_ids'])} (post-hoc) |" if hoc is not None else ""
     for group, title in GROUPS.items():
-        lines += ["", f"### {title}", "", "| Contrast | Regime | Holdout | Δ ± SE | 95% CI | Verdict | Gates |",
-                  "| --- | --- | --- | --- | --- | --- | --- |"]
+        lines += ["", f"### {title}", "", f"| Contrast | Regime | Holdout | Δ ± SE | 95% CI |{extra} Verdict | Gates |",
+                  "| --- | --- | --- | --- | --- |" + (" --- |" if hoc is not None else "") + " --- | --- |"]
         for row in (r for r in record["contrasts"] if r["group"] == group):
             d = row["delta"]
+            cell = ""
+            if hoc is not None:
+                w = without[contrast_key(row)]
+                cell = f" {signed(w['mean'])} ± {w['se']:.4f} ({signed(w['ci95'][0])} to {signed(w['ci95'][1])}) |"
             lines.append(f"| {row['name']} | {row['regime']} | {row['holdout']} | {signed(d['mean'])} ± {d['se']:.4f} | "
-                         f"{signed(d['ci95'][0])} to {signed(d['ci95'][1])} | {row['verdict']} | {gate_text(row.get('gates'))} |")
+                         f"{signed(d['ci95'][0])} to {signed(d['ci95'][1])} |{cell} {row['verdict']} | "
+                         f"{gate_text(row.get('gates'))} |")
     lines += ["", "## Gates", "", "| Regime | Variant | Gate | Mean \\|gate\\| ± SE | Signed, seeds 42–46 |",
               "| --- | --- | --- | --- | --- |"]
     for regime, by_variant in record["gates"].items():
@@ -426,7 +441,6 @@ def markdown(record):
                              + ", ".join(signed(v, 3) for v in g["signed"].values()) + " |")
     lines += ["", "Each gate is how far training scaled its encoder's output up from 0; no threshold reads one as "
               "used or ignored. Whether an extension helped is read from its Δ and CI, never from its gate."]
-    hoc = record.get("post_hoc")
     lines += ["", "## Post-hoc: without the patients whose record holds a known bad value", ""]
     if hoc is None:
         lines.append("Not computed (`--skip-post-hoc`): it needs the sweep's saved medians in `outputs/sweep`.")
@@ -440,15 +454,25 @@ def markdown(record):
             f"{counts['random/0.1']['n_patients_showing_a_bad_value']} of them show one to the model and none is scored; "
             f"under the block holdout {counts['block/0.1']['n_patients_showing_a_bad_value']} show one and "
             f"{counts['block/0.1']['n_bad_values_scored']} are scored. The gate record makes the same cut "
-            "(`results/gate.json`). A CI that excludes 0 here is a post-hoc observation, not a claim.", "",
-            "| Contrast | Regime | Holdout | Δ ± SE, all | Δ ± SE, without | 95% CI, without | ±1 SE clears 0, without |",
-            "| --- | --- | --- | --- | --- | --- | --- |"]
-        for row in hoc["contrasts"]:
-            a, w = row["delta"], row["delta_without"]
-            lines.append(f"| {row['name']} | {row['regime']} | {row['holdout']} | {signed(a['mean'])} ± {a['se']:.4f} | "
-                         f"{signed(w['mean'])} ± {w['se']:.4f} | {signed(w['ci95'][0])} to {signed(w['ci95'][1])} | "
-                         f"{'yes' if row['se_separated_without'] else 'no'} |")
+            f"(`results/gate.json`). Its Δs are the \"Without the {len(hoc['excluded']['record_ids'])} (post-hoc)\" "
+            "column of every contrast table above. From M8 on, the same cut is planned before the results, and "
+            "reported beside every paired Δ (PROJECT_PLAN §3.5)."]
     return "\n".join(lines) + "\n"
+
+def contrast_key(row):
+    """Which contrast a row is, in the record's ``contrasts`` or in its post-hoc read."""
+    return row["group"], row["regime"], row["holdout"], row["name"]
+
+def without_by_contrast(record):
+    """``{contrast: Δ without the excluded patients}``; refused unless the post-hoc read covers every contrast."""
+    hoc = record.get("post_hoc")
+    if hoc is None:
+        return {}
+    found = {contrast_key(row): row["delta_without"] for row in hoc["contrasts"]}
+    absent = [row["name"] for row in record["contrasts"] if contrast_key(row) not in found]
+    if absent or len(found) != len(record["contrasts"]):
+        raise ValueError(f"the post-hoc read does not cover the same contrasts: missing {absent}")
+    return found
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="The headline table: mean ± SE and paired Δ ± SE (M7-2).")

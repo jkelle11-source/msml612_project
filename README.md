@@ -1479,17 +1479,19 @@ trials tested a different fifth of them (its Appendix E.2.1).
 
 **The contrasts vs. base the plan names** (negative Δ is a gain). The confirmatory ones are §3.5's
 two main effects and Ext 1's block contrast (bold); `results/headline.md` has all 16, the interaction
-included:
+included. **Without the 12 (post-hoc)** is the same Δ ± SE (95% CI) leaving out the 12 test patients
+whose record holds a known bad value. It was chosen after the results were seen, so it changes no
+verdict, and a CI there that excludes 0 is not a claim.
 
-| Contrast | Regime, holdout | Δ ± SE | 95% CI | Verdict |
-| --- | --- | --- | --- | --- |
-| **Ext 1 − base** | random, random | −0.0002 ± 0.0018 | −0.0053 to +0.0049 | no significant effect |
-| **Ext 2 − base** | random, random | +0.0031 ± 0.0019 | −0.0021 to +0.0083 | SE-separated harm; CI includes 0 |
-| Ext 1+2 − base | random, random | −0.0011 ± 0.0013 | −0.0047 to +0.0024 | no significant effect |
-| **Ext 1 − base** (block contrast) | block-aware, block | +0.0007 ± 0.0009 | −0.0018 to +0.0031 | no significant effect |
-| Ext 1 − base (carry-over check) | random, block | +0.0015 ± 0.0012 | −0.0019 to +0.0049 | SE-separated harm; CI includes 0 |
-| Ext 2 − base, HR (§4.2) | random, random | +0.0008 ± 0.0005 | −0.0005 to +0.0021 | SE-separated harm; CI includes 0 |
-| Ext 2 − base, SysABP (§4.2) | random, random | +0.0001 ± 0.0005 | −0.0014 to +0.0016 | no significant effect |
+| Contrast | Regime, holdout | Δ ± SE | 95% CI | Without the 12 (post-hoc) | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| **Ext 1 − base** | random, random | −0.0002 ± 0.0018 | −0.0053 to +0.0049 | −0.0008 ± 0.0009 (−0.0032 to +0.0016) | no significant effect |
+| **Ext 2 − base** | random, random | +0.0031 ± 0.0019 | −0.0021 to +0.0083 | +0.0005 ± 0.0008 (−0.0017 to +0.0027) | SE-separated harm; CI includes 0 |
+| Ext 1+2 − base | random, random | −0.0011 ± 0.0013 | −0.0047 to +0.0024 | −0.0011 ± 0.0003 (−0.0021 to −0.0001) | no significant effect |
+| **Ext 1 − base** (block contrast) | block-aware, block | +0.0007 ± 0.0009 | −0.0018 to +0.0031 | +0.0007 ± 0.0008 (−0.0016 to +0.0030) | no significant effect |
+| Ext 1 − base (carry-over check) | random, block | +0.0015 ± 0.0012 | −0.0019 to +0.0049 | +0.0004 ± 0.0004 (−0.0008 to +0.0016) | SE-separated harm; CI includes 0 |
+| Ext 2 − base, HR (§4.2) | random, random | +0.0008 ± 0.0005 | −0.0005 to +0.0021 | +0.0008 ± 0.0004 (−0.0004 to +0.0020) | SE-separated harm; CI includes 0 |
+| Ext 2 − base, SysABP (§4.2) | random, random | +0.0001 ± 0.0005 | −0.0014 to +0.0016 | 0.0000 ± 0.0005 (−0.0013 to +0.0013) | no significant effect |
 
 **M8-4 does not run.** Ext 1's block contrast (block-aware regime, block holdout) is +0.0007 ± 0.0009,
 with a 95% CI of −0.0018 to +0.0031. That is no significant effect, and §4.1 says a null needs no control.
@@ -1518,13 +1520,12 @@ with a 95% CI of −0.0018 to +0.0031. That is no significant effect, and §4.1 
    lowest mean test MAE, not separated from base.
 2. **The four contrasts vs. base that separate are all harms, and the known bad values account for
    most of them.** They are Ext 2 on the random holdout, Ext 1 and Ext 2 on the random regime's block
-   holdout, and Ext 2 on HR. Ext 2's
-   +0.0031 is mostly seed 42 (+0.0095). There, Ext 2's pH MAE is 0.737 against base's 0.308, because
+   holdout, and Ext 2 on HR. Ext 2's +0.0031 is mostly seed 42 (+0.0095). There, Ext 2's pH MAE is 0.737 against base's 0.308, because
    it carries a visible pH of 735 further into the pH values around it (PROJECT_PLAN §8). The post-hoc
    read leaves out the 12 test patients whose record holds a known bad value (431 of 26,027 targets).
    Without them, Ext 2's Δ is +0.0005 ± 0.0008, and the random regime's block-holdout harms shrink to
    +0.0004 ± 0.0004 (Ext 1) and 0.0000 ± 0.0004 (Ext 2). Ext 2's HR harm (+0.0008 ± 0.0005) is not
-   pH, but it is 1.7 SE, and the CI includes 0.
+   pH: it is the same without the 12 (+0.0008 ± 0.0004). It is 1.7 SE, and the CI includes 0.
 3. **The exploratory interaction separates, but only through those 12 patients.** The term
    (Ext 1+2 − Ext 2) − (Ext 1 − base) is −0.0041 ± 0.0014 on the random holdout and −0.0034 ± 0.0006
    on the block holdout, and both CIs exclude 0. Without the 12 patients it falls to −0.0007 ± 0.0010
@@ -1534,7 +1535,9 @@ with a 95% CI of −0.0018 to +0.0031. That is no significant effect, and §4.1 
    and we don't assert it (§3.5).
 4. **The post-hoc read changes no verdict.** It was chosen on Nov 25, after the results were in.
    One CI there excludes 0: Ext 1+2 − base on the random holdout, −0.0011 ± 0.0003, 95% CI −0.0021
-   to −0.0001, negative at all five seeds. That is a post-hoc observation, not a gain we claim.
+   to −0.0001, negative at all five seeds. That is a post-hoc observation, not a gain we claim. From
+   M8 on, the same cut is planned before the results and reported beside every paired Δ (PROJECT_PLAN
+   §3.5), so there it is a planned secondary read, not a post-hoc one.
 5. **Gates.** Training moved Ext 1's gate to 0.14–0.30 in size at every seed: mean |gate| 0.203 ±
    0.025 in the random regime and 0.172 ± 0.009 in the block-aware regime, with signs that differ
    across seeds. Ext 2's gate went to 0.04–0.06, negative at every seed, mean |gate| 0.050 ± 0.003. The
@@ -1549,11 +1552,12 @@ Tests (`tests/test_headline.py`):
   CI would not. Every verdict's wording, and M8-4's trigger.
 - Refusals: an incomplete store, a manifest of other runs, baselines on another holdout, and a median
   that is not the scored one.
-- The post-hoc read on a tiny dataset, recomputed by scoring the kept patients on their own.
+- The post-hoc read on a tiny dataset, pooled and per variable, recomputed by scoring the kept patients
+  on their own; each table row shows its own contrast's post-hoc Δ, and a read missing a contrast is refused.
 - The committed record and markdown against their inputs; the post-hoc read too when `outputs/sweep`
   is here.
 
-Run against 18 deliberately broken versions of `diffusion/headline.py`, the unit tests caught all 18
+Run against 22 deliberately broken versions of `diffusion/headline.py`, the unit tests caught all 22
 without the committed-record tests.
 
 ## Ext 1's attribution checks (M6-3)

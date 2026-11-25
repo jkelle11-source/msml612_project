@@ -31,46 +31,48 @@ A Δ is a per-seed difference of MAEs inside one regime; negative is a gain. The
 
 **M8-4:** Ext 1's block contrast (block-aware regime, block holdout) is +0.0007 ± 0.0009, 95% CI −0.0018 to +0.0031: no significant effect, so M8-4's attribution checks do not run (§4.1: a null needs no control).
 
+**Without the 12 (post-hoc)** is the same Δ ± SE, with its 95% CI, leaving out the 12 test patients whose record holds a known bad value (last section). It was chosen after the results were seen, so it **changes no verdict**, and a CI there that excludes 0 is not a claim.
+
 ### Main effects (confirmatory) and the combined model: random regime, random holdout
 
-| Contrast | Regime | Holdout | Δ ± SE | 95% CI | Verdict | Gates |
-| --- | --- | --- | --- | --- | --- | --- |
-| Ext 1 − base | random | random/0.1 | −0.0002 ± 0.0018 | −0.0053 to +0.0049 | No significant effect: Δ ± SE crosses 0. The 95% CI includes 0; it allows a gain of at most 0.0053. | mask_encoder |g| 0.203 ± 0.025 (−0.18, −0.18, −0.20, +0.16, +0.30) |
-| Ext 2 − base | random | random/0.1 | +0.0031 ± 0.0019 | −0.0021 to +0.0083 | SE-separated: Ext 2 is worse than base, by 1.7 SE. The 95% CI includes 0, so this is not established at 95%; it allows a gain of at most 0.0021. | time_encoder |g| 0.050 ± 0.003 (−0.05, −0.05, −0.04, −0.06, −0.05) |
-| Ext 1+2 − base | random | random/0.1 | −0.0011 ± 0.0013 | −0.0047 to +0.0024 | No significant effect: Δ ± SE crosses 0. The 95% CI includes 0; it allows a gain of at most 0.0047. | mask_encoder |g| 0.202 ± 0.025 (−0.17, −0.17, −0.20, +0.17, +0.30); time_encoder |g| 0.040 ± 0.002 (−0.04, −0.04, −0.05, −0.04, −0.04) |
+| Contrast | Regime | Holdout | Δ ± SE | 95% CI | Without the 12 (post-hoc) | Verdict | Gates |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Ext 1 − base | random | random/0.1 | −0.0002 ± 0.0018 | −0.0053 to +0.0049 | −0.0008 ± 0.0009 (−0.0032 to +0.0016) | No significant effect: Δ ± SE crosses 0. The 95% CI includes 0; it allows a gain of at most 0.0053. | mask_encoder |g| 0.203 ± 0.025 (−0.18, −0.18, −0.20, +0.16, +0.30) |
+| Ext 2 − base | random | random/0.1 | +0.0031 ± 0.0019 | −0.0021 to +0.0083 | +0.0005 ± 0.0008 (−0.0017 to +0.0027) | SE-separated: Ext 2 is worse than base, by 1.7 SE. The 95% CI includes 0, so this is not established at 95%; it allows a gain of at most 0.0021. | time_encoder |g| 0.050 ± 0.003 (−0.05, −0.05, −0.04, −0.06, −0.05) |
+| Ext 1+2 − base | random | random/0.1 | −0.0011 ± 0.0013 | −0.0047 to +0.0024 | −0.0011 ± 0.0003 (−0.0021 to −0.0001) | No significant effect: Δ ± SE crosses 0. The 95% CI includes 0; it allows a gain of at most 0.0047. | mask_encoder |g| 0.202 ± 0.025 (−0.17, −0.17, −0.20, +0.17, +0.30); time_encoder |g| 0.040 ± 0.002 (−0.04, −0.04, −0.05, −0.04, −0.04) |
 
 ### Ext 1's block contrast (confirmatory; M8-4's trigger), with the random regime's carry-over check
 
-| Contrast | Regime | Holdout | Δ ± SE | 95% CI | Verdict | Gates |
-| --- | --- | --- | --- | --- | --- | --- |
-| Ext 1 − base | block-aware | block/0.1 | +0.0007 ± 0.0009 | −0.0018 to +0.0031 | No significant effect: Δ ± SE crosses 0. The 95% CI includes 0; it allows a gain of at most 0.0018. | mask_encoder |g| 0.172 ± 0.009 (−0.14, +0.18, −0.19, −0.18, +0.18) |
-| Ext 1 − base | random | block/0.1 | +0.0015 ± 0.0012 | −0.0019 to +0.0049 | SE-separated: Ext 1 is worse than base, by 1.2 SE. The 95% CI includes 0, so this is not established at 95%; it allows a gain of at most 0.0019. | mask_encoder |g| 0.203 ± 0.025 (−0.18, −0.18, −0.20, +0.16, +0.30) |
+| Contrast | Regime | Holdout | Δ ± SE | 95% CI | Without the 12 (post-hoc) | Verdict | Gates |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Ext 1 − base | block-aware | block/0.1 | +0.0007 ± 0.0009 | −0.0018 to +0.0031 | +0.0007 ± 0.0008 (−0.0016 to +0.0030) | No significant effect: Δ ± SE crosses 0. The 95% CI includes 0; it allows a gain of at most 0.0018. | mask_encoder |g| 0.172 ± 0.009 (−0.14, +0.18, −0.19, −0.18, +0.18) |
+| Ext 1 − base | random | block/0.1 | +0.0015 ± 0.0012 | −0.0019 to +0.0049 | +0.0004 ± 0.0004 (−0.0008 to +0.0016) | SE-separated: Ext 1 is worse than base, by 1.2 SE. The 95% CI includes 0, so this is not established at 95%; it allows a gain of at most 0.0019. | mask_encoder |g| 0.203 ± 0.025 (−0.18, −0.18, −0.20, +0.16, +0.30) |
 
 ### The other contrasts vs. base under the other holdout
 
-| Contrast | Regime | Holdout | Δ ± SE | 95% CI | Verdict | Gates |
-| --- | --- | --- | --- | --- | --- | --- |
-| Ext 2 − base | random | block/0.1 | +0.0013 ± 0.0010 | −0.0015 to +0.0041 | SE-separated: Ext 2 is worse than base, by 1.3 SE. The 95% CI includes 0, so this is not established at 95%; it allows a gain of at most 0.0015. | time_encoder |g| 0.050 ± 0.003 (−0.05, −0.05, −0.04, −0.06, −0.05) |
-| Ext 1+2 − base | random | block/0.1 | −0.0006 ± 0.0008 | −0.0027 to +0.0015 | No significant effect: Δ ± SE crosses 0. The 95% CI includes 0; it allows a gain of at most 0.0027. | mask_encoder |g| 0.202 ± 0.025 (−0.17, −0.17, −0.20, +0.17, +0.30); time_encoder |g| 0.040 ± 0.002 (−0.04, −0.04, −0.05, −0.04, −0.04) |
-| Ext 1 − base | block-aware | random/0.1 | −0.0004 ± 0.0014 | −0.0043 to +0.0036 | No significant effect: Δ ± SE crosses 0. The 95% CI includes 0; it allows a gain of at most 0.0043. | mask_encoder |g| 0.172 ± 0.009 (−0.14, +0.18, −0.19, −0.18, +0.18) |
+| Contrast | Regime | Holdout | Δ ± SE | 95% CI | Without the 12 (post-hoc) | Verdict | Gates |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Ext 2 − base | random | block/0.1 | +0.0013 ± 0.0010 | −0.0015 to +0.0041 | 0.0000 ± 0.0004 (−0.0010 to +0.0010) | SE-separated: Ext 2 is worse than base, by 1.3 SE. The 95% CI includes 0, so this is not established at 95%; it allows a gain of at most 0.0015. | time_encoder |g| 0.050 ± 0.003 (−0.05, −0.05, −0.04, −0.06, −0.05) |
+| Ext 1+2 − base | random | block/0.1 | −0.0006 ± 0.0008 | −0.0027 to +0.0015 | −0.0002 ± 0.0006 (−0.0020 to +0.0016) | No significant effect: Δ ± SE crosses 0. The 95% CI includes 0; it allows a gain of at most 0.0027. | mask_encoder |g| 0.202 ± 0.025 (−0.17, −0.17, −0.20, +0.17, +0.30); time_encoder |g| 0.040 ± 0.002 (−0.04, −0.04, −0.05, −0.04, −0.04) |
+| Ext 1 − base | block-aware | random/0.1 | −0.0004 ± 0.0014 | −0.0043 to +0.0036 | −0.0002 ± 0.0014 (−0.0041 to +0.0037) | No significant effect: Δ ± SE crosses 0. The 95% CI includes 0; it allows a gain of at most 0.0043. | mask_encoder |g| 0.172 ± 0.009 (−0.14, +0.18, −0.19, −0.18, +0.18) |
 
 ### Ext 2's primary regime (§4.2): heart rate and systolic arterial pressure, random holdout
 
-| Contrast | Regime | Holdout | Δ ± SE | 95% CI | Verdict | Gates |
-| --- | --- | --- | --- | --- | --- | --- |
-| Ext 2 − base, HR | random | random/0.1 | +0.0008 ± 0.0005 | −0.0005 to +0.0021 | SE-separated: Ext 2 is worse than base, by 1.7 SE. The 95% CI includes 0, so this is not established at 95%; it allows a gain of at most 0.0005. | time_encoder |g| 0.050 ± 0.003 (−0.05, −0.05, −0.04, −0.06, −0.05) |
-| Ext 2 − base, SysABP | random | random/0.1 | +0.0001 ± 0.0005 | −0.0014 to +0.0016 | No significant effect: Δ ± SE crosses 0. The 95% CI includes 0; it allows a gain of at most 0.0014. | time_encoder |g| 0.050 ± 0.003 (−0.05, −0.05, −0.04, −0.06, −0.05) |
+| Contrast | Regime | Holdout | Δ ± SE | 95% CI | Without the 12 (post-hoc) | Verdict | Gates |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Ext 2 − base, HR | random | random/0.1 | +0.0008 ± 0.0005 | −0.0005 to +0.0021 | +0.0008 ± 0.0004 (−0.0004 to +0.0020) | SE-separated: Ext 2 is worse than base, by 1.7 SE. The 95% CI includes 0, so this is not established at 95%; it allows a gain of at most 0.0005. | time_encoder |g| 0.050 ± 0.003 (−0.05, −0.05, −0.04, −0.06, −0.05) |
+| Ext 2 − base, SysABP | random | random/0.1 | +0.0001 ± 0.0005 | −0.0014 to +0.0016 | 0.0000 ± 0.0005 (−0.0013 to +0.0013) | No significant effect: Δ ± SE crosses 0. The 95% CI includes 0; it allows a gain of at most 0.0014. | time_encoder |g| 0.050 ± 0.003 (−0.05, −0.05, −0.04, −0.06, −0.05) |
 
 ### Interaction (exploratory): Ext 1+2 vs. each alone, and the interaction term
 
-| Contrast | Regime | Holdout | Δ ± SE | 95% CI | Verdict | Gates |
-| --- | --- | --- | --- | --- | --- | --- |
-| Ext 1+2 − Ext 1 | random | random/0.1 | −0.0010 ± 0.0007 | −0.0029 to +0.0010 | Exploratory. SE-separated: Ext 1+2 is better than Ext 1, by 1.3 SE. The 95% CI includes 0, so this is not established at 95%; it allows a gain of at most 0.0029. | — |
-| Ext 1+2 − Ext 2 | random | random/0.1 | −0.0043 ± 0.0028 | −0.0122 to +0.0036 | Exploratory. SE-separated: Ext 1+2 is better than Ext 2, by 1.5 SE. The 95% CI includes 0, so this is not established at 95%; it allows a gain of at most 0.0122. | — |
-| (Ext 1+2 − Ext 2) − (Ext 1 − base) | random | random/0.1 | −0.0041 ± 0.0014 | −0.0081 to −0.0001 | Exploratory. SE-separated: together the extensions do better than their separate effects add up to, by 2.8 SE. The 95% CI excludes 0. | — |
-| Ext 1+2 − Ext 1 | random | block/0.1 | −0.0021 ± 0.0007 | −0.0041 to −0.0001 | Exploratory. SE-separated: Ext 1+2 is better than Ext 1, by 2.9 SE. The 95% CI excludes 0. | — |
-| Ext 1+2 − Ext 2 | random | block/0.1 | −0.0019 ± 0.0014 | −0.0058 to +0.0020 | Exploratory. SE-separated: Ext 1+2 is better than Ext 2, by 1.4 SE. The 95% CI includes 0, so this is not established at 95%; it allows a gain of at most 0.0058. | — |
-| (Ext 1+2 − Ext 2) − (Ext 1 − base) | random | block/0.1 | −0.0034 ± 0.0006 | −0.0051 to −0.0017 | Exploratory. SE-separated: together the extensions do better than their separate effects add up to, by 5.5 SE. The 95% CI excludes 0. | — |
+| Contrast | Regime | Holdout | Δ ± SE | 95% CI | Without the 12 (post-hoc) | Verdict | Gates |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Ext 1+2 − Ext 1 | random | random/0.1 | −0.0010 ± 0.0007 | −0.0029 to +0.0010 | −0.0003 ± 0.0006 (−0.0020 to +0.0015) | Exploratory. SE-separated: Ext 1+2 is better than Ext 1, by 1.3 SE. The 95% CI includes 0, so this is not established at 95%; it allows a gain of at most 0.0029. | — |
+| Ext 1+2 − Ext 2 | random | random/0.1 | −0.0043 ± 0.0028 | −0.0122 to +0.0036 | −0.0016 ± 0.0006 (−0.0032 to +0.0001) | Exploratory. SE-separated: Ext 1+2 is better than Ext 2, by 1.5 SE. The 95% CI includes 0, so this is not established at 95%; it allows a gain of at most 0.0122. | — |
+| (Ext 1+2 − Ext 2) − (Ext 1 − base) | random | random/0.1 | −0.0041 ± 0.0014 | −0.0081 to −0.0001 | −0.0007 ± 0.0010 (−0.0036 to +0.0021) | Exploratory. SE-separated: together the extensions do better than their separate effects add up to, by 2.8 SE. The 95% CI excludes 0. | — |
+| Ext 1+2 − Ext 1 | random | block/0.1 | −0.0021 ± 0.0007 | −0.0041 to −0.0001 | −0.0006 ± 0.0008 (−0.0027 to +0.0015) | Exploratory. SE-separated: Ext 1+2 is better than Ext 1, by 2.9 SE. The 95% CI excludes 0. | — |
+| Ext 1+2 − Ext 2 | random | block/0.1 | −0.0019 ± 0.0014 | −0.0058 to +0.0020 | −0.0002 ± 0.0005 (−0.0015 to +0.0011) | Exploratory. SE-separated: Ext 1+2 is better than Ext 2, by 1.4 SE. The 95% CI includes 0, so this is not established at 95%; it allows a gain of at most 0.0058. | — |
+| (Ext 1+2 − Ext 2) − (Ext 1 − base) | random | block/0.1 | −0.0034 ± 0.0006 | −0.0051 to −0.0017 | −0.0006 ± 0.0006 (−0.0023 to +0.0011) | Exploratory. SE-separated: together the extensions do better than their separate effects add up to, by 5.5 SE. The 95% CI excludes 0. | — |
 
 ## Gates
 
@@ -86,21 +88,4 @@ Each gate is how far training scaled its encoder's output up from 0; no threshol
 
 ## Post-hoc: without the patients whose record holds a known bad value
 
-Chosen on Nov 25, after the results were seen, so it **changes no verdict**. It leaves out the 12 test patients whose record holds a known bad value (README, Dataset): 431 of 26,027 targets under each holdout. Under the random holdout 12 of them show one to the model and none is scored; under the block holdout 9 show one and 4 are scored. The gate record makes the same cut (`results/gate.json`). A CI that excludes 0 here is a post-hoc observation, not a claim.
-
-| Contrast | Regime | Holdout | Δ ± SE, all | Δ ± SE, without | 95% CI, without | ±1 SE clears 0, without |
-| --- | --- | --- | --- | --- | --- | --- |
-| Ext 1 − base | random | random/0.1 | −0.0002 ± 0.0018 | −0.0008 ± 0.0009 | −0.0032 to +0.0016 | no |
-| Ext 2 − base | random | random/0.1 | +0.0031 ± 0.0019 | +0.0005 ± 0.0008 | −0.0017 to +0.0027 | no |
-| Ext 1+2 − base | random | random/0.1 | −0.0011 ± 0.0013 | −0.0011 ± 0.0003 | −0.0021 to −0.0001 | yes |
-| Ext 1 − base | block-aware | block/0.1 | +0.0007 ± 0.0009 | +0.0007 ± 0.0008 | −0.0016 to +0.0030 | no |
-| Ext 1 − base | random | block/0.1 | +0.0015 ± 0.0012 | +0.0004 ± 0.0004 | −0.0008 to +0.0016 | no |
-| Ext 2 − base | random | block/0.1 | +0.0013 ± 0.0010 | 0.0000 ± 0.0004 | −0.0010 to +0.0010 | no |
-| Ext 1+2 − base | random | block/0.1 | −0.0006 ± 0.0008 | −0.0002 ± 0.0006 | −0.0020 to +0.0016 | no |
-| Ext 1 − base | block-aware | random/0.1 | −0.0004 ± 0.0014 | −0.0002 ± 0.0014 | −0.0041 to +0.0037 | no |
-| Ext 1+2 − Ext 1 | random | random/0.1 | −0.0010 ± 0.0007 | −0.0003 ± 0.0006 | −0.0020 to +0.0015 | no |
-| Ext 1+2 − Ext 2 | random | random/0.1 | −0.0043 ± 0.0028 | −0.0016 ± 0.0006 | −0.0032 to +0.0001 | yes |
-| (Ext 1+2 − Ext 2) − (Ext 1 − base) | random | random/0.1 | −0.0041 ± 0.0014 | −0.0007 ± 0.0010 | −0.0036 to +0.0021 | no |
-| Ext 1+2 − Ext 1 | random | block/0.1 | −0.0021 ± 0.0007 | −0.0006 ± 0.0008 | −0.0027 to +0.0015 | no |
-| Ext 1+2 − Ext 2 | random | block/0.1 | −0.0019 ± 0.0014 | −0.0002 ± 0.0005 | −0.0015 to +0.0011 | no |
-| (Ext 1+2 − Ext 2) − (Ext 1 − base) | random | block/0.1 | −0.0034 ± 0.0006 | −0.0006 ± 0.0006 | −0.0023 to +0.0011 | no |
+Chosen on Nov 25, after the results were seen, so it **changes no verdict**. It leaves out the 12 test patients whose record holds a known bad value (README, Dataset): 431 of 26,027 targets under each holdout. Under the random holdout 12 of them show one to the model and none is scored; under the block holdout 9 show one and 4 are scored. The gate record makes the same cut (`results/gate.json`). Its Δs are the "Without the 12 (post-hoc)" column of every contrast table above. From M8 on, the same cut is planned before the results, and reported beside every paired Δ (PROJECT_PLAN §3.5).

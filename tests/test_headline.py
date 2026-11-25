@@ -11,7 +11,7 @@ from conftest import CONFIG, ROOT
 from data.physionet import FEATURES
 from diffusion.headline import (CONTRASTS, INTERACTION, NULL_SEPARATION, T975, baseline_rows, contrast_values,
                                 contrasts, difference, gate_summary, headline, main, markdown, paired, post_hoc,
-                                verdict)
+                                signed, verdict)
 from diffusion.results import UNITS, sweep_plan
 from diffusion.score import holdout_masker
 from eval import masked_mae
@@ -271,7 +271,8 @@ def tiny_sweep(folder, dataset, seeds=("42", "43")):
     targets = {h: holdout_masker(PROTOCOL, (48, 35), h.split("/")[0], 0.1)[0](mask, ids)[1] for h in ("random/0.1", "block/0.1")}
     medians = {}
     def mae(regime, variant, holdout, seed):
-        rng = np.random.default_rng([int(seed), len(variant), len(regime), len(holdout)])
+        rng = np.random.default_rng([int(seed), list(CELLS["random"]).index(variant), list(CELLS).index(regime),
+                                     ("random/0.1", "block/0.1").index(holdout)])
         median = (values + rng.normal(0, 0.3, values.shape)).astype(np.float32)
         medians[(regime, variant, holdout, seed)] = median
         return masked_mae(median, values, targets[holdout])
@@ -293,21 +294,46 @@ def test_the_post_hoc_read_recomputed_by_leaving_the_patient_out(tmp_path):
     keep = np.array([0, 2, 3])                     # test patients 1, 3, 4, by position in the test split
     idx = dataset["test_idx"][keep]
     clean = copy.deepcopy(store)
+    features = list(dataset["features"])
     for holdout in ("random/0.1", "block/0.1"):
         _, target = holdout_masker(PROTOCOL, (48, 35), holdout.split("/")[0], 0.1)[0](dataset["mask"][idx], dataset["record_ids"][idx])
         for (regime, variant, h, seed), median in medians.items():
             if h == holdout:
                 expected = masked_mae(median[keep], dataset["values"][idx], target)
                 assert found["mae_without"][regime][variant][seed][holdout] == pytest.approx(expected, rel=1e-12)
-                clean["runs"][regime][variant][seed]["scores"][holdout]["mae"] = expected
-    pooled = [(regime, holdout, weights) for _, regime, holdout, weights, variable in CONTRASTS if variable is None]
-    assert [(row["regime"], row["holdout"]) for row in found["contrasts"]] == [(r, h) for r, h, _ in pooled]
-    for row, (regime, holdout, weights) in zip(found["contrasts"], pooled):
-        assert row["delta"] == paired(contrast_values(store, regime, holdout, weights))
-        expected = paired(contrast_values(clean, regime, holdout, weights))
+                scores = clean["runs"][regime][variant][seed]["scores"][holdout]
+                scores["mae"] = expected
+                for name in ("HR", "SysABP"):         # one variable's targets alone, from the kept patients
+                    j = features.index(name)
+                    scores["per_variable_mae"][name] = masked_mae(median[keep][..., j], dataset["values"][idx][..., j],
+                                                                  target[..., j])
+    assert [(row["regime"], row["holdout"], row["variable"]) for row in found["contrasts"]] == \
+           [(regime, holdout, variable) for _, regime, holdout, _, variable in CONTRASTS]
+    for row, (_, regime, holdout, weights, variable) in zip(found["contrasts"], CONTRASTS):
+        assert row["delta"] == paired(contrast_values(store, regime, holdout, weights, variable))
+        expected = paired(contrast_values(clean, regime, holdout, weights, variable))
         assert row["delta_without"]["mean"] == pytest.approx(expected["mean"], abs=1e-12)
         assert row["delta_without"]["se"] == pytest.approx(expected["se"], abs=1e-12)
         assert row["se_separated_without"] == (abs(expected["mean"]) > expected["se"])
+
+def test_each_contrast_row_shows_its_own_delta_without_the_patients(tmp_path):
+    """The post-hoc Δ sits on its own contrast's row, beside the Δ over all patients; the verdict is the same."""
+    dataset = tiny_dataset()
+    store, _ = tiny_sweep(tmp_path, dataset)
+    record = headline(store, make_manifest(store), *tiny_baselines(), PROTOCOL, REGIMES)
+    record["post_hoc"] = post_hoc(store, tmp_path, dataset, PROTOCOL)
+    md = markdown(record)
+    rows = [line for line in md.splitlines() if " | random/0.1 | " in line or " | block/0.1 | " in line]
+    assert len(rows) == len(CONTRASTS)
+    for line, row, hoc in zip(rows, record["contrasts"], record["post_hoc"]["contrasts"]):
+        d, w = row["delta"], hoc["delta_without"]
+        assert line.startswith(f"| {row['name']} | {row['regime']} | {row['holdout']} | ")
+        assert (f"| {signed(d['mean'])} ± {d['se']:.4f} | {signed(d['ci95'][0])} to {signed(d['ci95'][1])} | "
+                f"{signed(w['mean'])} ± {w['se']:.4f} ({signed(w['ci95'][0])} to {signed(w['ci95'][1])}) | "
+                f"{row['verdict']} |") in line
+    record["post_hoc"]["contrasts"].pop(3)
+    with pytest.raises(ValueError, match="does not cover the same contrasts"):
+        markdown(record)
 
 def test_a_median_that_is_not_the_scored_one_is_refused(tmp_path):
     dataset = tiny_dataset()
@@ -351,5 +377,6 @@ def test_main_without_the_post_hoc_read(tmp_path, capsys):
     main(["--skip-post-hoc", "--out", str(out), "--md", str(md)])
     written = json.loads(out.read_text())
     assert written["post_hoc"] is None and "Not computed (`--skip-post-hoc`)" in md.read_text()
+    assert "| Without the" not in md.read_text()          # no post-hoc column without the post-hoc read
     assert md.read_text() == markdown(written)
     assert "M8-4's attribution checks" in capsys.readouterr().out

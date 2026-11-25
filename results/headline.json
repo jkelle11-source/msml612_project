@@ -1648,6 +1648,7 @@
     "name": "Ext 1 − base",
     "regime": "random",
     "holdout": "random/0.1",
+    "variable": null,
     "delta": {
      "mean": -0.00018874475072810926,
      "se": 0.0018311692982472564,
@@ -1690,6 +1691,7 @@
     "name": "Ext 2 − base",
     "regime": "random",
     "holdout": "random/0.1",
+    "variable": null,
     "delta": {
      "mean": 0.0031094137612378446,
      "se": 0.0018663650750542933,
@@ -1732,6 +1734,7 @@
     "name": "Ext 1+2 − base",
     "regime": "random",
     "holdout": "random/0.1",
+    "variable": null,
     "delta": {
      "mean": -0.0011449686919918433,
      "se": 0.0012885169898072593,
@@ -1774,6 +1777,7 @@
     "name": "Ext 1 − base",
     "regime": "block-aware",
     "holdout": "block/0.1",
+    "variable": null,
     "delta": {
      "mean": 0.0006580198197160935,
      "se": 0.0008800704093107567,
@@ -1816,6 +1820,7 @@
     "name": "Ext 1 − base",
     "regime": "random",
     "holdout": "block/0.1",
+    "variable": null,
     "delta": {
      "mean": 0.0014853276420581873,
      "se": 0.0012277839474657166,
@@ -1858,6 +1863,7 @@
     "name": "Ext 2 − base",
     "regime": "random",
     "holdout": "block/0.1",
+    "variable": null,
     "delta": {
      "mean": 0.0012918936663165348,
      "se": 0.0009997076204303296,
@@ -1900,6 +1906,7 @@
     "name": "Ext 1+2 − base",
     "regime": "random",
     "holdout": "block/0.1",
+    "variable": null,
     "delta": {
      "mean": -0.0006213895345415609,
      "se": 0.0007534144587955997,
@@ -1942,6 +1949,7 @@
     "name": "Ext 1 − base",
     "regime": "block-aware",
     "holdout": "random/0.1",
+    "variable": null,
     "delta": {
      "mean": -0.000353155066102967,
      "se": 0.0014323135777086632,
@@ -1980,10 +1988,97 @@
     "ci_excludes_0_without": false
    },
    {
+    "group": "ext2_variables",
+    "name": "Ext 2 − base, HR",
+    "regime": "random",
+    "holdout": "random/0.1",
+    "variable": "HR",
+    "delta": {
+     "mean": 0.000802972138355057,
+     "se": 0.00046596968965750347,
+     "n_seeds": 5,
+     "ci95": [
+      -0.00049076707664607,
+      0.002096711353356184
+     ],
+     "t": 2.776445,
+     "per_seed": {
+      "42": 0.0005764030368083373,
+      "43": 0.002090773761439124,
+      "44": 0.00012509591996626157,
+      "45": 0.0016359381348530766,
+      "46": -0.0004133501612915147
+     }
+    },
+    "delta_without": {
+     "mean": 0.0008332223815298301,
+     "se": 0.0004316031850065016,
+     "n_seeds": 5,
+     "ci95": [
+      -0.0003651001234655463,
+      0.0020315448865252063
+     ],
+     "t": 2.776445,
+     "per_seed": {
+      "42": 0.0006857289630521624,
+      "43": 0.0019236215008280322,
+      "44": 0.000320042435695167,
+      "45": 0.001657401338911374,
+      "46": -0.0004206823308375851
+     }
+    },
+    "se_separated_without": true,
+    "ci_excludes_0_without": false
+   },
+   {
+    "group": "ext2_variables",
+    "name": "Ext 2 − base, SysABP",
+    "regime": "random",
+    "holdout": "random/0.1",
+    "variable": "SysABP",
+    "delta": {
+     "mean": 0.00011044539210053884,
+     "se": 0.0005484573126543786,
+     "n_seeds": 5,
+     "ci95": [
+      -0.0014123161713321473,
+      0.0016332069555332251
+     ],
+     "t": 2.776445,
+     "per_seed": {
+      "42": 0.0003675046509695745,
+      "43": 0.0019459274773284407,
+      "44": -0.0007576909127989251,
+      "45": -0.0012358518197647383,
+      "46": 0.00023233756476834233
+     }
+    },
+    "delta_without": {
+     "mean": 1.247321856139294e-05,
+     "se": 0.0004739742075406757,
+     "n_seeds": 5,
+     "ci95": [
+      -0.0013034901000938783,
+      0.0013284365372166643
+     ],
+     "t": 2.776445,
+     "per_seed": {
+      "42": 0.00035446349284204426,
+      "43": 0.0015982785762428675,
+      "44": -0.0006996378952715265,
+      "45": -0.0011500078174871697,
+      "46": -4.07302635192508e-05
+     }
+    },
+    "se_separated_without": false,
+    "ci_excludes_0_without": false
+   },
+   {
     "group": "interaction",
     "name": "Ext 1+2 − Ext 1",
     "regime": "random",
     "holdout": "random/0.1",
+    "variable": null,
     "delta": {
      "mean": -0.0009562239412637341,
      "se": 0.0007094959350798336,
@@ -2026,6 +2121,7 @@
     "name": "Ext 1+2 − Ext 2",
     "regime": "random",
     "holdout": "random/0.1",
+    "variable": null,
     "delta": {
      "mean": -0.004254382453229688,
      "se": 0.002846793452853203,
@@ -2068,6 +2164,7 @@
     "name": "(Ext 1+2 − Ext 2) − (Ext 1 − base)",
     "regime": "random",
     "holdout": "random/0.1",
+    "variable": null,
     "delta": {
      "mean": -0.004065637702501579,
      "se": 0.0014370931738997338,
@@ -2110,6 +2207,7 @@
     "name": "Ext 1+2 − Ext 1",
     "regime": "random",
     "holdout": "block/0.1",
+    "variable": null,
     "delta": {
      "mean": -0.0021067171765997484,
      "se": 0.0007218438023692238,
@@ -2152,6 +2250,7 @@
     "name": "Ext 1+2 − Ext 2",
     "regime": "random",
     "holdout": "block/0.1",
+    "variable": null,
     "delta": {
      "mean": -0.0019132832008580958,
      "se": 0.0014113619398197453,
@@ -2194,6 +2293,7 @@
     "name": "(Ext 1+2 − Ext 2) − (Ext 1 − base)",
     "regime": "random",
     "holdout": "block/0.1",
+    "variable": null,
     "delta": {
      "mean": -0.003398610842916283,
      "se": 0.0006144941125453436,
