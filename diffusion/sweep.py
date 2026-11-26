@@ -160,11 +160,13 @@ def check_pairing(out, config, regime, seed):
         raise RuntimeError("the sweep's runs are not paired: " + "; ".join(found))
 
 def sweep(config, dataset, out, tag, device, todo, holdouts, epochs=None, paired=True, wandb_mode=None,
-          config_path=CONFIG_PATH, log=print):
+          config_path=CONFIG_PATH, tags=(), log=print):
     """Train and score every cell in ``todo`` (``cells()``) in ``out``; returns their run folders.
 
     ``holdouts`` are scored at ``protocol.eval_holdout_fraction``, under ``config_path``'s frozen
-    protocol. See the module docstring for what is done, skipped, checked and refused.
+    protocol. ``tags`` are wandb tags each run gets besides ``tag`` (M8-1's study and value), which
+    ``<out>/sweep.json`` does not record. See the module docstring for what is done, skipped, checked
+    and refused.
     """
     if paired:                                                  # both before anything is written
         require_paired_gpu(config["protocol"], device)
@@ -197,7 +199,7 @@ def sweep(config, dataset, out, tag, device, todo, holdouts, epochs=None, paired
                                  "the cell again")
             indented("trained")
         else:
-            run(cell, dataset, seed, device, run_dir, log=indented, wandb_mode=wandb_mode, tags=[tag],
+            run(cell, dataset, seed, device, run_dir, log=indented, wandb_mode=wandb_mode, tags=[tag, *tags],
                 paired=paired, resume=True)
         check_pairing(out, config, regime, seed)
         for holdout in holdouts:
