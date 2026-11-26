@@ -18,19 +18,23 @@ Writes ``results/ablation.json`` (every number, and each ablation run's manifest
   (``<ablation>/rerun-check``: the sweep's ext1+2 at seed 42 trained again from that commit)
   reproduces the sweep's run exactly (``diffusion.sweep.reproduces``). Only then do the sweep's runs,
   from the sweep's own commit, stand for the studies' third value;
-- each run's config is the sweep's run's at its variant and seed but for the study's setting (how a
-  run validates aside: it does not touch training);
+- each run's config is the sweep's run's at its regime, variant and seed but for the study's setting
+  (how a run validates aside: it does not touch training);
 - each run's pairing hashes are the sweep's run's, but for those its study moves on purpose
   (``MOVES``): ``d_model`` resizes every weight, and the encoder's depth changes that encoder's weights
   alone. T changes none: its runs make the sweep's runs' very draws, the timesteps they give aside.
 
-One factor at a time: each study keeps every other setting at the sweep's, so T is swept at the
-sweep's ``d_model`` (64) alone, the plan's reduced design (§5). For each study, variant and holdout,
-each value's test MAE at 10% (mean ± SE over seeds 42-44), and
-each value but the sweep's against the sweep's: paired Δ ± SE, its 95% CI (t at 2 df, ±4.303 SE) and
-its verdict by the ±1 SE bar, as M7-2's (``diffusion.headline``). Beside each Δ, the same Δ without
-the test patients whose record holds a known bad value (``headline.bad_value_patients``): planned
-before any M8 run (PROJECT_PLAN §3.5, Nov 25), a secondary result that changes no verdict.
+Each run is set against the sweep's run of its own cell (regime, variant and seed): ``d_model`` and T
+on Ext 1+2 in the random regime, the encoder's depth on Ext 1+2 random and on Ext 1 block-aware, its
+primary regime (PROJECT_PLAN §3.1, §4.1; ``diffusion.ablation.STUDIES``). One factor at a time: each
+study keeps every other setting at the sweep's, so T is swept at the sweep's ``d_model`` (64) alone,
+the plan's reduced design (§5), and with upstream's beta range, so the T table says how many of each
+chain's steps sit near pure noise (``near_pure_noise``). For each study, cell and holdout, each value's
+test MAE at 10% (mean ± SE over seeds 42-44), and each value but the sweep's against the sweep's:
+paired Δ ± SE, its 95% CI (t at 2 df, ±4.303 SE) and its verdict by the ±1 SE bar, as M7-2's
+(``diffusion.headline``). Beside each Δ, the same Δ without the test patients whose record holds a
+known bad value (``headline.bad_value_patients``): planned before any M8 run (PROJECT_PLAN §3.5,
+Nov 25), a secondary result that changes no verdict, labelled SE-separated where it clears ±1 SE.
 """
 
 import argparse
@@ -41,15 +45,16 @@ import numpy as np
 import yaml
 
 from data.physionet import load_dataset
-from diffusion.ablation import SEEDS, STUDIES, setting
+from diffusion.ablation import SEEDS, STUDIES, setting, study_cells, study_config
 from diffusion.gate import flatten
 from diffusion.headline import bad_value_patients, mean_and_se, ms, paired, signed, verdict
 from diffusion.manifest import entry, shown
 from diffusion.results import RESULTS, UNITS
-from diffusion.run import CONFIG_PATH, DATASET_PATH
+from diffusion.run import CONFIG_PATH, DATASET_PATH, with_variant
 from diffusion.score import holdout_masker, scores_name
 from diffusion.sweep import final_scoring, reproduces
 from eval import masked_mae
+from models.build import build_model
 
 # The pairing hashes each study changes on purpose; every other one must be the sweep's run's. T changes
 # none: the diffusion hash is of the stream's generator state after each step, and drawing a timestep
@@ -61,6 +66,14 @@ LABELS = {"d_model": "d_model", "steps": "T", "encoder_layers": "encoder layers"
 RERUN = "ext1+2_random_seed42"          # the sweep's run the rerun check trains again (README, The ablation)
 # P(|Δ| > SE) for a contrast with no true effect at 3 seeds: P(|T| > 1), T Student's t with 2 df
 NULL_SEPARATION = 1 - 3 ** -0.5
+# The data's signal, sqrt(alpha_bar_t), under which a diffusion step counts as near pure noise (README, The ablation)
+NEAR_PURE_NOISE = 0.05
+
+def near_pure_noise(config, steps):
+    """How many of a ``steps``-step chain's steps leave the data's signal under ``NEAR_PURE_NOISE``, by the
+    reused model's own schedule at ``config``'s beta range (the T study keeps it, settled at the review of #64)."""
+    model = build_model(with_variant(study_config(config, "steps", steps), "base"), "cpu")
+    return int((np.sqrt(model.alpha) < NEAR_PURE_NOISE).sum())
 
 def started(folder, problems=None):
     """The tag and commit a folder of the driver's was started with (``sweep.json``); with ``problems``,
@@ -92,12 +105,12 @@ def config_differences(config, sweeps):
     return sorted(key for key in ours.keys() | theirs.keys()
                   if not key.startswith("validation.") and ours.get(key) != theirs.get(key))
 
-def read(run_dir, variant, seed, holdouts, protocol, commit, data, problems):
+def read(run_dir, regime, variant, seed, holdouts, protocol, commit, data, problems):
     """One run's manifest entry, pairing hashes and MAE with and without the bad-value patients under each
     of ``holdouts``; None, with ``problems`` extended, if it may not be used."""
     fraction = protocol["eval_holdout_fraction"]
     try:
-        found = entry(run_dir, "random", variant, seed, protocol, commit, [f"{h}/{fraction}" for h in holdouts])
+        found = entry(run_dir, regime, variant, seed, protocol, commit, [f"{h}/{fraction}" for h in holdouts])
     except ValueError as error:
         problems.append(str(error))
         return None
@@ -134,13 +147,13 @@ def rerun_problems(rerun_dir, sweep_dir, commit):
                      "Train the sweep's value in each study rather than reuse the sweep's runs")
     return found
 
-def contrast(study, variant, holdout, value, own, mae, without):
+def contrast(study, regime, variant, holdout, value, own, mae, without):
     """One value against the sweep's: paired Δ ± SE, CI and verdict, and the same without the bad-value patients."""
     delta = paired({seed: mae[value][seed] - mae[own][seed] for seed in mae[own]})
     rest = paired({seed: without[value][seed] - without[own][seed] for seed in without[own]})
     names = {"value": f"{LABELS[study]} {value}", "own": f"{LABELS[study]} {own}"}
     excludes_0 = lambda d: d["ci95"][0] > 0 or d["ci95"][1] < 0
-    return {"variant": variant, "holdout": holdout, "value": value, "against": own, "delta": delta,
+    return {"regime": regime, "variant": variant, "holdout": holdout, "value": value, "against": own, "delta": delta,
             "se_separated": abs(delta["mean"]) > delta["se"], "ci_excludes_0": excludes_0(delta),
             "verdict": verdict(delta, {"value": 1, "own": -1}, "ablation", names),
             "delta_without": rest, "se_separated_without": abs(rest["mean"]) > rest["se"],
@@ -184,22 +197,21 @@ def table(ablation_dirs, sweep_dir, rerun_dir, dataset, config, manifest, studie
             else:
                 problems.append(f"no {study}_{value} folder in {[shown(d) for d in ablation_dirs]}")
                 continue
-            for variant in plan["variants"]:
-                for seed in SEEDS:
-                    run = read(folder / f"{variant}_random_seed{seed}", variant, seed, plan["holdouts"], protocol, at,
-                               data, problems)
-                    if run is not None:
-                        runs[(study, value, variant, seed)] = run
+            for regime, variant, seed in study_cells(config, study):
+                run = read(folder / f"{variant}_{regime}_seed{seed}", regime, variant, seed, plan["holdouts"], protocol,
+                           at, data, problems)
+                if run is not None:
+                    runs[(study, value, regime, variant, seed)] = run
 
-    for (study, value, variant, seed), run in runs.items():
+    for (study, value, regime, variant, seed), run in runs.items():
         own, key = setting(config, study), ".".join(STUDIES[study]["setting"])
         if value == own:
-            listed = manifest["runs"]["random"].get(variant, {}).get(str(seed), {}).get("weights", {}).get("sha256")
+            listed = manifest["runs"].get(regime, {}).get(variant, {}).get(str(seed), {}).get("weights", {}).get("sha256")
             if run["weights"]["sha256"] != listed:
                 problems.append(f"{shown(sweep_dir)}/{run['run']} is not the sweep's run its manifest records: "
                                 "its model.pt is other weights")
             continue
-        sweeps = runs.get((study, own, variant, seed))
+        sweeps = runs.get((study, own, regime, variant, seed))
         if sweeps is None:
             continue
         differ = config_differences(run["config"], sweeps["config"])
@@ -214,7 +226,8 @@ def table(ablation_dirs, sweep_dir, rerun_dir, dataset, config, manifest, studie
     if problems:
         raise ValueError(f"{len(problems)} problem(s):\n" + "\n".join(problems))
 
-    record = {"note": "M8-1's ablation: each study's values against the sweep's, at seeds 42-44 in the random regime",
+    record = {"note": "M8-1's ablation: each study's values against the sweep's, at seeds 42-44, each run against the "
+                      "sweep's run of its own cell (regime, variant and seed)",
               "units": UNITS, "gpu": protocol["paired_gpu"], "seeds": list(SEEDS),
               "commits": {"ablation": commit, "sweep": sweeps_commit},
               "rerun_check": {"run": RERUN, "folder": shown(rerun_dir), "reproduces": True},
@@ -225,25 +238,35 @@ def table(ablation_dirs, sweep_dir, rerun_dir, dataset, config, manifest, studie
     for study in studies:
         plan, own = STUDIES[study], setting(config, study)
         cells, contrasts = {}, []
-        for variant in plan["variants"]:
-            for holdout in (f"{h}/{fraction}" for h in plan["holdouts"]):
-                mae, without = ({value: {str(seed): runs[(study, value, variant, seed)][field][holdout] for seed in SEEDS}
-                                 for value in plan["values"]} for field in ("mae", "mae_without"))
-                cells.setdefault(variant, {})[holdout] = {
-                    str(value): {"mae": mean_and_se(list(mae[value].values())), "per_seed": mae[value],
-                                 "mae_without": mean_and_se(list(without[value].values()))}
-                    for value in plan["values"]}
-                contrasts += [contrast(study, variant, holdout, value, own, mae, without)
-                              for value in plan["values"] if value != own]
+        for regime, variants in plan["runs"].items():
+            for variant in variants:
+                for holdout in (f"{h}/{fraction}" for h in plan["holdouts"]):
+                    mae, without = ({value: {str(seed): runs[(study, value, regime, variant, seed)][field][holdout]
+                                             for seed in SEEDS} for value in plan["values"]}
+                                    for field in ("mae", "mae_without"))
+                    cells.setdefault(regime, {}).setdefault(variant, {})[holdout] = {
+                        str(value): {"mae": mean_and_se(list(mae[value].values())), "per_seed": mae[value],
+                                     "mae_without": mean_and_se(list(without[value].values()))}
+                        for value in plan["values"]}
+                    contrasts += [contrast(study, regime, variant, holdout, value, own, mae, without)
+                                  for value in plan["values"] if value != own]
         record["studies"][study] = {"setting": ".".join(plan["setting"]), "sweep_value": own,
-                                    "values": list(plan["values"]), "variants": list(plan["variants"]),
+                                    "values": list(plan["values"]),
+                                    "runs": {regime: list(variants) for regime, variants in plan["runs"].items()},
                                     "cells": cells, "contrasts": contrasts}
-        record["runs"][study] = {str(value): {variant: {str(seed): (
-            {"run": f"{variant}_random_seed{seed}", "manifest": "results/sweep_manifest.json"} if value == own else
-            {**{k: v for k, v in runs[(study, value, variant, seed)].items() if k not in ("pairing", "mae", "mae_without")},
+        if study == "steps":
+            record["studies"][study]["near_pure_noise"] = {
+                "signal_below": NEAR_PURE_NOISE, "beta": [config["diffusion"]["beta_start"], config["diffusion"]["beta_end"]],
+                "schedule": config["diffusion"]["schedule"],
+                "steps": {str(value): near_pure_noise(config, value) for value in plan["values"]}}
+        record["runs"][study] = {str(value): {regime: {variant: {str(seed): (
+            {"run": f"{variant}_{regime}_seed{seed}", "manifest": "results/sweep_manifest.json"} if value == own else
+            {**{k: v for k, v in runs[(study, value, regime, variant, seed)].items()
+                if k not in ("pairing", "mae", "mae_without")},
              "rerun": f"git checkout {commit} && uv run python -m diffusion.ablation --study {study} --tag rerun "
                       "--out <another folder>   (trains the study's cells, this one among them)"})
-            for seed in SEEDS} for variant in plan["variants"]} for value in plan["values"]}
+            for seed in SEEDS} for variant in variants} for regime, variants in plan["runs"].items()}
+            for value in plan["values"]}
     return record
 
 def delta_text(stats):
@@ -253,41 +276,62 @@ def delta_text(stats):
 def ci(stats):
     return f"{signed(stats['ci95'][0])} to {signed(stats['ci95'][1])}"
 
+def separated(row, suffix=""):
+    """``SE-separated`` or ``no significant effect``: a Δ's verdict by the ±1 SE bar, its 95% CI aside."""
+    return "SE-separated" if row[f"se_separated{suffix}"] else "no significant effect"
+
 def markdown(record):
     """``results/ablation.md``: one table per study."""
+    trained = "; ".join(f"{LABELS[study]} on " + " and ".join(f"{variant} {regime}" for regime, variants in found["runs"].items()
+                                                              for variant in variants)
+                        for study, found in record["studies"].items())
+    depth = (" Ext 1's encoder depth is studied block-aware, its primary regime (PROJECT_PLAN §3.1, §4.1)."
+             if "encoder_layers" in record["studies"] else "")
     lines = ["# The ablation (M8-1)", "",
              "Generated by `uv run python -m diffusion.ablation_table` from the ablation's and the sweep's run folders; "
              f"do not edit by hand. Test MAE at 10%, in {record['units']}, at seeds "
-             f"{', '.join(map(str, record['seeds']))} in the random regime, every run trained and scored on one "
-             f"{record['gpu']}. A study's value that is the sweep's is the sweep's own runs (commit "
-             f"{record['commits']['sweep'][:7]}); the others were trained from commit {record['commits']['ablation'][:7]}, "
-             f"and the rerun check ({record['rerun_check']['run']} trained again from it) reproduces the sweep's run exactly. "
-             "One factor at a time: each study keeps every other setting at the sweep's, so T is swept at the "
-             "sweep's d_model (64) alone, the plan's reduced design (§5).",
+             f"{', '.join(map(str, record['seeds']))}, every run trained and scored on one {record['gpu']}: {trained}. "
+             f"Each run is set against the sweep's run of its own cell (regime, variant and seed).{depth} A study's value "
+             f"that is the sweep's is the sweep's own runs (commit {record['commits']['sweep'][:7]}); the others were trained from commit "
+             f"{record['commits']['ablation'][:7]}, and the rerun check ({record['rerun_check']['run']} trained again from "
+             "it) reproduces the sweep's run exactly. One factor at a time: each study keeps every other setting at the "
+             "sweep's, so T is swept at the sweep's d_model (64) alone, the plan's reduced design (§5).",
              "",
              "A Δ is a per-seed difference of MAEs, the value's minus the sweep's value's; negative is a gain. The verdict is "
              "the ±1 SE error bar, as M7-2's: \"SE-separated\" if Δ ± SE clears 0, else \"no significant effect\". The 95% "
              f"CI (t at 2 df) changes no verdict. At 3 seeds a contrast with no true effect clears ±1 SE "
              f"{NULL_SEPARATION:.0%} of the time, and nothing here corrects for the number of contrasts.",
              "",
-             f"**Without the bad-value patients** is the same Δ leaving out the {len(record['excluded']['record_ids'])} "
-             "test patients whose record holds a known bad value: planned before any M8 run (PROJECT_PLAN §3.5), so a "
-             "secondary result here, and it changes no verdict."]
+             f"**Without the bad-value patients** is the same Δ ± SE, with its 95% CI, leaving out the "
+             f"{len(record['excluded']['record_ids'])} test patients whose record holds a known bad value. It was planned "
+             "before any M8 run (PROJECT_PLAN §3.5), so it is a secondary result, labelled SE-separated where it clears "
+             "±1 SE, and it changes no verdict."]
     for study, found in record["studies"].items():
-        lines += ["", f"## {LABELS[study]} (`{found['setting']}`), the sweep's value {found['sweep_value']}", "",
-                  "| Variant | Holdout | Value | MAE ± SE | Δ vs the sweep's ± SE | 95% CI | Without the bad-value patients | Verdict |",
-                  "| --- | --- | --- | --- | --- | --- | --- | --- |"]
-        by_cell = {(row["variant"], row["holdout"], row["value"]): row for row in found["contrasts"]}
-        for variant, holdouts in found["cells"].items():
-            for holdout, values in holdouts.items():
-                for value, cell in values.items():
-                    row = by_cell.get((variant, holdout, int(value)))
-                    if row is None:
-                        lines.append(f"| {variant} | {holdout} | {value} (the sweep's) | {ms(cell['mae'])} | — | — | — | — |")
-                    else:
-                        lines.append(f"| {variant} | {holdout} | {value} | {ms(cell['mae'])} | {delta_text(row['delta'])} | "
-                                     f"{ci(row['delta'])} | {delta_text(row['delta_without'])} ({ci(row['delta_without'])}) | "
-                                     f"{row['verdict']} |")
+        lines += ["", f"## {LABELS[study]} (`{found['setting']}`), the sweep's value {found['sweep_value']}", ""]
+        if "near_pure_noise" in found:
+            noise = found["near_pure_noise"]
+            counts = ", ".join(f"{n} of {steps}" for steps, n in noise["steps"].items())
+            lines += [f"T moves only the number of steps: the schedule keeps upstream's {noise['schedule']} β range, "
+                      f"{noise['beta'][0]:g} to {noise['beta'][1]:g}, so a longer chain spends more of its steps near pure "
+                      f"noise, where the data's signal √ᾱ_t is under {noise['signal_below']:g}: {counts} steps. Training "
+                      "draws its timesteps uniformly, so a T result mixes finer steps with a shift of training toward pure "
+                      "noise (README, The ablation; PROJECT_PLAN §8, Limitations).", ""]
+        lines += ["| Variant | Regime | Holdout | Value | MAE ± SE | Δ vs the sweep's ± SE | 95% CI "
+                  "| Without the bad-value patients (planned) | Verdict |",
+                  "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+        by_cell = {(row["regime"], row["variant"], row["holdout"], row["value"]): row for row in found["contrasts"]}
+        for regime, variants in found["cells"].items():
+            for variant, holdouts in variants.items():
+                for holdout, values in holdouts.items():
+                    for value, cell in values.items():
+                        row = by_cell.get((regime, variant, holdout, int(value)))
+                        start = f"| {variant} | {regime} | {holdout} |"
+                        if row is None:
+                            lines.append(f"{start} {value} (the sweep's) | {ms(cell['mae'])} | — | — | — | — |")
+                        else:
+                            lines.append(f"{start} {value} | {ms(cell['mae'])} | {delta_text(row['delta'])} | "
+                                         f"{ci(row['delta'])} | {delta_text(row['delta_without'])} "
+                                         f"({ci(row['delta_without'])}), {separated(row, '_without')} | {row['verdict']} |")
     return "\n".join(lines) + "\n"
 
 def main(argv=None):
