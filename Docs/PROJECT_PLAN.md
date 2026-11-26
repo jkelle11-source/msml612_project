@@ -175,7 +175,7 @@ Post-hoc, no retraining. Two key decisions ensure its validity:
 
 Report at $1-\alpha = 0.90$: empirical coverage (target ≥ 90%), mean interval width, and coverage stratified by patient missingness rate.
 
-**Gate:** attempt only if the combined model (Ext 1+2) is stable with test MAE ≤ ~0.24 @10% by **end of Week 8 (Nov 25)**. Otherwise cut cleanly — it does not weaken the core project — and redirect that time to per-variable analysis and uncertainty fan plots.
+**Gate:** attempt only if the combined model (Ext 1+2) is stable with test MAE ≤ ~0.24 @10% by **end of Week 8 (Nov 25)**. Otherwise cut cleanly — it does not weaken the core project — and redirect that time to per-variable analysis and uncertainty fan plots. **Passed (`M8-3`, decided Nov 26 by all three): go.** Ext 1+2's test MAE @10% is 0.2186 ± 0.0005 over seeds 42–46, every seed under 0.24 (largest 0.2200), every run healthy over its full 200 epochs; `results/conformal_gate.md` holds the evidence and `M9-3`'s Week-9 plan.
 
 ---
 
@@ -352,7 +352,7 @@ Proposal (Oct 8) · Interim Report (Oct 29) · Presentation (Dec 2) · Final Rep
 | Masking choice confounds the delta | Medium | Frozen holdouts (`EvalMasker`, `BlockEvalMasker`); `TrainMasker` randomized (§3.1). |
 | Ablation labor under-budgeted | Medium | Restructured to ~35–40 runs; drop to 3 seeds/cell if tight and state it; runtime hours are a real line item. |
 | Deliverable milestones missed | Medium | Proposal/interim/slides are explicit tasks with owners and dates in §5. |
-| Conformal not reached | Medium | Explicit stretch; gated at end of Week 8; cut cleanly. |
+| Conformal not reached | Medium | Explicit stretch; gated at end of Week 8; cut cleanly. **Gate passed (`M8-3`, Nov 26): go; `M9-3` starts after `M8-2`'s plot, aiming at the presentation and, in any case, the final report.** |
 | PhysioNet DUA wall | Low | Legacy archive Set A (open CSVs); if a DUA appears it's sign-and-download, not CITI. Register day 1, all three. |
 | TSLO misaligned after masking | Medium | Week-5 alignment check; unit test $\delta$ against observations. **Tested in M5-1:** $\delta$ is recomputed from the conditioning mask inside the model, so a held-out target counts as unobserved on the training, validation and sampler paths. |
 

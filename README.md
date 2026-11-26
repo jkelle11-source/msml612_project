@@ -61,6 +61,7 @@ results/       # recorded results (baselines.json).                         [M2-
                #   The sweep's runs (sweep.json, sweep_manifest.json).      [M7-1]
                #   Trajectory figure and its read (trajectories/).          [M7-3]
                #   The headline table (headline.json, headline.md).         [M7-2]
+               #   The conformal gate's decision (conformal_gate.md).       [M8-3]
 configs/       # frozen protocol config (config.yaml).
 Docs/          # project plan + shared notes (e.g. CSDI_Objective.md).
 Milestones/    # per-milestone GitHub issue breakdown (M00-M10).
@@ -1775,6 +1776,16 @@ Thirteen deliberately broken versions of `diffusion/ablation_table.py` each fail
 review of #65, and the breaks it added (each cell read in the random regime, the manifest read in the
 random regime, the second read's label dropped or inverted, the steps near pure noise not counted)
 each fail one too.
+
+## The conformal gate (M8-3)
+
+PROJECT_PLAN §4.3 attempts the conformal stretch only if the combined model is stable with test MAE
+≤ ~0.24 @10% by the end of Week 8. **Decided Nov 26, all three agreeing: go.** Ext 1+2's test MAE @10%
+in the sweep is 0.2186 ± 0.0005 over seeds 42–46, every seed under 0.24 (largest 0.2200), and all
+five runs trained the full 200 epochs and passed their 500-step health checks.
+[`results/conformal_gate.md`](results/conformal_gate.md) records the evidence and the Week-9 plan for
+`M9-3`: K = 50 draws from Ext 1+2's final weights, studentized scores aggregated per patient, a
+patient-level calibration/test split, 90% intervals, started after `M8-2`'s plot.
 
 ## Ext 1's attribution checks (M6-3)
 
