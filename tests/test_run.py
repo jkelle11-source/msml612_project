@@ -134,6 +134,19 @@ def test_validation_runs_every_n_epochs_and_on_the_last(small_dataset, tmp_path)
     curve = json.loads((tmp_path / "curve.json").read_text())
     assert ["val_mae" in row for row in curve] == [False, True, True]
 
+def test_how_often_a_run_validates_leaves_its_training_unchanged(small_dataset, tmp_path):
+    # Every stream is reseeded at each epoch's start, so validation's draws never reach training: M8-1's
+    # ablation validates every 50 epochs and is compared with the sweep's runs, validated every 10.
+    for every in (1, 3):
+        config = tiny_config(epochs=3)
+        config["validation"]["every_n_epochs"] = every
+        run(with_variant(config, "ext1+2"), small_dataset, 42, "cpu", tmp_path / str(every), log=quiet)
+    assert (tmp_path / "1" / "history.jsonl").read_text() == (tmp_path / "3" / "history.jsonl").read_text()
+    weights = [torch.load(tmp_path / every / "model.pt") for every in ("1", "3")]
+    assert weights[0].keys() == weights[1].keys() and all(torch.equal(weights[0][k], weights[1][k]) for k in weights[0])
+    pairings = [json.loads((tmp_path / every / "summary.json").read_text())["pairing"] for every in ("1", "3")]
+    assert pairings[0] == pairings[1]
+
 def test_the_command_line_reruns_a_run_exactly_from_its_saved_config(small_dataset, tmp_path):
     save_dataset(small_dataset, tmp_path / "data.npz")
     (tmp_path / "config.yaml").write_text(yaml.safe_dump(tiny_config(epochs=5)))

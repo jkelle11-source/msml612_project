@@ -153,6 +153,12 @@ model:
   # all-ones mask in place of the conditioning mask, so it keeps every weight
   # and loses only the mask information. Only with use_mask_embedding.
   mask_embedding_blind: false # (--mask_embedding_blind; the variant ext1blind)
+  # Extension 1's encoder depth (M8-1): MissingnessEncoder's layer pairs, one
+  # temporal and one feature transformer layer each. 2 is the class's default,
+  # the depth every run before M8-1 was built with; a config saved before M8-1
+  # has no such key and builds 2. Only with use_mask_embedding. M8-1's
+  # encoder-layers study varies it (1 / 2 / 3, diffusion.ablation).
+  mask_encoder_layers: 2
 
   # Extension 2's Time2Vec size d_k (PROJECT_PLAN §4.2; settled in M5-2): one
   # linear feature plus d_k - 1 sine features of TSLO δ, projected to

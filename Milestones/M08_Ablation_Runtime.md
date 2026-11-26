@@ -47,8 +47,8 @@
 
 **Deliverables**
 - `d_model ∈ {64, 128, 256}` sweep on the best variant, 3 seeds, `n_heads = 8` fixed (§3.6).
-- Diffusion-steps `T ∈ {50, 100, 200}` sweep (each a full retrain), best variant, 3 seeds — or at a single `d_model` if compute is tight, with that noted.
-- Mask-encoder layers `∈ {1, 2, 3}` for the two encoder-bearing variants, 3 seeds, reported under the block holdout (`BlockEvalMasker`, Ext 1's primary regime) as well as the random one.
+- Diffusion-steps `T ∈ {50, 100, 200}` sweep (each a full retrain), best variant, 3 seeds — or at a single `d_model` if compute is tight, with that noted. Only the number of steps moves: the schedule keeps upstream's β range (quad, 1e-4 to 0.5), so a longer chain spends more of its steps near pure noise, and the README and the report say so (§8, Limitations; settled at the review of #64).
+- Mask-encoder layers `∈ {1, 2, 3}` for the two encoder-bearing variants, 3 seeds, each reported under the block holdout (`BlockEvalMasker`) as well as the random one. Each trains in its own regime: Ext 1+2 random, the only one it is trained in, and Ext 1 block-aware, its primary regime (§3.1, §4.1), since a random-trained model's block score only checks how it carries over to blocks (settled at the review of #64).
 - Before that study, a config key for the mask encoder's layer count: `models.build_model` builds `MissingnessEncoder` with its default `n_layers = 2` (layer pairs, one temporal and one feature layer each), so nothing yet varies it. Default it to 2 so earlier runs are unchanged, and have it reach each run's saved config (README, Ext 1's hand-off note, `M5-3`).
 - Results folded into the results store with paired-Δ ± SE; null cells labeled.
 - Beside each paired Δ, the same Δ without the test patients whose record holds a known bad value (`diffusion.headline.bad_value_patients`; added Nov 25, §3.5, before any M8 run). It is planned, not post-hoc, and the verdict stays on all patients. It needs each run's saved median (`median_test_<holdout>_0.1.npy`), as M7-2's did.

@@ -58,6 +58,25 @@ def test_every_toggle_combination_builds(config):
         model = build_model(config, "cpu")
         assert (model.mask_encoder is not None) == ext1 and (model.time_encoder is not None) == ext2
 
+def test_ext1s_encoder_depth_comes_from_model_mask_encoder_layers(config):
+    config["model"]["use_mask_embedding"] = True
+    for depth in (1, 2, 3):
+        config["model"]["mask_encoder_layers"] = depth
+        encoder = build_model(config, "cpu").mask_encoder
+        assert len(encoder.temporal) == len(encoder.feature) == depth
+
+def test_a_config_saved_before_the_depth_key_builds_the_depth_it_trained_with(config):
+    # The sweep's runs (M7-1) are scored and rebuilt from their saved config.yaml, which has no such key.
+    config["model"].update(use_mask_embedding=True, use_time_encoding=True)
+    old = copy.deepcopy(config)
+    del old["model"]["mask_encoder_layers"]
+    torch.manual_seed(0)
+    before = build_model(old, "cpu").state_dict()
+    torch.manual_seed(0)
+    now = build_model(config, "cpu").state_dict()
+    assert config["model"]["mask_encoder_layers"] == 2
+    assert before.keys() == now.keys() and all(torch.equal(before[key], now[key]) for key in now)
+
 def test_initial_weights_follow_the_callers_seed(config):
     # Seeding belongs to RunStreams.seed_model_init(), called right before build_model;
     # build_model must not seed anything itself.
