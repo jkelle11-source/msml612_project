@@ -72,8 +72,12 @@ def rerun_command(commit, regime, variant, seed, run, extra=()):
                     f"--holdout {holdout} --fraction {fraction} --paired")
     return command
 
-def entry(run_dir, regime, variant, seed, protocol, commit):
-    """One run's manifest entry, read from its folder; raises ``ValueError`` listing everything wrong with it."""
+def entry(run_dir, regime, variant, seed, protocol, commit, holdouts=HEADLINE):
+    """One run's manifest entry, read from its folder; raises ``ValueError`` listing everything wrong with it.
+
+    ``holdouts`` are the scorings it must have (``holdout/fraction``): the headline two, or fewer for an
+    M8-1 ablation run, scored on the random holdout alone in two of its studies.
+    """
     run_dir = Path(run_dir)
     needed = ("summary.json", "config.yaml", "curve.json", "model.pt")
     absent = [name for name in needed if not (run_dir / name).exists()]
@@ -113,7 +117,7 @@ def entry(run_dir, regime, variant, seed, protocol, commit):
             problems.append(f"{name}: scored other weights than model.pt")
         gpu["scoring"][name] = scoring.get("gpu")
         seconds["scoring"][name] = scoring["seconds"]
-    for name in HEADLINE:
+    for name in holdouts:
         if name not in gpu["scoring"]:
             problems.append(f"no {name} scoring")
     for where, name in [("training", gpu["train"])] + [(f"{h} scoring", g) for h, g in gpu["scoring"].items()]:

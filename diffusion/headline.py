@@ -165,10 +165,11 @@ def signed(x, digits=4):
     text = f"{x:+.{digits}f}"
     return f"{0:.{digits}f}" if float(text) == 0 else text.replace("-", "−")
 
-def verdict(delta, weights, group):
+def verdict(delta, weights, group, names=NAMES):
     """The written verdict: SE-separated (±1 SE) or "no significant effect", and what the 95% CI says.
 
     Unless the CI excludes 0, it also says the largest gain the CI allows (a gain lowers MAE: −low).
+    ``names`` says what each key of ``weights`` is called (M8-1's ablation names values, not variants).
     """
     mean, se, (low, high) = delta["mean"], delta["se"], delta["ci95"]
     prefix = "Exploratory. " if group == "interaction" else ""
@@ -179,7 +180,7 @@ def verdict(delta, weights, group):
     if weights == INTERACTION:
         found = f"together the extensions do {direction} than their separate effects add up to"
     else:
-        [a], [b] = ([NAMES[v] for v, w in weights.items() if w == sign] for sign in (1, -1))
+        [a], [b] = ([names[v] for v, w in weights.items() if w == sign] for sign in (1, -1))
         found = f"{a} is {direction} than {b}"
     found = f"{prefix}SE-separated: {found}, " + (f"by {abs(mean) / se:.1f} SE." if se > 0 else "by the same at every seed (SE 0).")
     if low > 0 or high < 0:
