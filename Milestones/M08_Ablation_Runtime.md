@@ -96,9 +96,9 @@
 - If no-go: the redirect plan (per-variable analysis + fan plots) confirmed with owners.
 
 **Definition of Done**
-- [ ] Decision recorded with the supporting MAE number.
-- [ ] Week-9 plan (conformal *or* redirect) written and owned.
-- [ ] All three agree on the decision.
+- [x] Decision recorded with the supporting MAE number.
+- [x] Week-9 plan (conformal *or* redirect) written and owned.
+- [x] All three agree on the decision.
 
 ---
 
